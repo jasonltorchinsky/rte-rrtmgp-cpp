@@ -1,33 +1,26 @@
 # Standard Library Imports
 
 # Third-Party Library Imports
-import numpy as np
 import netCDF4 as nc
+import numpy as np
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_2d
+from plot_profiles import plot_profiles_1d
 
 def main():
-    ## Load the input, output, and optics data
+    ## Load the input and optics data
     input_file: str = "rte_rrtmgp_input.nc"
     nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file)
 
     optics_file: str = "aerosol_optics.nc"
     nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file)
 
-    output_file: str = "rte_rrtmgp_output.nc"
-    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file)
-
     ## Extract the spatial variables
-    x: np.ma.MaskedArray = nc_input.variables["x"][:] # [m]
-    y: np.ma.MaskedArray = nc_input.variables["y"][:] # [m]
+    x: np.ma.MaskedArray = nc_input.variables["x"][:]
+    y: np.ma.MaskedArray = nc_input.variables["y"][:]
 
-    XX: np.ndarray
-    YY: np.ndarray
-    XX, YY = np.meshgrid(x, y, indexing = "ij")
-
-    z_lay: np.ma.MaskedArray = nc_input.variables["z_lay"][:] # [m]
-    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:] # [m]
+    z_lay: np.ma.MaskedArray = nc_input.variables["z_lay"][:]
+    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:]
 
     nx: int = np.size(x)
     ny: int = np.size(y)
@@ -60,54 +53,85 @@ def main():
     wavenumber_sw[0:-1] = wavenumber1_sw
     wavenumber_sw[-1] = wavenumber2_sw[-1]
 
-    ## Plot the zonally- and meridionally-averaged vertical shortwave fluxes profiles (TwoStream Solver)
-    sw_flux_up: np.ma.MaskedArray = nc_output.variables["sw_flux_up"][:] # (lev, y, x); [W m^(-2)]
-    sw_flux_dn: np.ma.MaskedArray = nc_output.variables["sw_flux_dn"][:] # (lev, y, x); [W m^(-2)]
-    sw_flux_net: np.ma.MaskedArray = nc_output.variables["sw_flux_net"][:] # (lev, y, x); [W m^(-2)]
+    ## Plot the zonally- and meridionally-averaged vertical pressure profile
+    p_lay: np.ma.MaskedArray = nc_input.variables["p_lay"][:] # (lay, y, x); [Pa]
+    p_lev: np.ma.MaskedArray = nc_input.variables["p_lev"][:] # (lev, y, x); [Pa]
 
-    sw_flux_up_z: np.ndarray = np.nanmean(sw_flux_up, axis = (1, 2)) # (lev)
-    sw_flux_dn_z: np.ndarray = np.nanmean(sw_flux_dn, axis = (1, 2)) # (lev)
-    sw_flux_net_z: np.ndarray = np.nanmean(sw_flux_net, axis = (1, 2)) # (lev)
+    p: np.ndarray = np.empty([nz, ny, nx], dtype = p_lev.dtype)
+    p[0::2,...] = p_lev
+    p[1::2,...] = p_lay
 
-    profiles: list = [sw_flux_up_z, sw_flux_dn_z, sw_flux_net_z]
-    profile_labels: list = [r"Upwelling", r"Downwelling", r"Net"]
+    p_z: np.ndarray = np.nanmean(p, axis = (1, 2))
+    plot_profiles_1d(z / 1000., [p_z / 100.], "pressure.png",
+                xlabel = r"Pressure $[hPa]$", ylabel = r"z $[km]$",
+                coord_axis = "y")
 
-    plot_profiles_1d(z_lev / 1000., profiles, "sw_flux.png",
-                     profile_labels = profile_labels,
-                     title = "TwoStream Solver",
-                     xlabel = r"Shortwave Flux $[W m^{-2}]$", ylabel = r"z $[km]$",
-                     coord_axis = "y")
+    ## Plot the zonally- and meridionally-averaged vertical temperture profile
+    t_lay: np.ma.MaskedArray = nc_input.variables["t_lay"][:] # (lay, y, x); [K]
+    t_lev: np.ma.MaskedArray = nc_input.variables["t_lev"][:] # (lev, y, x); [K]
 
-    ## Plot the zonally- and meridionally-averaged vertical absorbed shortwave fluxes profiles (Monte Carlo Ray Tracer)
-    rt_flux_abs_dir: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dir"][:] # (lay, y, x); [W m^(-3)]
-    rt_flux_abs_dif: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dif"][:] # (lay, y, x); [W m^(-3)]
+    t: np.ndarray = np.empty([nz, ny, nx], dtype = t_lev.dtype)
+    t[0::2,...] = t_lev
+    t[1::2,...] = t_lay
 
-    rt_flux_abs_dir_z: np.ndarray = np.nanmean(rt_flux_abs_dir, axis = (1, 2)) # (lay)
-    rt_flux_abs_dif_z: np.ndarray = np.nanmean(rt_flux_abs_dif, axis = (1, 2)) # (lay)
+    t_z: np.ndarray = np.nanmean(t, axis = (1, 2))
+    plot_profiles_1d(z / 1000., [t_z], "temperature.png",
+                xlabel = r"Temperature $[K]$", ylabel = r"z $[km]$",
+                coord_axis = "y")
 
-    profiles: list = [rt_flux_abs_dir_z, rt_flux_abs_dif_z]
-    profile_labels: list = [r"Direct", r"Diffuse"]
+    ## Plot the zonally- and meridionally-averaged vertical volume mixing ratio profiles
+    vmr_co2: np.ma.MaskedArray = nc_input.variables["vmr_co2"][:]
+    vmr_ch4: np.ma.MaskedArray = nc_input.variables["vmr_ch4"][:]
+    vmr_n2o: np.ma.MaskedArray = nc_input.variables["vmr_n2o"][:]
+    vmr_o3_lay: np.ma.MaskedArray = nc_input.variables["vmr_o3"][:] # (lay, y, x)
+    vmr_h2o_lay: np.ma.MaskedArray = nc_input.variables["vmr_h2o"][:] # (lay, y, x)
+    vmr_n2: np.ma.MaskedArray = nc_input.variables["vmr_n2"][:]
+    vmr_o2: np.ma.MaskedArray = nc_input.variables["vmr_o2"][:]
 
-    plot_profiles_1d(z_lay / 1000., profiles, "rt_flux_abs.png",
-                     title = "Monte Carlo Ray Tracer",
-                     xlabel = r"Absorbed Shortwave Flux $[W m^{-3}]$", ylabel = r"z $[km]$",
-                     coord_axis = "y")
+    vmr_co2_z: np.ndarray = np.tile(vmr_co2, (nlay))
+    vmr_ch4_z: np.ndarray = np.tile(vmr_ch4, (nlay))
+    vmr_n2o_z: np.ndarray = np.tile(vmr_n2o, (nlay))
+    vmr_o3_z: np.ndarray = np.nanmean(vmr_o3_lay, axis = (1, 2))
+    vmr_h2o_z: np.ndarray = np.nanmean(vmr_h2o_lay, axis = (1, 2))
+    vmr_n2_z: np.ndarray = np.tile(vmr_n2, (nlay))
+    vmr_o2_z: np.ndarray = np.tile(vmr_o2, (nlay))
 
-    ## Plot the upwelling shortwave top-of-domain flux (Monte Carlo Ray Tracer)
-    rt_flux_tod_up: np.ma.MaskedArray = nc_output.variables["rt_flux_tod_up"][:] # (y, x); [W m^(-2)]
+    vmr_zs: list = [vmr_co2_z, vmr_ch4_z, vmr_n2o_z, vmr_o3_z, vmr_h2o_z, vmr_n2_z, vmr_o2_z]
+    vmr_labels: list = [r"$C O_2$", r"$C H_4$", r"$N_2 O$", r"$O_3$", r"$H_2 O$", r"$N_2$", r"$O_2$"]
 
-    plot_profile_2d([XX / 1000., YY / 1000.], rt_flux_tod_up, "rt_flux_tod_up.png",
-                    title = "Monte Carlo Ray Tracer", 
-                    xlabel = r"x [$km$]", ylabel = r"y [$km$]",
-                    cbarlabel = r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]")
+    plot_profiles_1d(z_lay / 1000., vmr_zs, "vmr.png",
+                  xlabel = r"Volume Mixing Ratio", ylabel = r"z $[km]$",
+                  profile_labels = vmr_labels, xscale = "log", coord_axis = "y")
 
-    ## Plot the upwelling shortwave surface flux (Monte Carlo Ray Tracer)
-    rt_flux_sfc_up: np.ma.MaskedArray = nc_output.variables["rt_flux_sfc_up"][:] # (y, x); [W m^(-2)]
+    ## Plot the zonally- and meridionally-averaged surface emissivity spectrum
+    emis_sfc: np.ma.MaskedArray = nc_input.variables["emis_sfc"][:] # (y, x, band_lw)
 
-    plot_profile_2d([XX / 1000., YY / 1000.], rt_flux_sfc_up, "rt_flux_sfc_up.png",
-                    title = "Monte Carlo Ray Tracer", 
-                    xlabel = r"x [$km$]", ylabel = r"y [$km$]",
-                    cbarlabel = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]")
+    emis_sfc_spec: np.ndarray = np.nanmean(emis_sfc, axis = (0, 1)) # (band_lw)
+
+    ### Repeat the last value for the step plot
+    emis_sfc_spec: np.ndarray = np.concatenate((emis_sfc_spec, np.array([emis_sfc_spec[-1]]))) # (band_lw + 1)
+
+    plot_profiles_1d(wavenumber_lw, [emis_sfc_spec], "emis_sfc.png",
+                  xlabel = r"Wavenumber [$cm^{-1}$]", ylabel = r"Surface Emissivity - Longwave",
+                  coord_axis = "x", drawstyle = "steps-post")
+
+    ## Plot the zonally- and meridionally-averaged surface albedo (direct and diffuse)
+    sfc_alb_dir: np.ma.MaskedArray = nc_input.variables["sfc_alb_dir"][:] # (y, x, band_sw)
+    sfc_alb_dif: np.ma.MaskedArray = nc_input.variables["sfc_alb_dif"][:] # (y, x, band_sw)
+
+    sfc_alb_dir_spec: np.ndarray = np.nanmean(sfc_alb_dir, axis = (0, 1)) # (band_sw)
+    sfc_alb_dif_spec: np.ndarray = np.nanmean(sfc_alb_dif, axis = (0, 1)) # (band_sw)
+
+    ### Repeat the last value for the step plot
+    sfc_alb_dir_spec: np.ndarray = np.concatenate((sfc_alb_dir_spec, np.array([sfc_alb_dir_spec[-1]]))) # (band_sw + 1)
+    sfc_alb_dif_spec: np.ndarray = np.concatenate((sfc_alb_dif_spec, np.array([sfc_alb_dif_spec[-1]]))) # (band_sw + 1)
+
+
+    plot_profiles_1d(wavenumber_sw, [sfc_alb_dir_spec, sfc_alb_dif_spec], "sfc_alb.png",
+                  xlabel = r"Wavenumber [$cm^{-1}$]", ylabel = r"Surface Albedo - Longwave",
+                  profile_labels = [r"Direct", r"Diffuse"],
+                  coord_axis = "x", drawstyle = "steps-post")
 
 if __name__ == "__main__":
     main()
+
