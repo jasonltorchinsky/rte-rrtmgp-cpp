@@ -1,4 +1,5 @@
 # Standard Library Imports
+import os
 
 # Third-Party Library Imports
 import netCDF4 as nc
@@ -14,6 +15,13 @@ def main():
 
     optics_file: str = "aerosol_optics.nc"
     nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file)
+
+    ## Create the output directories
+    input_dir_name: str = "input"
+    input_dir_path: str = os.path.join(os.getcwd(), input_dir_name)
+
+    if not os.path.exists(input_dir_path):
+        os.mkdir(input_dir_path)
 
     ## Extract the spatial variables
     x: np.ma.MaskedArray = nc_input.variables["x"][:]
@@ -81,7 +89,7 @@ def main():
 
     coord: np.ndarray = z / 1000. # (nz) [km]
     profiles: list = [p_z] # (nz) [K]
-    file_path: str = "pressure.png"
+    file_path: str = os.path.join(input_dir_path, "pressure.png")
     xlabel: str = r"Pressure $[hPa]$"
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
@@ -101,7 +109,7 @@ def main():
 
     coord: np.ndarray = z / 1000. # (nz) [km]
     profiles: list = [t_z] # (nz) [K]
-    file_path: str = "temperature.png"
+    file_path: str = os.path.join(input_dir_path, "temperature.png")
     xlabel: str = r"Temperature $[K]$"
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
@@ -128,7 +136,7 @@ def main():
 
     coord: np.ndarray = z_lay / 1000. # (nlay); [km]
     profiles: list = [vmr_co2_z, vmr_ch4_z, vmr_n2o_z, vmr_o3_z, vmr_h2o_z, vmr_n2_z, vmr_o2_z]
-    file_path: str = "vmr.png"
+    file_path: str = os.path.join(input_dir_path, "vmr.png")
     profile_labels: list = [r"$C O_2$", r"$C H_4$", r"$N_2 O$", r"$O_3$", r"$H_2 O$", r"$N_2$", r"$O_2$"]
     xlabel: str = r"Volume Mixing Ratio"
     ylabel: str = r"z $[km]$"
@@ -149,7 +157,7 @@ def main():
 
     coord: np.ndarray = wavenumber_lw # (band_lw); [cm^(-1)]
     profiles: list = [emis_sfc_spec]
-    file_path: str = "emis_sfc.png"
+    file_path: str = os.path.join(input_dir_path, "emis_sfc.png")
     xlabel: str = r"Wavenumber [$cm^{-1}$]"
     ylabel: str = r"Surface Emissivity - Longwave"
     coord_axis: str = "x"
@@ -171,7 +179,7 @@ def main():
 
     coord: np.ndarray = wavenumber_sw # (band_sw); [cm^(-1)]
     profiles: list = [sfc_alb_dir_spec, sfc_alb_dif_spec]
-    file_path: str = "sfc_alb.png"
+    file_path: str = os.path.join(input_dir_path, "sfc_alb.png")
     xlabel: str = r"Wavenumber [$cm^{-1}$]"
     ylabel: str = r"Surface Albedo - Shortwave"
     coord_axis: str = "x"
@@ -181,34 +189,36 @@ def main():
                      coord_axis = coord_axis, draw_style = draw_style)
 
     # Plot the liquid water path
-    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    if (nx * ny * nlay <= 100000):
+        lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
 
-    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-    profile: list = np.transpose(lwp, axes = (2, 1, 0))
-    file_path: str = "lwp.png"
-    xlabel: str = r"x [$km$]"
-    ylabel: str = r"y [$km$]"
-    zlabel: str = r"z [$km$]"
-    title: str = r"Liquid Water Path [$kg\,m^{-2}$]"
-    cmap: str = "Blues"
-    
-    plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                    zlabel = zlabel, title = title, cmap = cmap)
+        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile: list = np.transpose(lwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(input_dir_path, "lwp.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = r"Liquid Water Path [$kg\,m^{-2}$]"
+        cmap: str = "Blues"
+
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap)
 
     # Plot the ice water path
-    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
-
-    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-    profile: list = np.transpose(iwp, axes = (2, 1, 0))
-    file_path: str = "iwp.png"
-    xlabel: str = r"x [$km$]"
-    ylabel: str = r"y [$km$]"
-    zlabel: str = r"z [$km$]"
-    title: str = r"Ice Water Path [$kg\,m^{-2}$]"
-    cmap: str = "Purples"
+    if (nx * ny * nlay <= 100000):
+        iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
     
-    plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                    zlabel = zlabel, title = title, cmap = cmap)
+        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile: list = np.transpose(iwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(input_dir_path, "iwp.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = r"Ice Water Path [$kg\,m^{-2}$]"
+        cmap: str = "Purples"
+        
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap)
 
 if __name__ == "__main__":
     main()

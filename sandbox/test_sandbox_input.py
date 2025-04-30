@@ -12,14 +12,15 @@ import numpy as np
 import netCDF4 as nc
 
 # Local Library Imports
+from consts import R_d, R_v, L_v, g, p_0
 
 def main():
     nc_float: str = "f8"
 
     ## Spatial grids
-    n_col_x: int = 32 # Number of columns in x
-    n_col_y: int = 32 # Number of columns in y
-    n_lay_z: int = 16 # Number of layers in z
+    n_col_x: int = 256 # Number of columns in x
+    n_col_y: int = 256 # Number of columns in y
+    n_lay_z: int = 128 # Number of layers in z
     n_lev_z: int = n_lay_z + 1 # Number of levels in z
 
     ngrid_x: int = 48 # Number of grid points in x
@@ -66,8 +67,7 @@ def main():
     lwp, iwp, rel, dei = calc_cloud(x, y, z_lay)
 
     ## Convert water from specific humidity (q) to volume mixing ratio (vmr)
-    Rd_Rv: float = 287.04 / 461.5 # [N/A]
-    h2o: np.ndarray = q_lay / (Rd_Rv * (1. - q_lay)) # [kg kg^(-1)]
+    h2o: np.ndarray = q_lay / ((R_d / R_v) * (1. - q_lay)) # [kg kg^(-1)]
 
     ## Set other VMRs
     co2: float = 348.e-6  # Carbon Dioxide [kg kg^(-1)]
@@ -87,7 +87,6 @@ def main():
     hfc134a: float = 0.0  # 1,1,1,2-Tetrafluoroethane (HFC-134a) [kg kg^(-1)]
     cf4: float = 0.0      # Carbon Tetrafluoride (CF₄) [kg kg^(-1)]
     no2: float = 0.0      # Nitrogen Dioxide [kg kg^(-1)]
-
 
     ## Set O3 VMR
     g1: float = 3.6478
@@ -465,38 +464,31 @@ def calc_p_q_T_rh(z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     i_above_zt: tuple[np.ndarray] = np.where(z > z_t)
     q[i_above_zt] = q_t
 
-    ## Calculate temperaure vertical profile
+    ## Calculate temperature vertical profile
     T_0: float = 300. # SST; [K]
     gamma: float = 6.7e-3 # Temperature lapse rate; [K m^(-1)]
-    Tv_0 : float= (1. + 0.608 * q_0) * T_0 # Virtual temperature at surface; [K]
+    Tv_0 : float= (1. + (R_v / R_d - 1) * q_0) * T_0 # Virtual temperature at surface; [K]
     Tv: np.ndarray = Tv_0 - gamma * z # Virtual temperature (nz); [K]
     Tv_t: float = Tv_0 - gamma * z_t # Virtual temperature at transition height; [K]
     
     Tv[i_above_zt] = Tv_t
-    T: np.ndarray = Tv / (1. + 0.608 * q) # Temperature (nz); [K]
+    T: np.ndarray = Tv / (1. + (R_v / R_d - 1) * q) # Temperature (nz); [K]
 
     ## Calculate pressure vertical profile
-    g: float = 9.79764 # [m s^(-2)]
-    Rd: float = 287.04 # [J kg^(-1) K^(-1)]
-    p0: float = 101480. # [Pa]
+    p: np.ndarray = p_0 * (Tv / Tv_0)**(g / (R_d * gamma)) # [Pa]
 
-    p: np.ndarray = p0 * (Tv / Tv_0)**(g / (Rd * gamma)) # [Pa]
-
-    p_tmp: np.ndarray = p0 * (Tv_t / Tv_0)**(g / (Rd * gamma)) \
-                        * np.exp( -( (g * (z - z_t)) / (Rd * Tv_t) ) ) # [Pa]
+    p_tmp: np.ndarray = p_0 * (Tv_t / Tv_0)**(g / (R_d * gamma)) \
+                        * np.exp( -( (g * (z - z_t)) / (R_d * Tv_t) ) ) # [Pa]
 
     p[i_above_zt] = p_tmp[i_above_zt]
 
     ## Calculate relative humidity profile using Clausius-Clapeyron [Vallis Textbook]
-    Rv: float = 461.5 # Water vapor gas constant [J kg^(-1) K^(-1)]
-    eps: float = Rd / Rv
-    vap_pres: np.ndarray = (q * p) / (q + eps * (1. - q)) # Vapor pressure (nz); [Pa]
+    vap_pres: np.ndarray = (q * p) / (q + (R_d / R_v) * (1. - q)) # Vapor pressure (nz); [Pa]
 
-    L: float = 2.5e6 # Latent heat of vaporization of water at 0C [J kg^(-1)]
     e0: float = 6.12e2 # [Pa]
     T0: float = 273. # [K]
 
-    sat_vap_pres: np.ndarray = e0 * np.exp(L / Rv * ((1. / T0) - (1. / T))) # Saturation vapor pressure (nz); [Pa]
+    sat_vap_pres: np.ndarray = e0 * np.exp(L_v / R_v * ((1. / T0) - (1. / T))) # Saturation vapor pressure (nz); [Pa]
 
     rh = vap_pres / sat_vap_pres # Relative humidity [Pa Pa^(-1)]
 

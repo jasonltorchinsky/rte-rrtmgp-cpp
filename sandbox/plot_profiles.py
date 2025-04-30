@@ -12,13 +12,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-
-# Numeric constants
-np_float: np.float64 = np.float64
-np_EPS: np.float64 = np.finfo(np_float).resolution
-np_INF: np.float64 = np.finfo(np_float).max
-
-np_SMALL: np.float64 = np.sqrt(np_EPS)
+from consts import np_INF, np_LARGE
 
 
 def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs):
@@ -30,6 +24,7 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
                             "xscale" : "linear",
                             "yscale" : "linear",
                             "coord_axis" : "x",
+                            "viz" : "normal",
                             "draw_style" : "default"}
 
     kwargs: dict = {**default_kwargs, **kwargs}
@@ -37,11 +32,21 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     ## Assumptions about kwargs
     assert(kwargs["coord_axis"].lower() in ["x", "y"])
 
+    ## Hold variables for axis bounds
+    x_min: np.float64 = np_INF
+    x_max: np.float64 = -np_INF
+    y_min: np.float64 = np_INF
+    y_max: np.float64 = -np_INF
+
     ## Implement pre-loop arguments
     if kwargs["coord_axis"].lower() == "x":
         x_data: np.ndarray = coord
+        x_min: np.float64 = np.min([x_min, x_data.min()])
+        x_max: np.float64 = np.max([x_max, x_data.max()])
     elif kwargs["coord_axis"].lower() == "y":
         y_data: np.ndarray = coord
+        y_min: np.float64 = np.min([y_min, y_data.min()])
+        y_max: np.float64 = np.max([y_max, y_data.max()])
 
     ## Set up the figure
     fig, ax = plt.subplots(layout = "constrained")
@@ -50,6 +55,7 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     colors: list = ["#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77",
                     "#CC6677", "#AA4499", "#882255"]
     ncolors: int = len(colors)
+
     for idx in range(0, len(profiles)):
         profile: np.ndarray = profiles[idx]
         if kwargs["profile_labels"] is not None:
@@ -59,14 +65,29 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
 
         if kwargs["coord_axis"].lower() == "x":
             y_data: np.ndarray = profile
+            y_min: np.float64 = np.min([y_min, y_data.min()])
+            y_max: np.float64 = np.max([y_max, y_data.max()])
         elif kwargs["coord_axis"].lower() == "y":
             x_data: np.ndarray = profile
+            x_min: np.float64 = np.min([x_min, x_data.min()])
+            x_max: np.float64 = np.max([x_max, x_data.max()])
 
         ax.plot(x_data, y_data, color = colors[idx%ncolors], label = label,
                 drawstyle = kwargs["draw_style"])
 
     if kwargs["profile_labels"] is not None:
         ax.legend()
+
+    ## If we are looking at a difference, add a gridline to guide the eye
+    if kwargs["viz"] == "difference":
+        if kwargs["coord_axis"].lower() == "x":
+            ax.hlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+        elif kwargs["coord_axis"].lower() == "y":
+            ax.vlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+
+    ## Set x- and y-axis bounds
+    ax.set_xlim(x_min, x_max)
+    ax.set_ylim(y_min, y_max)
 
     ## Set x- and y-scale
     ax.set_xscale(kwargs["xscale"])
@@ -82,6 +103,7 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     if kwargs["title"] is not None:
         ax.set_title(kwargs["title"])
 
+
     plt.savefig(file_path, dpi = 300, bbox_inches = "tight")
     plt.close(fig)
 
@@ -95,6 +117,7 @@ def plot_profile_2d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
                             "xscale" : "linear",
                             "yscale" : "linear",
                             "cmap" : "Wistia",
+                            "cscale" : "normal",
                             "draw_style" : "default"}
 
     kwargs: dict = {**default_kwargs, **kwargs}
@@ -106,9 +129,16 @@ def plot_profile_2d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
     ncbarticks: int = 7
     ncbarlevels: int = 128
 
-    cbar_ticks: np.ndarray = np.linspace(profile.min(), profile.max(), ncbarticks)
-    cbar_levels: np.ndarray = np.linspace(profile.min(), profile.max(), ncbarlevels)
-    cbar_tick_labels: list = ["{:.1f}".format(tick) for tick in cbar_ticks]
+    if kwargs["cscale"] == "normal":
+        cmax: np.float64 = profile.max()
+        cmin: np.float64 = profile.min()
+    elif kwargs["cscale"] == "difference":
+        cmax: np.float64 = np.abs(profile).max()
+        cmin: np.float64 = -1. * cmax
+
+    cbar_ticks: np.ndarray = np.linspace(cmin, cmax, ncbarticks)
+    cbar_levels: np.ndarray = np.linspace(cmin, cmax, ncbarlevels)
+    cbar_tick_labels: list = ["{:.2f}".format(tick) for tick in cbar_ticks]
 
     ## Plot the profile
     ctf: QuadContourSet = ax.contourf(meshgrid[0], meshgrid[1], profile,
