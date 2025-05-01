@@ -104,7 +104,6 @@ def main():
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
     viz: str = "difference"
-    
 
     plot_profiles_1d(coord, profiles, file_path, title = title, xlabel = xlabel,
                      ylabel = ylabel, coord_axis = coord_axis, viz = viz)
@@ -128,7 +127,7 @@ def main():
         cbarlabel: str = r"Upwelling Shortwave Surface Flux $[W m^{-3}]$"
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = flux_sfc_up_diff
+    profile: np.ndarray = np.transpose(flux_sfc_up_diff, axes = (1, 0))
     file_path: str = os.path.join(comp_dir_path, "flux_sfc_up.png")
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
@@ -158,7 +157,7 @@ def main():
         cbarlabel: str = r"Upwelling Shortwave Top-of-Domain Flux $[W m^{-3}]$"
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = flux_tod_up_diff
+    profile: np.ndarray = np.transpose(flux_tod_up_diff, axes = (1, 0))
     file_path: str = os.path.join(comp_dir_path, "flux_tod_up.png")
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"

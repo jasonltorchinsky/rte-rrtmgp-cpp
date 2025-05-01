@@ -31,7 +31,7 @@ printf "${TIME}: CREATED ATMOSPHERE STATE INPUT FILE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING ATMOSPHERE STATE...\n\n"
 
-#python plot_input.py
+python plot_input.py
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
@@ -52,7 +52,7 @@ printf "${TIME}: RTE_RRTMGP-CPP WITH RAY-TRACING COMPLETE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING OUTPUT...\n\n"
 
-#python plot_output.py
+python plot_output.py
 python plot_comparison.py
 
 TIME="[$(date '+%T')]"

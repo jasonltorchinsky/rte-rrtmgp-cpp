@@ -116,7 +116,7 @@ def plot_profile_2d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
                             "cbarlabel" : None,
                             "xscale" : "linear",
                             "yscale" : "linear",
-                            "cmap" : "Wistia",
+                            "cmap" : "afmhot",
                             "cscale" : "normal",
                             "draw_style" : "default"}
 
@@ -172,6 +172,9 @@ def plot_profile_2d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
     plt.close(fig)
 
 def plot_profile_3d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwargs):
+    ### NOTE: We assume here that we are plotting nonnegative quanitities, where
+    ### values closer to zero are transparent. The tol keyword is to avoid
+    ### plotting transparent or nearly-transparent points.
     ## Handle kwargs
     default_kwargs: dict = {"title" : None,
                             "xlabel" : None,
@@ -181,8 +184,9 @@ def plot_profile_3d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
                             "xscale" : "linear",
                             "yscale" : "linear",
                             "zscale" : "linear",
-                            "cmap" : "Wistia",
-                            "draw_style" : "default"}
+                            "cmap" : "afmhot",
+                            "draw_style" : "default",
+                            "tol" : 0.0}
 
     kwargs: dict = {**default_kwargs, **kwargs}
 
@@ -196,13 +200,20 @@ def plot_profile_3d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
     cbar_ticks: np.ndarray = np.linspace(profile.min(), profile.max(), ncbarticks)
     cbar_tick_labels: list = ["{:.1f}".format(tick) for tick in cbar_ticks]
 
+    ## Mask out values that are too small
+    mask: np.ndarray = (profile >= kwargs["tol"] * profile.max())
+    plt_meshgrid: tuple = meshgrid[:]
+    for ii in range(0, 3):
+        plt_meshgrid[ii] = meshgrid[ii][mask]
+    plt_profile: np.ndarray = profile[mask]
+
     ## Plot the profile
     ### We plot the profile in sections of different alphas
     color: tuple = plt.get_cmap(kwargs["cmap"])(1.0)
     cmap: ListedColormap = transparent_colormap(color, ncbarlevels)
     ctf: Path3DCollection = \
-        ax.scatter(meshgrid[0], meshgrid[1], meshgrid[2], c = profile, cmap = cmap,
-                   vmin = profile.min(), vmax = profile.max())
+        ax.scatter(plt_meshgrid[0], plt_meshgrid[1], plt_meshgrid[2], c = plt_profile,
+                   cmap = cmap, vmin = profile.min(), vmax = profile.max())
     
     ## Set the axis limits
     ax.set_xlim([meshgrid[0].min(), meshgrid[0].max()])
@@ -236,7 +247,148 @@ def plot_profile_3d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwar
     plt.savefig(file_path, dpi = 300, bbox_inches = "tight")
     plt.close(fig)
 
-def transparent_colormap(color: tuple, N: int =256) -> ListedColormap:
+def plot_profiles_2d_3d(meshgrid_2d: tuple, profile_2d: np.ndarray,
+                        meshgrid_3d: tuple, profile_3d: np.ndarray, 
+                        file_path: str, **kwargs):
+    ### NOTE: We assume here that we are plotting nonnegative quanitities, where
+    ### values closer to zero are transparent. The tol keyword is to avoid
+    ### plotting transparent or nearly-transparent points.
+    ## Handle kwargs
+    default_kwargs: dict = {"title" : None,
+                            "xlabel" : None,
+                            "ylabel" : None,
+                            "zlabel" : None,
+                            "cbarlabel_2d" : None,
+                            "cbarlabel_3d" : None,
+                            "zdir" : "z",
+                            "xscale" : "linear",
+                            "yscale" : "linear",
+                            "zscale" : "linear",
+                            "cmap_2d" : "afmhot",
+                            "cmap_3d" : "Reds",
+                            "draw_style" : "default",
+                            "tol" : 0.0}
+
+    kwargs: dict = {**default_kwargs, **kwargs}
+
+    ## Assertion on kwargs
+    assert(kwargs["zdir"] in ["x", "y", "z"])
+
+    ## Set up the figure
+    fig, ax = plt.subplots(layout = "constrained", subplot_kw = {"projection" : "3d"})
+
+    ## Disable computed zorder
+    ax.computed_zorder = False
+
+    ## Set 2D and 3D colorbar and ticks
+    ncbarticks: int = 7
+    ncbarlevels: int = 256
+
+    cmin_2d: float = profile_2d.min()
+    cmax_2d: float = profile_2d.max()
+
+    cbar_ticks_2d: np.ndarray = np.linspace(cmin_2d, cmax_2d, ncbarticks)
+    cbar_levels_2d: np.ndarray = np.linspace(cmin_2d, cmax_2d, ncbarlevels)
+    cbar_tick_labels_2d: list = ["{:.2f}".format(tick) for tick in cbar_ticks_2d]
+
+    cmin_3d: float = profile_3d.min()
+    cmax_3d: float = profile_3d.max()
+    cbar_ticks_3d: np.ndarray = np.linspace(cmin_3d, cmax_3d, ncbarticks)
+    cbar_tick_labels_3d: list = ["{:.2f}".format(tick) for tick in cbar_ticks_3d]
+
+    ## Plot the 2d profile
+    ctf_2d: QuadContourSet = ax.contourf(meshgrid_2d[0], meshgrid_2d[1], profile_2d, 
+                                         zdir = kwargs["zdir"], offset = 0.0, zorder = 0,
+                                         levels = cbar_levels_2d, cmap = kwargs["cmap_2d"])
+    ctf_2d2: QuadContourSet = ax.contour(meshgrid_2d[0], meshgrid_2d[1], profile_2d,
+                                         zdir = kwargs["zdir"], offset = 0.0, zorder = 1,
+                                         levels = cbar_ticks_2d, colors = "black",
+                                         linestyles = "--", linewidths = 0.5)
+    
+    ### Set the 2D colorbar
+    cbar_2d: Colorbar = fig.colorbar(ctf_2d, ax = ax, pad = 0.0, location = "left")
+    cbar_2d.ax.set_yticks(cbar_ticks_2d, cbar_tick_labels_2d)
+    cbar_2d.add_lines(ctf_2d2)
+    if kwargs["cbarlabel_2d"] is not None:
+        cbar_2d.ax.set_ylabel(kwargs["cbarlabel_2d"])
+
+    ## Plot the 3-D profile
+    ### Mask out values that are too small
+    mask_3d: np.ndarray = (profile_3d >= kwargs["tol"] * profile_3d.max())
+    plt_meshgrid_3d: tuple = meshgrid_3d[:]
+    for ii in range(0, 3):
+        plt_meshgrid_3d[ii] = meshgrid_3d[ii][mask_3d]
+    plt_profile_3d: np.ndarray = profile_3d[mask_3d]
+
+    ### We plot the profile in sections of different alphas
+    color: tuple = plt.get_cmap(kwargs["cmap_3d"])(1.0)
+    cmap: ListedColormap = transparent_colormap(color, ncbarlevels)
+    ctf_3d: Path3DCollection = \
+        ax.scatter(plt_meshgrid_3d[0], plt_meshgrid_3d[1], plt_meshgrid_3d[2], c = plt_profile_3d,
+                   cmap = cmap, vmin = profile_3d.min(), vmax = profile_3d.max(), zorder = 2)
+
+    ### Set the 3D colorbar
+    cbar_3d: Colorbar = fig.colorbar(ctf_3d, ax = ax, pad = 0.15, location = "right")
+    cbar_3d.ax.set_yticks(cbar_ticks_3d, cbar_tick_labels_3d)
+    if kwargs["cbarlabel_3d"] is not None:
+        cbar_3d.ax.set_ylabel(kwargs["cbarlabel_3d"])
+
+    ## Set the axis limits
+    if kwargs["zdir"] == "x":
+        x_min: float = meshgrid_3d[0].min()
+        x_max: float = meshgrid_3d[0].max()
+
+        y_min: float = min(meshgrid_2d[0].min(), meshgrid_3d[1].min())
+        y_max: float = max(meshgrid_2d[0].max(), meshgrid_3d[1].max())
+
+        z_min: float = min(meshgrid_2d[1].min(), meshgrid_3d[2].min())
+        z_max: float = max(meshgrid_2d[1].max(), meshgrid_3d[2].max())
+    elif kwargs["zdir"] == "y":
+        x_min: float = min(meshgrid_2d[0].min(), meshgrid_3d[0].min())
+        x_max: float = max(meshgrid_2d[0].max(), meshgrid_3d[0].max())
+
+        y_min: float = meshgrid_3d[1].min()
+        y_max: float = meshgrid_3d[1].max()
+
+        z_min: float = min(meshgrid_2d[1].min(), meshgrid_3d[2].min())
+        z_max: float = max(meshgrid_2d[1].max(), meshgrid_3d[2].max())
+    elif kwargs["zdir"] == "z":
+        x_min: float = min(meshgrid_2d[0].min(), meshgrid_3d[0].min())
+        x_max: float = max(meshgrid_2d[0].max(), meshgrid_3d[0].max())
+
+        y_min: float = min(meshgrid_2d[1].min(), meshgrid_3d[1].min())
+        y_max: float = max(meshgrid_2d[1].max(), meshgrid_3d[1].max())
+
+        z_min: float = meshgrid_3d[2].min()
+        z_max: float = meshgrid_3d[2].max()
+    
+
+    ax.set_xlim([x_min, x_max])
+    ax.set_ylim([y_min, y_max])
+    ax.set_zlim([z_min, z_max])
+
+    ## Set x-, y-, and z-scales
+    ax.set_xscale(kwargs["xscale"])
+    ax.set_yscale(kwargs["yscale"])
+    ax.set_yscale(kwargs["zscale"])
+
+    ## Label plot and axes
+    if kwargs["xlabel"] is not None:
+        ax.set_xlabel(kwargs["xlabel"])
+
+    if kwargs["ylabel"] is not None:
+        ax.set_ylabel(kwargs["ylabel"])
+
+    if kwargs["zlabel"] is not None:
+        ax.set_zlabel(kwargs["zlabel"])
+    
+    if kwargs["title"] is not None:
+        ax.set_title(kwargs["title"])
+
+    plt.savefig(file_path, dpi = 300, bbox_inches = "tight")
+    plt.close(fig)
+
+def transparent_colormap(color: tuple, N: int = 256) -> ListedColormap:
     """Create a colormap that fades from `color` to fully transparent."""
 
     base_color : np.ndarray= np.array(to_rgba(color))  # RGBA tuple

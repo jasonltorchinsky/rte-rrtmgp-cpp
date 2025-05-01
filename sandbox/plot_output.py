@@ -6,7 +6,7 @@ import numpy as np
 import netCDF4 as nc
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_2d
+from plot_profiles import plot_profiles_1d, plot_profile_2d, plot_profiles_2d_3d
 
 def main():
     ## Load the input, output, and optics data
@@ -40,7 +40,18 @@ def main():
     XX, YY = np.meshgrid(x, y, indexing = "ij")
 
     z_lay: np.ma.MaskedArray = nc_input.variables["z_lay"][:] # [m]
-    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:] # [m]
+    
+    XX_lay: np.ndarray
+    YY_lay: np.ndarray
+    ZZ_lay: np.ndarray
+    XX_lay, YY_lay, ZZ_lay = np.meshgrid(x, y, z_lay, indexing = "ij")
+
+    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:]
+
+    XX_lev: np.ndarray
+    YY_lev: np.ndarray
+    ZZ_lev: np.ndarray
+    XX_lev, YY_lev, ZZ_lev = np.meshgrid(x, y, z_lev, indexing = "ij")
 
     nx: int = np.size(x)
     ny: int = np.size(y)
@@ -119,7 +130,7 @@ def main():
     ts_flux_tod_up: np.ma.MaskedArray = sw_flux_up[-1,:,:] # (y, x); [W m^(-2)]
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = ts_flux_tod_up
+    profile: np.ndarray = np.transpose(ts_flux_tod_up, axes = (1, 0))
     file_path: str = os.path.join(ts_dir_path, "ts_flux_tod_up.png")
     title: str = "Two Stream Solver"
     xlabel: str = r"x [$km$]"
@@ -133,15 +144,67 @@ def main():
     ts_flux_sfc_up: np.ma.MaskedArray = sw_flux_up[1,:,:] # (y, x); [W m^(-2)]
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = ts_flux_sfc_up
+    profile: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
     file_path: str = os.path.join(ts_dir_path, "ts_flux_sfc_up.png")
     title: str = "Two Stream Solver"
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
 
-    plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel)
+    #plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
+    #                ylabel = ylabel, cbarlabel = cbarlabel)
+    
+    ### Plot alongside the lwp
+    tol: float = 0.1
+    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
+    if (lwp_npts <= 100000):
+        meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
+        profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
+        meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile_3d: list = np.transpose(lwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(ts_dir_path, "ts_flux_sfc_up_lwp.png")
+        title: str = "Two Stream Solver"
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+        cbarlabel_3d: str = r"Liquid Water Path [$kg\,m^{-2}$]"
+        zdir: str = "z"
+        cmap_2d: str = "afmhot"
+        cmap_3d: str = "Blues"
+
+        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+                            file_path, title = title, xlabel = xlabel,
+                            ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
+                            cmap_3d = cmap_3d, tol = tol)
+        
+    ### Plot alongside the iwp
+    tol: float = 0.1
+    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
+    if (iwp_npts <= 100000):
+        meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
+        profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
+        meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile_3d: list = np.transpose(iwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(ts_dir_path, "ts_flux_sfc_up_iwp.png")
+        title: str = "Two Stream Solver"
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+        cbarlabel_3d: str = r"Ice Water Path [$kg\,m^{-2}$]"
+        zdir: str = "z"
+        cmap_2d: str = "afmhot"
+        cmap_3d: str = "Purples"
+
+        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+                            file_path, title = title, xlabel = xlabel,
+                            ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
+                            cmap_3d = cmap_3d, tol = tol)
 
     # Monte Carlo Ray Tracer
     ## Plot the zonally- and meridionally-averaged vertical absorbed shortwave fluxes profiles (Monte Carlo Ray Tracer)
@@ -171,7 +234,7 @@ def main():
     rt_flux_tod_up: np.ma.MaskedArray = nc_output.variables["rt_flux_tod_up"][:] # (y, x); [W m^(-2)]
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = rt_flux_tod_up
+    profile: np.ndarray = np.transpose(rt_flux_tod_up, axes = (1, 0))
     file_path: str = os.path.join(rt_dir_path, "rt_flux_tod_up.png")
     title: str = "Monte Carlo Ray Tracer"
     xlabel: str = r"x [$km$]"
@@ -185,7 +248,7 @@ def main():
     rt_flux_sfc_up: np.ma.MaskedArray = nc_output.variables["rt_flux_sfc_up"][:] # (y, x); [W m^(-2)]
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = rt_flux_sfc_up
+    profile: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
     file_path: str = os.path.join(rt_dir_path, "rt_flux_sfc_up.png")
     title: str = "Monte Carlo Ray Tracer"
     xlabel: str = r"x [$km$]"
@@ -194,6 +257,58 @@ def main():
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
                     ylabel = ylabel, cbarlabel = cbarlabel)
+
+    ### Plot alongside the lwp
+    tol: float = 0.1
+    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
+    if (lwp_npts <= 100000):
+        meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
+        profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
+        meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile_3d: list = np.transpose(lwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(rt_dir_path, "rt_flux_sfc_up_lwp.png")
+        title: str = "Monte Carlo Ray Tracer"
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+        cbarlabel_3d: str = r"Liquid Water Path [$kg\,m^{-2}$]"
+        zdir: str = "z"
+        cmap_2d: str = "afmhot"
+        cmap_3d: str = "Blues"
+
+        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+                            file_path, title = title, xlabel = xlabel,
+                            ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
+                            cmap_3d = cmap_3d, tol = tol)
+        
+    ### Plot alongside the iwp
+    tol: float = 0.1
+    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
+    if (iwp_npts <= 100000):
+        meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
+        profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
+        meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+        profile_3d: list = np.transpose(iwp, axes = (2, 1, 0))
+        file_path: str = os.path.join(rt_dir_path, "rt_flux_sfc_up_iwp.png")
+        title: str = "Monte Carlo Ray Tracer"
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+        cbarlabel_3d: str = r"Ice Water Path [$kg\,m^{-2}$]"
+        zdir: str = "z"
+        cmap_2d: str = "afmhot"
+        cmap_3d: str = "Purples"
+
+        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+                            file_path, title = title, xlabel = xlabel,
+                            ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
+                            cmap_3d = cmap_3d, tol = tol)
 
 if __name__ == "__main__":
     main()

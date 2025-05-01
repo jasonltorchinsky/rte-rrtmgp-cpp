@@ -189,9 +189,10 @@ def main():
                      coord_axis = coord_axis, draw_style = draw_style)
 
     # Plot the liquid water path
-    if (nx * ny * nlay <= 100000):
-        lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
-
+    tol: float = 0.1
+    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
+    if (lwp_npts <= 100000):
         meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
         profile: list = np.transpose(lwp, axes = (2, 1, 0))
         file_path: str = os.path.join(input_dir_path, "lwp.png")
@@ -202,12 +203,13 @@ def main():
         cmap: str = "Blues"
 
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
 
     # Plot the ice water path
-    if (nx * ny * nlay <= 100000):
-        iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
-    
+    tol: float = 0.1
+    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
+    if (iwp_npts <= 100000):
         meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
         profile: list = np.transpose(iwp, axes = (2, 1, 0))
         file_path: str = os.path.join(input_dir_path, "iwp.png")
@@ -216,9 +218,9 @@ def main():
         zlabel: str = r"z [$km$]"
         title: str = r"Ice Water Path [$kg\,m^{-2}$]"
         cmap: str = "Purples"
-        
+
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
 
 if __name__ == "__main__":
     main()
