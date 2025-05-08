@@ -1,4 +1,5 @@
 # Standard Library Imports
+import argparse
 import os
 
 # Third-Party Library Imports
@@ -9,27 +10,63 @@ import netCDF4 as nc
 from plot_profiles import plot_profiles_1d, plot_profile_2d, plot_profiles_2d_3d
 
 def main():
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "plot_output",
+        description = "Plots the output of RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    parser.add_argument("--output",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP output file.")
+    
+    parser.add_argument("--optics",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["aerosol_optics.nc"],
+                        help = "Path to aerosol optics file.")
+
+    parser.add_argument("--outdir",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["output"],
+                        help = "Path to output generated plots.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    output_file_path: str = os.path.normpath(args.output[0])
+    optics_file_path: str = os.path.normpath(args.optics[0])
+    out_dir_path: str = os.path.normpath(args.outdir[0])
+
     ## Load the input, output, and optics data
-    input_file: str = "rte_rrtmgp_input.nc"
-    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file)
-
-    optics_file: str = "aerosol_optics.nc"
-    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file)
-
-    output_file: str = "rte_rrtmgp_output.nc"
-    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file)
+    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
+    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file_path)
+    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file_path)
 
     ## Create the output directories
+    out_dir_path: str = os.path.join(os.getcwd(), out_dir_path)
     ts_dir_name: str = "ts"
-    ts_dir_path: str = os.path.join(os.getcwd(), ts_dir_name)
+    ts_dir_path: str = os.path.join(out_dir_path, ts_dir_name)
     rt_dir_name: str = "rt"
-    rt_dir_path: str = os.path.join(os.getcwd(), rt_dir_name)
+    rt_dir_path: str = os.path.join(out_dir_path, rt_dir_name)
 
-    if not os.path.exists(ts_dir_path):
-        os.mkdir(ts_dir_path)
-
-    if not os.path.exists(rt_dir_path):
-        os.mkdir(rt_dir_path)
+    for dir_path in [out_dir_path, ts_dir_path, rt_dir_path]:
+        if not os.path.exists(dir_path):
+            os.mkdir(dir_path)
 
     ## Extract the spatial variables
     x: np.ma.MaskedArray = nc_input.variables["x"][:] # [m]
@@ -84,17 +121,43 @@ def main():
     wavenumber_sw[0:-1] = wavenumber1_sw
     wavenumber_sw[-1] = wavenumber2_sw[-1]
 
+    # Obtain input information
+    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
 
-    # Two Stream Solver
-    ## Plot the zonally- and meridionally-averaged vertical shortwave fluxes profiles (TwoStream Solver)
+    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+
+    # Obtain Two Stream solver information
     sw_flux_up: np.ma.MaskedArray = nc_output.variables["sw_flux_up"][:] # (lev, y, x); [W m^(-2)]
+    sw_flux_up_z: np.ndarray = np.nanmean(sw_flux_up, axis = (1, 2)) # (lev); [W m^(-2)]
+
     sw_flux_dn: np.ma.MaskedArray = nc_output.variables["sw_flux_dn"][:] # (lev, y, x); [W m^(-2)]
+    sw_flux_dn_z: np.ndarray = np.nanmean(sw_flux_dn, axis = (1, 2)) # (lev); [W m^(-2)]
+
     sw_flux_net: np.ma.MaskedArray = nc_output.variables["sw_flux_net"][:] # (lev, y, x); [W m^(-2)]
+    sw_flux_net_z: np.ndarray = np.nanmean(sw_flux_net, axis = (1, 2)) # (lev); [W m^(-2)]
 
-    sw_flux_up_z: np.ndarray = np.nanmean(sw_flux_up, axis = (1, 2)) # (lev)
-    sw_flux_dn_z: np.ndarray = np.nanmean(sw_flux_dn, axis = (1, 2)) # (lev)
-    sw_flux_net_z: np.ndarray = np.nanmean(sw_flux_net, axis = (1, 2)) # (lev)
+    ts_flux_abs: np.ma.MaskedArray = ((sw_flux_dn[1:] + sw_flux_up[:-1]) - (sw_flux_dn[:-1] + sw_flux_up[1:])) / np.expand_dims(z_lev[1:] - z_lev[:-1], [1, 2]) # (lay, y, x); [W m^(-3)]
+    ts_flux_abs_z: np.ndarray = np.nanmean(ts_flux_abs, axis = (1, 2)) # (lay); [W m^(-3)]
 
+    ts_flux_tod_up: np.ma.MaskedArray = sw_flux_up[-1,:,:] # (y, x); [W m^(-2)]
+
+    ts_flux_sfc_up: np.ma.MaskedArray = sw_flux_up[0,:,:] # (y, x); [W m^(-2)]
+
+    # Obtain Ray Tracer solver information
+    rt_flux_abs_dir: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dir"][:] # (lay, y, x); [W m^(-3)]
+    rt_flux_abs_dir_z: np.ndarray = np.nanmean(rt_flux_abs_dir, axis = (1, 2)) # (lay); [W m^(-3)]
+
+    rt_flux_abs_dif: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dif"][:] # (lay, y, x); [W m^(-3)]
+    rt_flux_abs_dif_z: np.ndarray = np.nanmean(rt_flux_abs_dif, axis = (1, 2)) # (lay); [W m^(-3)]
+
+    rt_flux_abs: np.ma.MaskedArray = rt_flux_abs_dir + rt_flux_abs_dif # (lay, y, x); [W m^(-3)]
+    rt_flux_abs_z: np.ndarray = np.nanmean(rt_flux_abs, axis = (1, 2)) # (lay); [W m^(-3)]
+
+    rt_flux_tod_up: np.ma.MaskedArray = nc_output.variables["rt_flux_tod_up"][:] # (y, x); [W m^(-2)]
+
+    rt_flux_sfc_up: np.ma.MaskedArray = nc_output.variables["rt_flux_sfc_up"][:] # (y, x); [W m^(-2)]
+
+    ## Plot the zonally- and meridionally-averaged vertical shortwave fluxes profiles (TwoStream Solver)
     coord: np.ndarray = z_lev / 1000. # (lev); [km]
     profiles: list = [sw_flux_up_z, sw_flux_dn_z, sw_flux_net_z]
     profile_labels: list = [r"Upwelling", r"Downwelling", r"Net"]
@@ -109,10 +172,6 @@ def main():
                      coord_axis = coord_axis)
     
     ## Plot the zonally- and meridionally-averaged vertical absorbed shortwave fluxes profiles (Two Stream Solver)
-    ts_flux_abs: np.ma.MaskedArray = ((sw_flux_dn[1:] + sw_flux_up[:-1]) - (sw_flux_dn[:-1] + sw_flux_up[1:])) / np.expand_dims(z_lev[1:] - z_lev[:-1], [1, 2]) # (lay, y, x); [W m^(-3)]
-
-    ts_flux_abs_z: np.ndarray = np.nanmean(ts_flux_abs, axis = (1, 2)) # (lay); [W m^(-3)]
-
     coord: np.ndarray = z_lay / 1000. # (lay); [km]
     profiles: list = [ts_flux_abs_z]
     profile_labels: list = [r"Total"]
@@ -127,8 +186,6 @@ def main():
                      coord_axis = coord_axis)
 
     ## Plot the upwelling shortwave top-of-domain flux (Two Stream Solver)
-    ts_flux_tod_up: np.ma.MaskedArray = sw_flux_up[-1,:,:] # (y, x); [W m^(-2)]
-
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(ts_flux_tod_up, axes = (1, 0))
     file_path: str = os.path.join(ts_dir_path, "ts_flux_tod_up.png")
@@ -141,8 +198,6 @@ def main():
                     ylabel = ylabel, cbarlabel = cbarlabel)
 
     ## Plot the upwelling shortwave surface flux (Two Stream Solver)
-    ts_flux_sfc_up: np.ma.MaskedArray = sw_flux_up[1,:,:] # (y, x); [W m^(-2)]
-
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
     file_path: str = os.path.join(ts_dir_path, "ts_flux_sfc_up.png")
@@ -151,12 +206,11 @@ def main():
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
 
-    #plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-    #                ylabel = ylabel, cbarlabel = cbarlabel)
+    plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
+                    ylabel = ylabel, cbarlabel = cbarlabel)
     
     ### Plot alongside the lwp
     tol: float = 0.1
-    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
     if (lwp_npts <= 100000):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
@@ -171,18 +225,19 @@ def main():
         cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
         cbarlabel_3d: str = r"Liquid Water Path [$kg\,m^{-2}$]"
         zdir: str = "z"
+        cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+        cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "Blues"
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
-                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
-                            cmap_3d = cmap_3d, tol = tol)
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
         
     ### Plot alongside the iwp
     tol: float = 0.1
-    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
     if (iwp_npts <= 100000):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
@@ -197,26 +252,19 @@ def main():
         cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
         cbarlabel_3d: str = r"Ice Water Path [$kg\,m^{-2}$]"
         zdir: str = "z"
+        cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+        cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "Purples"
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
-                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
-                            cmap_3d = cmap_3d, tol = tol)
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
 
     # Monte Carlo Ray Tracer
     ## Plot the zonally- and meridionally-averaged vertical absorbed shortwave fluxes profiles (Monte Carlo Ray Tracer)
-    rt_flux_abs_dir: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dir"][:] # (lay, y, x); [W m^(-3)]
-    rt_flux_abs_dif: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dif"][:] # (lay, y, x); [W m^(-3)]
-
-    rt_flux_abs: np.ma.MaskedArray = rt_flux_abs_dir + rt_flux_abs_dif # (lay, y, x); [W m^(-3)]
-
-    rt_flux_abs_dir_z: np.ndarray = np.nanmean(rt_flux_abs_dir, axis = (1, 2)) # (lay); [W m^(-3)]
-    rt_flux_abs_dif_z: np.ndarray = np.nanmean(rt_flux_abs_dif, axis = (1, 2)) # (lay); [W m^(-3)]
-    rt_flux_abs_z: np.ndarray = np.nanmean(rt_flux_abs, axis = (1, 2)) # (lay); [W m^(-3)]
-
     coord: np.ndarray = z_lay / 1000. # (lay); [km]
     profiles: list = [rt_flux_abs_dir_z, rt_flux_abs_dif_z, rt_flux_abs_z]
     profile_labels: list = [r"Direct", r"Diffuse", r"Total"]
@@ -231,8 +279,6 @@ def main():
                      coord_axis = coord_axis)
 
     ## Plot the upwelling shortwave top-of-domain flux (Monte Carlo Ray Tracer)
-    rt_flux_tod_up: np.ma.MaskedArray = nc_output.variables["rt_flux_tod_up"][:] # (y, x); [W m^(-2)]
-
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(rt_flux_tod_up, axes = (1, 0))
     file_path: str = os.path.join(rt_dir_path, "rt_flux_tod_up.png")
@@ -245,8 +291,6 @@ def main():
                     ylabel = ylabel, cbarlabel = cbarlabel)
 
     ## Plot the upwelling shortwave surface flux (Monte Carlo Ray Tracer)
-    rt_flux_sfc_up: np.ma.MaskedArray = nc_output.variables["rt_flux_sfc_up"][:] # (y, x); [W m^(-2)]
-
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
     file_path: str = os.path.join(rt_dir_path, "rt_flux_sfc_up.png")
@@ -260,7 +304,6 @@ def main():
 
     ### Plot alongside the lwp
     tol: float = 0.1
-    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
     if (lwp_npts <= 100000):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
@@ -275,18 +318,19 @@ def main():
         cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
         cbarlabel_3d: str = r"Liquid Water Path [$kg\,m^{-2}$]"
         zdir: str = "z"
+        cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+        cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "Blues"
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
-                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
-                            cmap_3d = cmap_3d, tol = tol)
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
         
     ### Plot alongside the iwp
     tol: float = 0.1
-    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
     if (iwp_npts <= 100000):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
@@ -301,14 +345,17 @@ def main():
         cbarlabel_2d: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
         cbarlabel_3d: str = r"Ice Water Path [$kg\,m^{-2}$]"
         zdir: str = "z"
+        cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+        cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "Purples"
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
-                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmap_2d = cmap_2d,
-                            cmap_3d = cmap_3d, tol = tol)
+                            cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
 
 if __name__ == "__main__":
     main()
+

@@ -264,6 +264,10 @@ def plot_profiles_2d_3d(meshgrid_2d: tuple, profile_2d: np.ndarray,
                             "xscale" : "linear",
                             "yscale" : "linear",
                             "zscale" : "linear",
+                            "cmin_2d" : None,
+                            "cmax_2d" : None,
+                            "cmin_3d" : None,
+                            "cmax_3d" : None,
                             "cmap_2d" : "afmhot",
                             "cmap_3d" : "Reds",
                             "draw_style" : "default",
@@ -284,26 +288,43 @@ def plot_profiles_2d_3d(meshgrid_2d: tuple, profile_2d: np.ndarray,
     ncbarticks: int = 7
     ncbarlevels: int = 256
 
-    cmin_2d: float = profile_2d.min()
-    cmax_2d: float = profile_2d.max()
+    if kwargs["cmin_2d"] is not None:
+        cmin_2d: float = kwargs["cmin_2d"]
+    else:
+        cmin_2d: np.float64 = profile_2d.min()
+    
+    if kwargs["cmax_2d"] is not None:
+        cmax_2d: float = kwargs["cmax_2d"]
+    else:
+        cmax_2d: np.float64 = profile_2d.max()
 
     cbar_ticks_2d: np.ndarray = np.linspace(cmin_2d, cmax_2d, ncbarticks)
     cbar_levels_2d: np.ndarray = np.linspace(cmin_2d, cmax_2d, ncbarlevels)
     cbar_tick_labels_2d: list = ["{:.2f}".format(tick) for tick in cbar_ticks_2d]
 
-    cmin_3d: float = profile_3d.min()
-    cmax_3d: float = profile_3d.max()
+    if kwargs["cmin_3d"] is not None:
+        cmin_3d: float = kwargs["cmin_3d"]
+    else:
+        cmin_3d: np.float64 = profile_3d.min()
+    
+    if kwargs["cmax_3d"] is not None:
+        cmax_3d: float = kwargs["cmax_3d"]
+    else:
+        cmax_3d: np.float64 = profile_3d.max()
+
     cbar_ticks_3d: np.ndarray = np.linspace(cmin_3d, cmax_3d, ncbarticks)
     cbar_tick_labels_3d: list = ["{:.2f}".format(tick) for tick in cbar_ticks_3d]
 
     ## Plot the 2d profile
     ctf_2d: QuadContourSet = ax.contourf(meshgrid_2d[0], meshgrid_2d[1], profile_2d, 
                                          zdir = kwargs["zdir"], offset = 0.0, zorder = 0,
-                                         levels = cbar_levels_2d, cmap = kwargs["cmap_2d"])
+                                         levels = cbar_levels_2d, cmap = kwargs["cmap_2d"],
+                                         vmin = cmin_2d, vmax = cmax_2d)
     ctf_2d2: QuadContourSet = ax.contour(meshgrid_2d[0], meshgrid_2d[1], profile_2d,
                                          zdir = kwargs["zdir"], offset = 0.0, zorder = 1,
                                          levels = cbar_ticks_2d, colors = "black",
-                                         linestyles = "--", linewidths = 0.5)
+                                         linestyles = "--", linewidths = 0.5,
+                                         vmin = cmin_2d, vmax = cmax_2d)
     
     ### Set the 2D colorbar
     cbar_2d: Colorbar = fig.colorbar(ctf_2d, ax = ax, pad = 0.0, location = "left")
@@ -314,7 +335,7 @@ def plot_profiles_2d_3d(meshgrid_2d: tuple, profile_2d: np.ndarray,
 
     ## Plot the 3-D profile
     ### Mask out values that are too small
-    mask_3d: np.ndarray = (profile_3d >= kwargs["tol"] * profile_3d.max())
+    mask_3d: np.ndarray = (profile_3d >= kwargs["tol"] * cmax_3d)
     plt_meshgrid_3d: tuple = meshgrid_3d[:]
     for ii in range(0, 3):
         plt_meshgrid_3d[ii] = meshgrid_3d[ii][mask_3d]
@@ -325,7 +346,7 @@ def plot_profiles_2d_3d(meshgrid_2d: tuple, profile_2d: np.ndarray,
     cmap: ListedColormap = transparent_colormap(color, ncbarlevels)
     ctf_3d: Path3DCollection = \
         ax.scatter(plt_meshgrid_3d[0], plt_meshgrid_3d[1], plt_meshgrid_3d[2], c = plt_profile_3d,
-                   cmap = cmap, vmin = profile_3d.min(), vmax = profile_3d.max(), zorder = 2)
+                   cmap = cmap, vmin = cmin_2d, vmax = cmax_3d, zorder = 2)
 
     ### Set the 3D colorbar
     cbar_3d: Colorbar = fig.colorbar(ctf_3d, ax = ax, pad = 0.15, location = "right")
@@ -397,3 +418,4 @@ def transparent_colormap(color: tuple, N: int = 256) -> ListedColormap:
     colors[:, 3] = alphas  # Set alpha values
 
     return ListedColormap(colors)
+

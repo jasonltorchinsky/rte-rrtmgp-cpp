@@ -1,4 +1,5 @@
 # Standard Library Imports
+import argparse
 import os
 
 # Third-Party Library Imports
@@ -10,22 +11,58 @@ from plot_profiles import plot_profiles_1d, plot_profile_2d
 from consts import np_EPS
 
 def main():
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "plot_output",
+        description = "Plots comparisons of the two stream and ray tracer solvers of of RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    parser.add_argument("--output",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP output file.")
+    
+    parser.add_argument("--optics",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["aerosol_optics.nc"],
+                        help = "Path to aerosol optics file.")
+
+    parser.add_argument("--outdir",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["comparison"],
+                        help = "Path to output generated plots.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    output_file_path: str = os.path.normpath(args.output[0])
+    optics_file_path: str = os.path.normpath(args.optics[0])
+    out_dir_path: str = os.path.normpath(args.outdir[0])
+
     ## Load the input, output, and optics data
-    input_file: str = "rte_rrtmgp_input.nc"
-    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file)
-
-    optics_file: str = "aerosol_optics.nc"
-    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file)
-
-    output_file: str = "rte_rrtmgp_output.nc"
-    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file)
+    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
+    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file_path)
+    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file_path)
 
     ## Create the output directories
-    comp_dir_name: str = "comparison"
-    comp_dir_path: str = os.path.join(os.getcwd(), comp_dir_name)
+    out_dir_path: str = os.path.join(os.getcwd(), out_dir_path)
 
-    if not os.path.exists(comp_dir_path):
-        os.mkdir(comp_dir_path)
+    if not os.path.exists(out_dir_path):
+        os.mkdir(out_dir_path)
 
     ## Extract the spatial variables
     x: np.ma.MaskedArray = nc_input.variables["x"][:] # [m]
@@ -100,7 +137,7 @@ def main():
 
     coord: np.ndarray = z_lay / 1000. # (lay); [km]
     profiles: list = [flux_abs_diff_z]
-    file_path: str = os.path.join(comp_dir_path, "flux_abs.png")
+    file_path: str = os.path.join(out_dir_path, "flux_abs.png")
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
     viz: str = "difference"
@@ -128,7 +165,7 @@ def main():
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(flux_sfc_up_diff, axes = (1, 0))
-    file_path: str = os.path.join(comp_dir_path, "flux_sfc_up.png")
+    file_path: str = os.path.join(out_dir_path, "flux_sfc_up.png")
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cmap: str = "bwr"
@@ -158,7 +195,7 @@ def main():
 
     meshgrid: tuple = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(flux_tod_up_diff, axes = (1, 0))
-    file_path: str = os.path.join(comp_dir_path, "flux_tod_up.png")
+    file_path: str = os.path.join(out_dir_path, "flux_tod_up.png")
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cmap: str = "bwr"
@@ -171,3 +208,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

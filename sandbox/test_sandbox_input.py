@@ -3,6 +3,9 @@ Generates a NetCDF file (rte_rrtmgp_input.nc) that contains atmospheric and
 surface properties used for RTE-RRTMGP. It defines vertical profiles of pressure,
 temperature, and specific humidity, as well as various atmospheric and surface
 parameters.
+
+See the following reference for more information:
+M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 """
 
 # Strandard Library Imports
@@ -18,26 +21,30 @@ def main():
     nc_float: str = "f8"
 
     ## Spatial grids
-    n_col_x: int = 256 # Number of columns in x
-    n_col_y: int = 256 # Number of columns in y
-    n_lay_z: int = 128 # Number of layers in z
-    n_lev_z: int = n_lay_z + 1 # Number of levels in z
+    n_col_x: int = 64 # No. columns in x
+    n_col_y: int = 64 # No. columns in y
+    n_lay_z: int = 32 # No. layers in z
+    n_lev_z: int = n_lay_z + 1 # No. levels in z
 
-    ngrid_x: int = 48 # Number of grid points in x
-    ngrid_y: int = 48 # Number of grid points in y
-    ngrid_z: int = 32 # Number of grid points in z
+    ngrid_x: int = 48 # No. points in "acceleration grid" in x (Veerman23, Sec. 3.2.2, suggested: approx nx / 10 or nx / 20)
+    ngrid_y: int = 48 # No. points in "acceleration grid" in y (Veerman23, Sec. 3.2.2, suggested: approx ny / 10 or ny / 20)
+    ngrid_z: int = 32 # No. points in "acceleration grid" in z (Veerman23, Sec. 3.2.2, suggested: approx nz / 10 or nz / 20)
+
+    ### NOTE: The names xh, yh seem to refer to the interfaces between columns,
+    ### but in the original rcemip experiment, they just tack on an extra value.
+    ### They don't seem to be directly used in the code, so we will use them
+    ### to be interfaces between columns.
 
     x_min: float = 0. # [m]
     x_max: float = 6670. # [m]
-    dx: float = (x_max - x_min) / (n_col_x - 1) # [m]
-    x: np.ndarray = np.linspace(x_min, x_max, n_col_x) # [m]
-    xh: np.ndarray = np.linspace(x_min, x_max + dx, n_col_x + 1) # [m]
+    xh: np.ndarray = np.linspace(x_min, x_max, n_col_x + 1) # [m]
+    x: np.ndarray = (xh[1:] + xh[:-1]) / 2. # [m]
+    
 
     y_min: float = 0. # [m]
     y_max: float = 6670. # [m]
-    dy: float = (y_max - y_min) / (n_col_y - 1) # [m]
-    y: np.ndarray = np.linspace(y_min, y_max, n_col_y) # [m]
-    yh: np.ndarray = np.linspace(y_min, y_max + dy, n_col_y + 1) # [m]
+    yh: np.ndarray = np.linspace(y_min, y_max, n_col_y + 1) # [m]
+    y: np.ndarray = (yh[1:] + yh[:-1]) / 2. # [m]
 
     z_min: float = 0. # [m]
     z_max: float = 1440. # [m]
@@ -115,7 +122,7 @@ def main():
     t_sfc: float = 300.  # Surface temperature [K]
 
     ## Shortwave boundary conditions
-    solar_zenith_angle: np.float64 = np.deg2rad(42.05) # [N/A]
+    solar_zenith_angle: np.float64 = np.deg2rad(60.00) # [N/A]
     mu0: np.float64 = np.cos(solar_zenith_angle) # [N/A]
 
     sfc_alb_dir: np.ndarray = np.ones((n_col_y, n_col_x, n_bnd_sw)) * 0.07 # Surface Albedo - Direct
@@ -142,24 +149,24 @@ def main():
 
     ## Spatial grid
     nc_ngrid_x: nc._netCDF4.Variable = nc_file.createVariable("ngrid_x", nc_float)
-    nc_ngrid_x.description = "Number of grid points in the x-direction"
+    nc_ngrid_x.description = "No. 'acceleration grid' points in the x-direction"
     nc_ngrid_x[:] = ngrid_x
 
     nc_ngrid_y: nc._netCDF4.Variable = nc_file.createVariable("ngrid_y", nc_float)
-    nc_ngrid_y.description = "Number of grid points in the y-direction"
+    nc_ngrid_y.description = "No. 'acceleration grid' points in the y-direction"
     nc_ngrid_y[:] = ngrid_y
 
     nc_ngrid_z: nc._netCDF4.Variable = nc_file.createVariable("ngrid_z", nc_float)
-    nc_ngrid_z.description = "Number of grid points in the z-direction"
+    nc_ngrid_z.description = "No. 'acceleration grid' points in the z-direction"
     nc_ngrid_z[:] = ngrid_z
 
     nc_x: nc._netCDF4.Variable = nc_file.createVariable("x", nc_float, "x")
-    nc_x.description = "x-dimension"
+    nc_x.description = "x-dimension - column midpoints"
     nc_x.units = "m"
     nc_x[:] = x
 
     nc_y: nc._netCDF4.Variable = nc_file.createVariable("y", nc_float, "y")
-    nc_y.description = "y-dimension"
+    nc_y.description = "y-dimension - column midpoints"
     nc_y.units = "m"
     nc_y[:] = y
 
@@ -169,17 +176,17 @@ def main():
     nc_z[:] = z_lay
 
     nc_xh: nc._netCDF4.Variable = nc_file.createVariable("xh", nc_float, "xh")
-    nc_xh.description = "x-dimension - augmented grid (?)"
+    nc_xh.description = "x-dimension - column interfaces"
     nc_xh.units = "m"
     nc_xh[:] = xh
 
     nc_yh: nc._netCDF4.Variable = nc_file.createVariable("yh", nc_float, "yh")
-    nc_yh.description = "y-dimension - augmented grid (?)"
+    nc_yh.description = "y-dimension - column interfaces"
     nc_yh.units = "m"
     nc_yh[:] = yh
 
     nc_zh: nc._netCDF4.Variable = nc_file.createVariable("zh", nc_float, "zh")
-    nc_zh.description = "z-dimension - layer interfaces, augmented grid (?)"
+    nc_zh.description = "z-dimension - layer interfaces"
     nc_zh.units = "m"
     nc_zh[:] = z_lev
 
@@ -448,7 +455,6 @@ def calc_p_q_T_rh(z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         - Temperature [K]
     """
 
-
     ## Calculate specific humidity vertical profile
     q_0: float = 0.01864 # Surface specific humidity (300 K SST); [kg kg^(-1)]
     z_q1: float = 4.0e3 # Scale height for exponential decay of specific humidity; [m]
@@ -535,3 +541,4 @@ def calc_cloud(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray,
 
 if __name__ == "__main__":
     main()
+

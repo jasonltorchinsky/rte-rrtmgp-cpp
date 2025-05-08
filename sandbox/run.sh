@@ -16,12 +16,17 @@ TIME="[$(date '+%T')]"
 printf "${TIME}: LINKED netCDF DATA FILES\n\n"
 
 # ASSUME: Python libraries installed
+PARAMETER_FILE="parameters.json"
+INPUT_FILE="rte_rrtmgp_input.nc"
+OUTPUT_FILE="rte_rrtmgp_output.nc"
+
 ## Create input file
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: CREATING ATMOSPHERE STATE INPUT FILE...\n\n"
 
-python test_sandbox_input.py
+eval 'python test_sandbox_input.py --input "${PARAMETER_FILE}" '\
+     '--output "${INPUT_FILE}" '
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: CREATED ATMOSPHERE STATE INPUT FILE\n\n"
@@ -31,7 +36,7 @@ printf "${TIME}: CREATED ATMOSPHERE STATE INPUT FILE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING ATMOSPHERE STATE...\n\n"
 
-python plot_input.py
+eval 'python plot_input.py --input "${INPUT_FILE}" '
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
@@ -40,20 +45,23 @@ printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
 ## Run RT executable
 
 TIME="[$(date '+%T')]"
-printf "${TIME}: RUNNING RTE-RRTMGP-CPP WITH RAY-TRACING...\n\n"
+printf "${TIME}: RUNNING RTE+RRTMGP-CPP...\n\n"
 
 bsub -I -n 1 -W 00:10 -gpu num=1 ../build/test_rte_rrtmgp_rt_gpu --cloud-optics
 
 TIME="[$(date '+%T')]"
-printf "${TIME}: RTE_RRTMGP-CPP WITH RAY-TRACING COMPLETE\n\n"
+printf "${TIME}: RTE+RRTMGP-CPP COMPLETE\n\n"
 
 ## Visualize output
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING OUTPUT...\n\n"
 
-python plot_output.py
-python plot_comparison.py
+eval 'python plot_output.py --input "${INPUT_FILE}" '\
+     '--output "${OUTPUT_FILE}"'
+
+eval 'python plot_comparison.py --input "${INPUT_FILE}" '\
+     '--output "${OUTPUT_FILE}"'
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED OUTPUT\n\n"

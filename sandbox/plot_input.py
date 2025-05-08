@@ -1,4 +1,5 @@
 # Standard Library Imports
+import argparse
 import os
 
 # Third-Party Library Imports
@@ -9,19 +10,49 @@ import numpy as np
 from plot_profiles import plot_profiles_1d, plot_profile_3d
 
 def main():
-    ## Load the input and optics data
-    input_file: str = "rte_rrtmgp_input.nc"
-    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file)
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "plot_input",
+        description = "Plots the input of RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    parser.add_argument("--optics",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["aerosol_optics.nc"],
+                        help = "Path to aerosol optics file.")
 
-    optics_file: str = "aerosol_optics.nc"
-    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file)
+    parser.add_argument("--outdir",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["input"],
+                        help = "Path to output generated plots.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    optics_file_path: str = os.path.normpath(args.optics[0])
+    out_dir_path: str = os.path.normpath(args.outdir[0])
+
+    ## Load the input and optics data
+    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
+    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file_path)
 
     ## Create the output directories
-    input_dir_name: str = "input"
-    input_dir_path: str = os.path.join(os.getcwd(), input_dir_name)
+    out_dir_path: str = os.path.join(os.getcwd(), out_dir_path)
 
-    if not os.path.exists(input_dir_path):
-        os.mkdir(input_dir_path)
+    if not os.path.exists(out_dir_path):
+        os.mkdir(out_dir_path)
 
     ## Extract the spatial variables
     x: np.ma.MaskedArray = nc_input.variables["x"][:]
@@ -89,7 +120,7 @@ def main():
 
     coord: np.ndarray = z / 1000. # (nz) [km]
     profiles: list = [p_z] # (nz) [K]
-    file_path: str = os.path.join(input_dir_path, "pressure.png")
+    file_path: str = os.path.join(out_dir_path, "pressure.png")
     xlabel: str = r"Pressure $[hPa]$"
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
@@ -109,7 +140,7 @@ def main():
 
     coord: np.ndarray = z / 1000. # (nz) [km]
     profiles: list = [t_z] # (nz) [K]
-    file_path: str = os.path.join(input_dir_path, "temperature.png")
+    file_path: str = os.path.join(out_dir_path, "temperature.png")
     xlabel: str = r"Temperature $[K]$"
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
@@ -136,7 +167,7 @@ def main():
 
     coord: np.ndarray = z_lay / 1000. # (nlay); [km]
     profiles: list = [vmr_co2_z, vmr_ch4_z, vmr_n2o_z, vmr_o3_z, vmr_h2o_z, vmr_n2_z, vmr_o2_z]
-    file_path: str = os.path.join(input_dir_path, "vmr.png")
+    file_path: str = os.path.join(out_dir_path, "vmr.png")
     profile_labels: list = [r"$C O_2$", r"$C H_4$", r"$N_2 O$", r"$O_3$", r"$H_2 O$", r"$N_2$", r"$O_2$"]
     xlabel: str = r"Volume Mixing Ratio"
     ylabel: str = r"z $[km]$"
@@ -157,7 +188,7 @@ def main():
 
     coord: np.ndarray = wavenumber_lw # (band_lw); [cm^(-1)]
     profiles: list = [emis_sfc_spec]
-    file_path: str = os.path.join(input_dir_path, "emis_sfc.png")
+    file_path: str = os.path.join(out_dir_path, "emis_sfc.png")
     xlabel: str = r"Wavenumber [$cm^{-1}$]"
     ylabel: str = r"Surface Emissivity - Longwave"
     coord_axis: str = "x"
@@ -179,7 +210,7 @@ def main():
 
     coord: np.ndarray = wavenumber_sw # (band_sw); [cm^(-1)]
     profiles: list = [sfc_alb_dir_spec, sfc_alb_dif_spec]
-    file_path: str = os.path.join(input_dir_path, "sfc_alb.png")
+    file_path: str = os.path.join(out_dir_path, "sfc_alb.png")
     xlabel: str = r"Wavenumber [$cm^{-1}$]"
     ylabel: str = r"Surface Albedo - Shortwave"
     coord_axis: str = "x"
@@ -195,7 +226,7 @@ def main():
     if (lwp_npts <= 100000):
         meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
         profile: list = np.transpose(lwp, axes = (2, 1, 0))
-        file_path: str = os.path.join(input_dir_path, "lwp.png")
+        file_path: str = os.path.join(out_dir_path, "lwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
@@ -212,7 +243,7 @@ def main():
     if (iwp_npts <= 100000):
         meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
         profile: list = np.transpose(iwp, axes = (2, 1, 0))
-        file_path: str = os.path.join(input_dir_path, "iwp.png")
+        file_path: str = os.path.join(out_dir_path, "iwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
@@ -224,4 +255,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
