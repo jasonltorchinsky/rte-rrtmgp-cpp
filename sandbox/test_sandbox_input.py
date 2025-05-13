@@ -8,7 +8,11 @@ See the following reference for more information:
 M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 """
 
-# Strandard Library Imports
+# Standard Library Imports
+import argparse
+import json
+import os
+import typing
 
 # Third-Party Library Imports
 import numpy as np
@@ -18,42 +22,72 @@ import netCDF4 as nc
 from consts import R_d, R_v, L_v, g, p_0
 
 def main():
-    nc_float: str = "f8"
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "create_rte_rrtmgp_input",
+        description = "Creates netCDF input to RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Parameter file for generating the RTE-RRTMGP-CPP input.")
+    
+    parser.add_argument("--output",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["rte_rrtmgp_input.nc"],
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    output_file_path: str = os.path.normpath(args.output[0])
+
+    ## Read parameters from the parameters file
+    parameter_file: typing.TextIO = open(input_file_path)
+    parameter_kwargs: dict = json.load(parameter_file)
+    parameter_file.close()
+
+    n_col_x: int = parameter_kwargs["n_col_x"] # No. columns in x
+    n_col_y: int = parameter_kwargs["n_col_y"] # No. columns in y
+    n_lay_z: int = parameter_kwargs["n_lay_z"] # No. layers in z
+
+    ngrid_x: int = parameter_kwargs["ngrid_x"] # No. points in "acceleration grid" in x (Veerman23, Sec. 3.2.2, suggested: approx nx / 10 or nx / 20)
+    ngrid_y: int = parameter_kwargs["ngrid_y"] # No. points in "acceleration grid" in y (Veerman23, Sec. 3.2.2, suggested: approx ny / 10 or ny / 20)
+    ngrid_z: int = parameter_kwargs["ngrid_z"] # No. points in "acceleration grid" in z (Veerman23, Sec. 3.2.2, suggested: approx nz / 10 or nz / 20)
+
+    x_min: float = parameter_kwargs["x_min"] # [m]
+    x_max: float = parameter_kwargs["x_max"] # [m]
+
+    y_min: float = parameter_kwargs["y_min"] # [m]
+    y_max: float = parameter_kwargs["y_max"] # [m]
+
+    z_min: float = parameter_kwargs["z_min"] # [m]
+    z_max: float = parameter_kwargs["z_max"] # [m]
+
+    n_bnd_lw: int = parameter_kwargs["n_bnd_lw"] # Number of bands in longwave
+    n_bnd_sw: int = parameter_kwargs["n_bnd_sw"] # Number of bands in shortwave
 
     ## Spatial grids
-    n_col_x: int = 64 # No. columns in x
-    n_col_y: int = 64 # No. columns in y
-    n_lay_z: int = 32 # No. layers in z
     n_lev_z: int = n_lay_z + 1 # No. levels in z
-
-    ngrid_x: int = 48 # No. points in "acceleration grid" in x (Veerman23, Sec. 3.2.2, suggested: approx nx / 10 or nx / 20)
-    ngrid_y: int = 48 # No. points in "acceleration grid" in y (Veerman23, Sec. 3.2.2, suggested: approx ny / 10 or ny / 20)
-    ngrid_z: int = 32 # No. points in "acceleration grid" in z (Veerman23, Sec. 3.2.2, suggested: approx nz / 10 or nz / 20)
 
     ### NOTE: The names xh, yh seem to refer to the interfaces between columns,
     ### but in the original rcemip experiment, they just tack on an extra value.
     ### They don't seem to be directly used in the code, so we will use them
     ### to be interfaces between columns.
 
-    x_min: float = 0. # [m]
-    x_max: float = 6670. # [m]
     xh: np.ndarray = np.linspace(x_min, x_max, n_col_x + 1) # [m]
     x: np.ndarray = (xh[1:] + xh[:-1]) / 2. # [m]
     
-
-    y_min: float = 0. # [m]
-    y_max: float = 6670. # [m]
     yh: np.ndarray = np.linspace(y_min, y_max, n_col_y + 1) # [m]
     y: np.ndarray = (yh[1:] + yh[:-1]) / 2. # [m]
 
-    z_min: float = 0. # [m]
-    z_max: float = 1440. # [m]
     z_lev: np.ndarray = np.linspace(z_min, z_max, n_lev_z) # [m]
     z_lay: np.ndarray = (z_lev[1:] + z_lev[:-1]) / 2. # [m]
-
-    ## Spectral grids
-    n_bnd_lw: int = 16 # Number of bands in longwave
-    n_bnd_sw: int = 14 # Number of bands in shortwave
 
     ## Pressure (p), specific humidity (q), and temperature (T)
     p_lay: np.ndarray # [Pa]; (nlay)
@@ -133,7 +167,8 @@ def main():
     azi: float = 1.834 # Azimuthal Angle [Radians]
 
     ## Write input to file
-    nc_file: nc.Dataset = nc.Dataset("rte_rrtmgp_input.nc", mode = "w",
+    nc_float: str = "f8"
+    nc_file: nc.Dataset = nc.Dataset(output_file_path, mode = "w",
                                      datamodel = "NETCDF4", clobber = True)
 
     nc_file.createDimension("x", n_col_x)
@@ -264,62 +299,62 @@ def main():
     nc_o2.units = "kg kg^(-1)"
     nc_o2[:] = o2
     
-    nc_co = nc_file.createVariable("vmr_co", nc_float)
+    nc_co: nc._netCDF4.Variable = nc_file.createVariable("vmr_co", nc_float)
     nc_co.description = "Volume mixing ratio - Carbon Monoxide (CO)"
     nc_co.units = "kg kg^(-1)"
     nc_co[:] = co
     
-    nc_ccl4 = nc_file.createVariable("vmr_ccl4", nc_float)
+    nc_ccl4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ccl4", nc_float)
     nc_ccl4.description = "Volume mixing ratio - Carbon Tetrachloride (CCl4)"
     nc_ccl4.units = "kg kg^(-1)"
     nc_ccl4[:] = ccl4
     
-    nc_cfc11 = nc_file.createVariable("vmr_cfc11", nc_float)
+    nc_cfc11: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc11", nc_float)
     nc_cfc11.description = "Volume mixing ratio - Trichlorofluoromethane (CFC-11)"
     nc_cfc11.units = "kg kg^(-1)"
     nc_cfc11[:] = cfc11
     
-    nc_cfc12 = nc_file.createVariable("vmr_cfc12", nc_float)
+    nc_cfc12: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc12", nc_float)
     nc_cfc12.description = "Volume mixing ratio - Dichlorodifluoromethane (CFC-12)"
     nc_cfc12.units = "kg kg^(-1)"
     nc_cfc12[:] = cfc12
     
-    nc_cfc22 = nc_file.createVariable("vmr_cfc22", nc_float)
+    nc_cfc22: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc22", nc_float)
     nc_cfc22.description = "Volume mixing ratio - Chlorodifluoromethane (CFC-22)"
     nc_cfc22.units = "kg kg^(-1)"
     nc_cfc22[:] = cfc22
     
-    nc_hfc143a = nc_file.createVariable("vmr_hfc143a", nc_float)
+    nc_hfc143a: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc143a", nc_float)
     nc_hfc143a.description = "Volume mixing ratio - 1,1,1-Trifluoroethane (HFC-143a)"
     nc_hfc143a.units = "kg kg^(-1)"
     nc_hfc143a[:] = hfc143a
     
-    nc_hfc125 = nc_file.createVariable("vmr_hfc125", nc_float)
+    nc_hfc125: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc125", nc_float)
     nc_hfc125.description = "Volume mixing ratio - Pentafluoroethane (HFC-125)"
     nc_hfc125.units = "kg kg^(-1)"
     nc_hfc125[:] = hfc125
     
-    nc_hfc23 = nc_file.createVariable("vmr_hfc23", nc_float)
+    nc_hfc23: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc23", nc_float)
     nc_hfc23.description = "Volume mixing ratio - Trifluoromethane (HFC-23)"
     nc_hfc23.units = "kg kg^(-1)"
     nc_hfc23[:] = hfc23
     
-    nc_hfc32 = nc_file.createVariable("vmr_hfc32", nc_float)
+    nc_hfc32: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc32", nc_float)
     nc_hfc32.description = "Volume mixing ratio - Difluoromethane (HFC-32)"
     nc_hfc32.units = "kg kg^(-1)"
     nc_hfc32[:] = hfc32
     
-    nc_hfc134a = nc_file.createVariable("vmr_hfc134a", nc_float)
+    nc_hfc134a: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc134a", nc_float)
     nc_hfc134a.description = "Volume mixing ratio - 1,1,1,2-Tetrafluoroethane (HFC-134a)"
     nc_hfc134a.units = "kg kg^(-1)"
     nc_hfc134a[:] = hfc134a
     
-    nc_cf4 = nc_file.createVariable("vmr_cf4", nc_float)
+    nc_cf4: nc._netCDF4.Variable = nc_file.createVariable("vmr_cf4", nc_float)
     nc_cf4.description = "Volume mixing ratio - Carbon Tetrafluoride (CF4)"
     nc_cf4.units = "kg kg^(-1)"
     nc_cf4[:] = cf4
     
-    nc_no2 = nc_file.createVariable("vmr_no2", nc_float)
+    nc_no2: nc._netCDF4.Variable = nc_file.createVariable("vmr_no2", nc_float)
     nc_no2.description = "Volume mixing ratio - Nitrogen Dioxide (NO2)"
     nc_no2.units = "kg kg^(-1)"
     nc_no2[:] = no2
@@ -457,9 +492,9 @@ def calc_p_q_T_rh(z: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
 
     ## Calculate specific humidity vertical profile
     q_0: float = 0.01864 # Surface specific humidity (300 K SST); [kg kg^(-1)]
-    z_q1: float = 4.0e3 # Scale height for exponential decay of specific humidity; [m]
+    z_q1: float = 2.5e3 # Scale height for exponential decay of specific humidity; [m]
     z_q2: float = 7.5e3 # Scale height for Gaussian decay of specific humidity; [m]
-    z_t: float = 15.e3 # Transition height above which humidity and temperature are capped/flattened; [m]
+    z_t: float = 27.5e3 # Transition height above which humidity and temperature are capped/flattened; [m]
     q_t: float = 1.e-14 # Minimum specific humidity value above transition height; [kg kg^(-1)]
 
     q: np.ndarray = q_0 * np.exp(-z / z_q1) * np.exp(-(z / z_q2)**2) # Specific humidity (nz); [kg kg^(-1)]
@@ -508,8 +543,8 @@ def calc_cloud(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray,
     dei_min: float = 10. # Minimum Ice Water Effective Diameter [μm]
     dei_max: float = 180. # Maximum Ice Water Effective Diameter [μm]
 
-    rel_val: float = (rel_min + rel_max) / 2. #  [μm]
-    dei_val: float = (dei_min + dei_max) / 2. #  [μm]
+    rel_val: float = 3000. #  [μm]
+    dei_val: float = 6000. #  [μm]
 
     X: np.ndarray
     Y: np.ndarray
@@ -526,14 +561,10 @@ def calc_cloud(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray,
     z_width: np.float64 = z.max() - z.min()
 
     ## Set cloud mask
-    cloud_mask_X: np.ndarray = (np.abs(X - x_mid) <= 0.1 * x_width)
-    cloud_mask_Y: np.ndarray = (np.abs(Y - y_mid) <= 0.1 * y_width)
-    cloud_mask_Z: np.ndarray = (490. <= Z) & (Z <= 690.)
+    cloud_mask: np.ndarray = (np.sqrt(np.pow(X - x_mid, 2) + np.pow(Y - y_mid, 2) + 7.5 * np.pow(Z - z_mid, 2)) <= 2. * 4975.0)
 
-    cloud_mask: np.ndarray = cloud_mask_X & cloud_mask_Y & cloud_mask_Z
-
-    lwp: np.ndarray = np.where(cloud_mask, 10., 0.) # Liquid Water Path [kg m^(-2)]
-    iwp: np.ndarray = np.where(cloud_mask, 10., 0.) # Ice Water Path [kg m^(-2)]
+    lwp: np.ndarray = np.where(cloud_mask, 0.35, 0.) # Liquid Water Path [kg m^(-2)]
+    iwp: np.ndarray = np.where(cloud_mask, 0.45, 0.) # Ice Water Path [kg m^(-2)]
     rel: np.ndarray = np.where(lwp[:,:,:] > 0., rel_val, 0.) # Liquid Water Effective Radius [μm]
     dei: np.ndarray = np.where(iwp[:,:,:] > 0., dei_val, 0.) # Ice Water Effective Diameter [μm]
 

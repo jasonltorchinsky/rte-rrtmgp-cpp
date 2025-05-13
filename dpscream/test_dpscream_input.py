@@ -186,7 +186,7 @@ def main():
                                    (XX_lay, YY_lay, ZZ_lay), method = interp_method) # Liquid water path at regular layer midpoints; (n_col_x, n_col_y, n_lay_z)
     lwp: np.ma.MaskedArray = np.transpose(lwp, axes = (2, 1, 0)) # (n_lay_z, n_col_y, n_col_x)
 
-    iwp_mid: np.ma.MaskedArray = qc * dp / g # Ice water path [kg m^(-2)]; (n_col_x, n_col_y, n_lay_z)
+    iwp_mid: np.ma.MaskedArray = qi * dp / g # Ice water path [kg m^(-2)]; (n_col_x, n_col_y, n_lay_z)
     iwp: np.ndarray = griddata(XYZ_mid, iwp_mid.reshape(n_col_x * n_col_y * n_lay_z), 
                                    (XX_lay, YY_lay, ZZ_lay), method = interp_method) # Ice water path at regular layer midpoints; (n_col_x, n_col_y, n_lay_z)
     iwp: np.ma.MaskedArray = np.transpose(iwp, axes = (2, 1, 0)) # (n_lay_z, n_col_y, n_col_x)

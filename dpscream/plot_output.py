@@ -208,7 +208,7 @@ def main():
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
                     ylabel = ylabel, cbarlabel = cbarlabel)
-
+    
     ### Plot alongside the lwp
     tol: float = 0.1
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))

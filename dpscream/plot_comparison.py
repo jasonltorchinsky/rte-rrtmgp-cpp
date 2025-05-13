@@ -141,7 +141,7 @@ def main():
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"
     viz: str = "difference"
-    breakpoint()
+
     plot_profiles_1d(coord, profiles, file_path, title = title, xlabel = xlabel,
                      ylabel = ylabel, coord_axis = coord_axis, viz = viz)
 
