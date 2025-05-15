@@ -543,8 +543,8 @@ def calc_cloud(x: np.ndarray, y: np.ndarray, z: np.ndarray) -> tuple[np.ndarray,
     dei_min: float = 10. # Minimum Ice Water Effective Diameter [μm]
     dei_max: float = 180. # Maximum Ice Water Effective Diameter [μm]
 
-    rel_val: float = 3000. #  [μm]
-    dei_val: float = 6000. #  [μm]
+    rel_val: float = (rel_min + rel_max) / 2. #  [μm]
+    dei_val: float = (dei_min + dei_max) / 2. #  [μm]
 
     X: np.ndarray
     Y: np.ndarray

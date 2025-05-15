@@ -7,7 +7,7 @@ import netCDF4 as nc
 import numpy as np
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_3d
+from plot_profiles import plot_profiles_1d, plot_profile_3d, plot_distribution
 
 def main():
     ## Parse command-line input
@@ -219,74 +219,126 @@ def main():
     plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
                      coord_axis = coord_axis, draw_style = draw_style)
 
-    tol: float = 0.1
-    max_npts: int = 150000
+    ## Set parameters for 3-D plots
+    tol: float = 0.0
+    max_npts: int = 650000
 
     # Plot the liquid water path
     lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(lwp, axes = (2, 1, 0))
+    quantity_label: str = r"Liquid Water Path [$kg\,m^{-2}$]"
+
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
     if (lwp_npts <= max_npts):
-        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-        profile: list = np.transpose(lwp, axes = (2, 1, 0))
         file_path: str = os.path.join(out_dir_path, "lwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
-        title: str = r"Liquid Water Path [$kg\,m^{-2}$]"
-        cmap: str = "Blues"
+        title: str = quantity_label
+        cmap: str = "winter_r"
+        alpha: float = 0.05
 
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "lwp_dist.png")
+    nbins: int = 64
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Liquid Water Path Distribution"
+    xscale: str = "log"
+    plot_distribution(profile, file_path, nbins = nbins, title = title,
+                      xlabel = xlabel, ylabel = ylabel, xscale = xscale,
+                      tol = tol)
 
     # Plot the ice water path
     iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(iwp, axes = (2, 1, 0))
+    quantity_label: str = r"Ice Water Path [$kg\,m^{-2}$]"
+
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
     if (iwp_npts <= max_npts):
-        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-        profile: list = np.transpose(iwp, axes = (2, 1, 0))
         file_path: str = os.path.join(out_dir_path, "iwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
-        title: str = r"Ice Water Path [$kg\,m^{-2}$]"
-        cmap: str = "Purples"
+        title: str = quantity_label
+        cmap: str = "summer_r"
+        alpha: float = 0.05
 
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "iwp_dist.png")
+    nbins: int = 64
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Ice Water Path Distribution"
+    xscale: str = "log"
+    plot_distribution(profile, file_path, nbins = nbins, title = title,
+                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                      tol = tol)
 
     # Plot the liquid water effective radius
     rel: np.ma.MaskedArray = nc_input.variables["rel"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(rel, axes = (2, 1, 0))
+    quantity_label: str = r"Liquid Water Effective Radius [$\mu m$]"
+
     rel_npts: np.int64 = np.sum((rel > tol * rel.max()))
     if (rel_npts <= max_npts):
-        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-        profile: list = np.transpose(rel, axes = (2, 1, 0))
         file_path: str = os.path.join(out_dir_path, "rel.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
-        title: str = r"Liquid Water Effective Radius [$\mu m$]"
-        cmap: str = "Greens"
+        title: str = quantity_label
+        cmap: str = "autumn_r"
+        alpha: float = 0.05
 
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "rel_dist.png")
+    nbins: int = 256
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Liquid Water Effective Radius Distribution"
+    xscale: str = "linear"
+    plot_distribution(profile, file_path, nbins = nbins, title = title,
+                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                      tol = tol)
         
     # Plot the ice water effective diameter
     dei: np.ma.MaskedArray = nc_input.variables["dei"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(dei, axes = (2, 1, 0))
+    quantity_label: str = r"Ice Water Effective Diameter [$\mu m$]"
+
     dei_npts: np.int64 = np.sum((dei > tol * dei.max()))
     if (dei_npts <= max_npts):
-        meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
-        profile: list = np.transpose(dei, axes = (2, 1, 0))
         file_path: str = os.path.join(out_dir_path, "dei.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
         zlabel: str = r"z [$km$]"
-        title: str = r"Ice Water Effective Diameter [$\mu m$]"
-        cmap: str = "Oranges"
+        title: str = quantity_label
+        cmap: str = "spring_r"
+        alpha: float = 0.05
 
         plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
-                        zlabel = zlabel, title = title, cmap = cmap, tol = tol)
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "dei_dist.png")
+    nbins: int = 256
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Ice Water Effective Radius Distribution"
+    xscale: str = "linear"
+    plot_distribution(profile, file_path, nbins = nbins, title = title,
+                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                      tol = tol)
 
 if __name__ == "__main__":
     main()
-
 

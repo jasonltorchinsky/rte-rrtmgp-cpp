@@ -36,7 +36,7 @@ printf "${TIME}: CREATED ATMOSPHERE STATE INPUT FILE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING ATMOSPHERE STATE...\n\n"
 
-eval 'python plot_input.py --input "${INPUT_FILE}" '
+eval 'python ../viz/plot_input.py --input "${INPUT_FILE}" '
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
@@ -57,10 +57,10 @@ printf "${TIME}: RTE+RRTMGP-CPP COMPLETE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING OUTPUT...\n\n"
 
-eval 'python plot_output.py --input "${INPUT_FILE}" '\
+eval 'python ../viz/plot_output.py --input "${INPUT_FILE}" '\
      '--output "${OUTPUT_FILE}"'
 
-eval 'python plot_comparison.py --input "${INPUT_FILE}" '\
+eval 'python ../viz/plot_comparison.py --input "${INPUT_FILE}" '\
      '--output "${OUTPUT_FILE}"'
 
 TIME="[$(date '+%T')]"

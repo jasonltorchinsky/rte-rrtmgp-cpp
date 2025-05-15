@@ -123,8 +123,9 @@ def main():
 
     # Obtain input information
     lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
-
     iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    rel: np.ma.MaskedArray = nc_input.variables["rel"][:] # (lay, y, x); [kg m^(-2)]
+    dei: np.ma.MaskedArray = nc_input.variables["dei"][:] # (lay, y, x); [kg m^(-2)]
 
     # Obtain Two Stream solver information
     sw_flux_up: np.ma.MaskedArray = nc_output.variables["sw_flux_up"][:] # (lev, y, x); [W m^(-2)]
@@ -193,9 +194,11 @@ def main():
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"
+    cmin: float = min(ts_flux_tod_up.min(), rt_flux_tod_up.min())
+    cmax: float = max(ts_flux_tod_up.max(), rt_flux_tod_up.max())
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel)
+                    ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
 
     ## Plot the upwelling shortwave surface flux (Two Stream Solver)
     meshgrid: tuple = [XX / 1000., YY / 1000.]
@@ -205,14 +208,19 @@ def main():
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+    cmin: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+    cmax: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel)
+                    ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
+    
+    ## Set parameters for 3-D plots
+    tol: float = 0.0
+    max_npts: int = 250000
 
     ### Plot alongside the lwp
-    tol: float = 0.1
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
-    if (lwp_npts <= 100000):
+    if (lwp_npts <= max_npts):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -228,18 +236,19 @@ def main():
         cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
-        cmap_3d: str = "Blues"
+        cmap_3d: str = "winter_r"
+        alpha: float = 0.05
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
-                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol,
+                            alpha = alpha)
         
     ### Plot alongside the iwp
-    tol: float = 0.1
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
-    if (iwp_npts <= 100000):
+    if (iwp_npts <= max_npts):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -255,13 +264,15 @@ def main():
         cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
-        cmap_3d: str = "Purples"
+        cmap_3d: str = "summer_r"
+        alpha: float = 0.05
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
-                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol,
+                            alpha = alpha)
 
     # Monte Carlo Ray Tracer
     ## Plot the zonally- and meridionally-averaged vertical absorbed shortwave fluxes profiles (Monte Carlo Ray Tracer)
@@ -286,9 +297,11 @@ def main():
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"
+    cmin: float = min(ts_flux_tod_up.min(), rt_flux_tod_up.min())
+    cmax: float = max(ts_flux_tod_up.max(), rt_flux_tod_up.max())
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel)
+                    ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
 
     ## Plot the upwelling shortwave surface flux (Monte Carlo Ray Tracer)
     meshgrid: tuple = [XX / 1000., YY / 1000.]
@@ -298,14 +311,15 @@ def main():
     xlabel: str = r"x [$km$]"
     ylabel: str = r"y [$km$]"
     cbarlabel: str = r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"
+    cmin: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
+    cmax: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
 
     plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel)
+                    ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
 
     ### Plot alongside the lwp
-    tol: float = 0.1
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
-    if (lwp_npts <= 100000):
+    if (lwp_npts <= max_npts):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -321,18 +335,19 @@ def main():
         cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
-        cmap_3d: str = "Blues"
+        cmap_3d: str = "winter_r"
+        alpha: float = 0.01
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
-                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol,
+                            alpha = alpha)
         
     ### Plot alongside the iwp
-    tol: float = 0.1
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
-    if (iwp_npts <= 100000):
+    if (iwp_npts <= max_npts):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -348,14 +363,15 @@ def main():
         cmin_2d: float = min(ts_flux_sfc_up.min(), rt_flux_sfc_up.min())
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
-        cmap_3d: str = "Purples"
+        cmap_3d: str = "summer_r"
+        alpha: float = 0.01
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
-                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol)
+                            cmax_2d = cmax_2d, cmap_2d = cmap_2d, cmap_3d = cmap_3d, tol = tol,
+                            alpha = alpha)
 
 if __name__ == "__main__":
     main()
-
