@@ -18,7 +18,7 @@ import netCDF4 as nc
 from scipy.interpolate import RBFInterpolator, griddata
 
 # Local Library Imports
-from consts import R_d, R_v, L_v, g, p_0, np_float
+from consts import R_d, R_v, g, np_float
 
 def main():
     ## Parse command-line input
@@ -160,28 +160,44 @@ def main():
     T_mid: np.ma.MaskedArray = np.squeeze(nc_input.variables["T_mid"][:].astype(np_float), axis = 0) # Temperature at layer midpoints [K]; (ncol, n_lay_z)
     T_mid: np.ma.MaskedArray = T_mid[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
 
-    T_int: np.ma.MaskedArray = np.squeeze(nc_input.variables["T_int_rad"][:].astype(np_float), axis = 0) # Temperature at layer interfaces [K]; (ncol, n_lev_z)
-    T_int: np.ma.MaskedArray = T_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
+    if "T_int_rad" in nc_input.variables.keys():
+        T_int: np.ma.MaskedArray = np.squeeze(nc_input.variables["T_int_rad"][:].astype(np_float), axis = 0) # Temperature at layer interfaces [K]; (ncol, n_lev_z)
+        T_int: np.ma.MaskedArray = T_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
 
-    ### Interleave these into a single array
-    T: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = T_mid.dtype)
-    T[:,:,1::2] = T_mid
-    T[:,:,0::2] = T_int
+        ### Interleave these into a single array
+        T: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = T_mid.dtype)
+        T[:,:,1::2] = T_mid
+        T[:,:,0::2] = T_int
 
-    if method == "nearest":
-        T_lay: np.ndarray = np.transpose(remap_z(z, T, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
-        T_lev: np.ndarray = np.transpose(remap_z(z, T, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
-    elif method == "rbf":
-        T_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z, T, epsilon = epsilon) # Interpolant of temperature in each column [T]
-        T_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
-        T_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+        if method == "nearest":
+            T_lay: np.ndarray = np.transpose(remap_z(z, T, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(remap_z(z, T, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+        elif method == "rbf":
+            T_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z, T, epsilon = epsilon) # Interpolant of temperature in each column [T]
+            T_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
 
-    ### Limit the interpolated and extrapolated temperature values
-    T_lay[T_lay < T.min()] = T.min()
-    T_lay[T_lay > T.max()] = T.max()
+        ### Limit the interpolated and extrapolated temperature values
+        T_lay[T_lay < T.min()] = T.min()
+        T_lay[T_lay > T.max()] = T.max()
+    
+        T_lev[T_lev < T.min()] = T.min()
+        T_lev[T_lev > T.max()] = T.max()
+    else:
+        if method == "nearest":
+            T_lay: np.ndarray = np.transpose(remap_z(z_mid, T_mid, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(remap_z(z_mid, T_mid, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+        elif method == "rbf":
+            T_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, T_mid, epsilon = epsilon) # Interpolant of temperature in each column [T]
+            T_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
 
-    T_lev[T_lev < T.min()] = T.min()
-    T_lev[T_lev > T.max()] = T.max()
+        ### Limit the interpolated and extrapolated temperature values
+        T_lay[T_lay < T_mid.min()] = T_mid.min()
+        T_lay[T_lay > T_mid.max()] = T_mid.max()
+    
+        T_lev[T_lev < T_mid.min()] = T_mid.min()
+        T_lev[T_lev > T_mid.max()] = T_mid.max()
 
     ## Interpolate the relative humidity to the regularly-spaced grid.
     RelativeHumidity: np.ma.MaskedArray = np.squeeze(nc_input.variables["RelativeHumidity"][:].astype(np_float), axis = 0) # Relative humidity at layer midpoints [N/A]; (ncol, n_lay_z)
@@ -278,16 +294,121 @@ def main():
     dei[dei < 10.] = 10. #< 2. * eff_radius_qi.min()] = 2. * eff_radius_qi.min()
     dei[dei > 180.] = 180. #> 2. * eff_radius_qi.max()] = 2. * eff_radius_qi.max()
 
-    ## Convert water from specific humidity (q) to volume mixing ratio (vmr)
-    h2o: np.ndarray = q_lay / ((R_d / R_v) * (1. - q_lay)) # [kg kg^(-1)]
+    ## Interpolate volume mixing ratios to the regularly-spaced grid
+    ### ch4 - CH4 - Methane
+    ch4_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["ch4_volume_mix_ratio"][:].astype(np_float), axis = 0) # CH4 volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    ch4_volume_mix_ratio: np.ma.MaskedArray = ch4_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        ch4: np.ndarray = np.transpose(remap_z(z_mid, ch4_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CH4 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        ch4_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, ch4_volume_mix_ratio, epsilon = epsilon) # Interpolant of CH4 volume mixing ratio
+        ch4: np.ndarray = np.transpose(eval_rbfinterpolator_z(ch4_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CH4 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CH4 volume mixing ratio
+    ch4[ch4 < ch4_volume_mix_ratio.min()] = ch4_volume_mix_ratio.min()
+    ch4[ch4 > ch4_volume_mix_ratio.max()] = ch4_volume_mix_ratio.max()
+
+    ### co - CO - Carbon Monoxide
+    co_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["co_volume_mix_ratio"][:].astype(np_float), axis = 0) # CO volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    co_volume_mix_ratio: np.ma.MaskedArray = co_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        co: np.ndarray = np.transpose(remap_z(z_mid, co_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CO volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        co_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, co_volume_mix_ratio, epsilon = epsilon) # Interpolant of CO volume mixing ratio
+        co: np.ndarray = np.transpose(eval_rbfinterpolator_z(co_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CO volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CO volume mixing ratio
+    co[co < co_volume_mix_ratio.min()] = co_volume_mix_ratio.min()
+    co[co > co_volume_mix_ratio.max()] = co_volume_mix_ratio.max()
+
+    ### co2 - CO2 - Carbon Dioxide
+    co2_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["co2_volume_mix_ratio"][:].astype(np_float), axis = 0) # CO2 volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    co2_volume_mix_ratio: np.ma.MaskedArray = co2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        co2: np.ndarray = np.transpose(remap_z(z_mid, co2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CO2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        co2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, co2_volume_mix_ratio, epsilon = epsilon) # Interpolant of CO2 volume mixing ratio
+        co2: np.ndarray = np.transpose(eval_rbfinterpolator_z(co2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CO2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CO2 volume mixing ratio
+    co2[co2 < co2_volume_mix_ratio.min()] = co2_volume_mix_ratio.min()
+    co2[co2 > co2_volume_mix_ratio.max()] = co2_volume_mix_ratio.max()
+
+    ### h2o - H2O - Water Vapor
+    h2o_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["h2o_volume_mix_ratio"][:].astype(np_float), axis = 0) # H2O volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    h2o_volume_mix_ratio: np.ma.MaskedArray = h2o_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    #if method == "nearest":
+    h2o: np.ndarray = np.transpose(remap_z(z_mid, h2o_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # H2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    #elif method == "rbf": 
+    #    h2o_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, h2o_volume_mix_ratio, epsilon = epsilon) # Interpolant of H2O volume mixing ratio
+    #    h2o: np.ndarray = np.transpose(eval_rbfinterpolator_z(h2o_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # H2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated H2O volume mixing ratio
+    h2o[h2o < h2o_volume_mix_ratio.min()] = h2o_volume_mix_ratio.min()
+    h2o[h2o > h2o_volume_mix_ratio.max()] = h2o_volume_mix_ratio.max()
+
+    ### n2 - N2 - Nitrogen
+    n2_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["n2_volume_mix_ratio"][:].astype(np_float), axis = 0) # N2 volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    n2_volume_mix_ratio: np.ma.MaskedArray = n2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        n2: np.ndarray = np.transpose(remap_z(z_mid, n2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # N2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        n2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, n2_volume_mix_ratio, epsilon = epsilon) # Interpolant of N2 volume mixing ratio
+        n2: np.ndarray = np.transpose(eval_rbfinterpolator_z(n2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # N2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated N2 volume mixing ratio
+    n2[n2 < n2_volume_mix_ratio.min()] = n2_volume_mix_ratio.min()
+    n2[n2 > n2_volume_mix_ratio.max()] = n2_volume_mix_ratio.max()
+
+    ### n2o - N2O - Nitrous Oxide
+    n2o_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["n2o_volume_mix_ratio"][:].astype(np_float), axis = 0) # N2O volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    n2o_volume_mix_ratio: np.ma.MaskedArray = n2o_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        n2o: np.ndarray = np.transpose(remap_z(z_mid, n2o_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # N2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        n2o_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, n2o_volume_mix_ratio, epsilon = epsilon) # Interpolant of N2O volume mixing ratio
+        n2o: np.ndarray = np.transpose(eval_rbfinterpolator_z(n2o_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # N2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated N2O volume mixing ratio
+    n2o[n2o < n2o_volume_mix_ratio.min()] = n2o_volume_mix_ratio.min()
+    n2o[n2o > n2o_volume_mix_ratio.max()] = n2o_volume_mix_ratio.max()
+
+    ### o2 - O2 - Oxygen
+    o2_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["o2_volume_mix_ratio"][:].astype(np_float), axis = 0) # O2 volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    o2_volume_mix_ratio: np.ma.MaskedArray = o2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        o2: np.ndarray = np.transpose(remap_z(z_mid, o2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # O2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        o2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, o2_volume_mix_ratio, epsilon = epsilon) # Interpolant of O2 volume mixing ratio
+        o2: np.ndarray = np.transpose(eval_rbfinterpolator_z(o2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # O2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated O2 volume mixing ratio
+    o2[o2 < o2_volume_mix_ratio.min()] = o2_volume_mix_ratio.min()
+    o2[o2 > o2_volume_mix_ratio.max()] = o2_volume_mix_ratio.max()
+
+    ### o3 - O3 - Ozone
+    ### RRTMGP in Single Precision will fail with lower ozone concentrations than 1.e-13, apparently
+    o3_volume_mix_ratio: np.ma.masked_array = np.squeeze(nc_input.variables["o3_volume_mix_ratio"][:].astype(np_float), axis = 0) # O3 volume mixing ratio [kg kg^(-1)]; (ncol, n_lay_z)
+    o3_volume_mix_ratio: np.ma.MaskedArray = o3_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        o3: np.ndarray = np.transpose(remap_z(z_mid, o3_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # O3 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        o3_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, o3_volume_mix_ratio, epsilon = epsilon) # Interpolant of O3 volume mixing ratio
+        o3: np.ndarray = np.transpose(eval_rbfinterpolator_z(o3_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # O3 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated O3 volume mixing ratio
+    o3[o3 < o3_volume_mix_ratio.min()] = o3_volume_mix_ratio.min()
+    o3[o3 > o3_volume_mix_ratio.max()] = o3_volume_mix_ratio.max()
 
     ## Set other VMRs
-    co2: float = 348.e-6  # Carbon Dioxide [kg kg^(-1)]
-    ch4: float = 1650.e-9 # Methane [kg kg^(-1)]
-    n2o: float = 306.e-9  # Nitrous Oxide [kg kg^(-1)]
-    n2: float = 0.7808    # Nitrogen [kg kg^(-1)]
-    o2: float = 0.2095    # Oxygen [kg kg^(-1)]
-    co: float = 0.0       # Carbon Monoxide [kg kg^(-1)]
     ccl4: float = 0.0     # Carbon Tetrachloride [kg kg^(-1)]
     cfc11: float = 0.0    # Trichlorofluoromethane (CFC-11) [kg kg^(-1)]
     cfc12: float = 0.0    # Dichlorodifluoromethane (CFC-12) [kg kg^(-1)]
@@ -299,15 +420,6 @@ def main():
     hfc134a: float = 0.0  # 1,1,1,2-Tetrafluoroethane (HFC-134a) [kg kg^(-1)]
     cf4: float = 0.0      # Carbon Tetrafluoride (CF₄) [kg kg^(-1)]
     no2: float = 0.0      # Nitrogen Dioxide [kg kg^(-1)]
-
-    ## Set O3 VMR
-    g1: float = 3.6478
-    g2: float = 0.83209
-    g3: float = 11.3515
-    p_hpa: np.ndarray = p_lay / 100. # [hPa]
-
-    o3_min: float = 1.e-13 # RRTMGP in Single Precision will fail with lower ozone concentrations
-    o3: np.ndarray = np.maximum(o3_min, g1 * p_hpa**g2 * np.exp(-p_hpa / g3) * 1.e-6)
 
     ## Aerosol mixing ratios
     aermr01: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (0.03 - 0.5 µm)
@@ -435,45 +547,45 @@ def main():
     nc_rh_lay[:,:,:] = rh_lay
 
     ## Gas volume mixing ratios
-    nc_co2: nc._netCDF4.Variable = nc_file.createVariable("vmr_co2", nc_float)
+    nc_co2: nc._netCDF4.Variable = nc_file.createVariable("vmr_co2", nc_float, ("lay", "y", "x"))
     nc_co2.description = "Volume mixing ratio - Carbon Dioxide (CO2)"
     nc_co2.units = "kg kg^(-1)"
-    nc_co2[:] = co2
+    nc_co2[:,:,:] = co2
     
-    nc_ch4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ch4", nc_float)
+    nc_ch4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ch4", nc_float, ("lay", "y", "x"))
     nc_ch4.description = "Volume mixing ratio - Methane (CH4)"
     nc_ch4.units = "kg kg^(-1)"
-    nc_ch4[:] = ch4
+    nc_ch4[:,:,:] = ch4
     
-    nc_n2o: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2o", nc_float)
+    nc_n2o: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2o", nc_float, ("lay", "y", "x"))
     nc_n2o.description = "Volume mixing ratio - Nitrous Oxide (N2O)"
     nc_n2o.units = "kg kg^(-1)"
-    nc_n2o[:] = n2o
+    nc_n2o[:,:,:] = n2o
     
     nc_o3: nc._netCDF4.Variable = nc_file.createVariable("vmr_o3", nc_float, ("lay", "y", "x"))
     nc_o3.description = "Volume mixing ratio - Ozone (O3)"
     nc_o3.units = "kg kg^(-1)"
-    nc_o3[:] = o3
+    nc_o3[:,:,:] = o3
     
     nc_h2o: nc._netCDF4.Variable = nc_file.createVariable("vmr_h2o", nc_float, ("lay", "y", "x"))
     nc_h2o.description = "Volume mixing ratio - Water Vapor (H2O)"
     nc_h2o.units = "kg kg^(-1)"
-    nc_h2o[:] = h2o
+    nc_h2o[:,:,:] = h2o
     
-    nc_n2: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2", nc_float)
+    nc_n2: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2", nc_float, ("lay", "y", "x"))
     nc_n2.description = "Volume mixing ratio - Nitrogen (N2)"
     nc_n2.units = "kg kg^(-1)"
-    nc_n2[:] = n2
+    nc_n2[:,:,:] = n2
     
-    nc_o2: nc._netCDF4.Variable = nc_file.createVariable("vmr_o2", nc_float)
+    nc_o2: nc._netCDF4.Variable = nc_file.createVariable("vmr_o2", nc_float, ("lay", "y", "x"))
     nc_o2.description = "Volume mixing ratio - Oxygen (O2)"
     nc_o2.units = "kg kg^(-1)"
-    nc_o2[:] = o2
+    nc_o2[:,:,:] = o2
     
-    nc_co: nc._netCDF4.Variable = nc_file.createVariable("vmr_co", nc_float)
+    nc_co: nc._netCDF4.Variable = nc_file.createVariable("vmr_co", nc_float, ("lay", "y", "x"))
     nc_co.description = "Volume mixing ratio - Carbon Monoxide (CO)"
     nc_co.units = "kg kg^(-1)"
-    nc_co[:] = co
+    nc_co[:,:,:] = co
     
     nc_ccl4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ccl4", nc_float)
     nc_ccl4.description = "Volume mixing ratio - Carbon Tetrachloride (CCl4)"

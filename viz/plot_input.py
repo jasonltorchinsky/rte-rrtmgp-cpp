@@ -149,26 +149,33 @@ def main():
                      coord_axis = coord_axis)
 
     ## Plot the zonally- and meridionally-averaged vertical volume mixing ratio profiles
-    vmr_co2: np.ma.MaskedArray = nc_input.variables["vmr_co2"][:]
-    vmr_ch4: np.ma.MaskedArray = nc_input.variables["vmr_ch4"][:]
-    vmr_n2o: np.ma.MaskedArray = nc_input.variables["vmr_n2o"][:]
-    vmr_o3_lay: np.ma.MaskedArray = nc_input.variables["vmr_o3"][:] # (lay, y, x)
-    vmr_h2o_lay: np.ma.MaskedArray = nc_input.variables["vmr_h2o"][:] # (lay, y, x)
-    vmr_n2: np.ma.MaskedArray = nc_input.variables["vmr_n2"][:]
-    vmr_o2: np.ma.MaskedArray = nc_input.variables["vmr_o2"][:]
+    gas_codes: list = ["ch4", "co", "co2", "h2o", "n2", "n2o", "o2", "o3", 
+                       "ccl4", "cfc11", "cfc12", "cfc22", "hfc143a", "hfc125",
+                       "hfc23", "hfc32", "hfc134a", "cf4", "no2"]
+    gas_names: list = [r"$C H_4$", r"$C O$", r"$C O_2$", r"$H_2 O$", r"$N_2$", 
+                       r"$N_2 O$", r"$O_2$", r"$O_3$", r"$C Cl_4", r"$CFC-11$",
+                       r"$CFC-12$", r"$CFC-22$", r"$HFC-143a$", r"$HFC-125$",
+                       r"$HFC-23$", r"$HFC-32$", r"$HFC-134a$", r"$C F_4$", r"$N O_2$"]
+    ngases: int = len(gas_codes)
+    profiles: list = []
+    profile_labels: list = []
+    
+    for ii in range(0, ngases):
+        if ("vmr_" + gas_codes[ii]) in nc_input.variables.keys():
+            vmr: np.ma.MaskedArray = nc_input.variables["vmr_" + gas_codes[ii]][:]
+            assert(vmr.min() >= 0.0)
+            assert(vmr.max() <= 1.0)
+            if vmr.max() > 0.: # If non-zero, then plot it
+                if vmr.ndim == 1: # Constant across domain
+                    vmr_z: np.ma.MaskedArray = np.tile(vmr, (nlay))
+                elif vmr.ndim == 3:
+                    vmr_z: np.ndarray = np.nanmean(vmr, axis = (1, 2))
 
-    vmr_co2_z: np.ndarray = np.tile(vmr_co2, (nlay))
-    vmr_ch4_z: np.ndarray = np.tile(vmr_ch4, (nlay))
-    vmr_n2o_z: np.ndarray = np.tile(vmr_n2o, (nlay))
-    vmr_o3_z: np.ndarray = np.nanmean(vmr_o3_lay, axis = (1, 2))
-    vmr_h2o_z: np.ndarray = np.nanmean(vmr_h2o_lay, axis = (1, 2))
-    vmr_n2_z: np.ndarray = np.tile(vmr_n2, (nlay))
-    vmr_o2_z: np.ndarray = np.tile(vmr_o2, (nlay))
+                profiles.append(vmr_z)
+                profile_labels.append(gas_names[ii])
 
     coord: np.ndarray = z_lay / 1000. # (nlay); [km]
-    profiles: list = [vmr_co2_z, vmr_ch4_z, vmr_n2o_z, vmr_o3_z, vmr_h2o_z, vmr_n2_z, vmr_o2_z]
     file_path: str = os.path.join(out_dir_path, "vmr.png")
-    profile_labels: list = [r"$C O_2$", r"$C H_4$", r"$N_2 O$", r"$O_3$", r"$H_2 O$", r"$N_2$", r"$O_2$"]
     xlabel: str = r"Volume Mixing Ratio"
     ylabel: str = r"z $[km]$"
     coord_axis: str = "y"

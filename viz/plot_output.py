@@ -237,7 +237,7 @@ def main():
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "winter_r"
-        alpha: float = 0.05
+        alpha: float = 0.01
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
@@ -265,7 +265,7 @@ def main():
         cmax_2d: float = max(ts_flux_sfc_up.max(), rt_flux_sfc_up.max())
         cmap_2d: str = "afmhot"
         cmap_3d: str = "summer_r"
-        alpha: float = 0.05
+        alpha: float = 0.01
 
         plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
