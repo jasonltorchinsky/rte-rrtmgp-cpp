@@ -237,7 +237,7 @@ def main():
     quantity_label: str = r"Liquid Water Path [$kg\,m^{-2}$]"
 
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
-    if (lwp_npts <= max_npts):
+    if ((0 < lwp_npts) and (lwp_npts <= max_npts)):
         file_path: str = os.path.join(out_dir_path, "lwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
@@ -255,9 +255,10 @@ def main():
     ylabel: str = "Counts"
     title: str = "Liquid Water Path Distribution"
     xscale: str = "log"
-    plot_distribution(profile, file_path, nbins = nbins, title = title,
-                      xlabel = xlabel, ylabel = ylabel, xscale = xscale,
-                      tol = tol)
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale,
+                          tol = tol)
 
     # Plot the ice water path
     iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
@@ -266,7 +267,7 @@ def main():
     quantity_label: str = r"Ice Water Path [$kg\,m^{-2}$]"
 
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
-    if (iwp_npts <= max_npts):
+    if ((0 < iwp_npts) and (iwp_npts <= max_npts)):
         file_path: str = os.path.join(out_dir_path, "iwp.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
@@ -284,9 +285,10 @@ def main():
     ylabel: str = "Counts"
     title: str = "Ice Water Path Distribution"
     xscale: str = "log"
-    plot_distribution(profile, file_path, nbins = nbins, title = title,
-                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
-                      tol = tol)
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
 
     # Plot the liquid water effective radius
     rel: np.ma.MaskedArray = nc_input.variables["rel"][:] # (lay, y, x); [kg m^(-2)]
@@ -295,7 +297,7 @@ def main():
     quantity_label: str = r"Liquid Water Effective Radius [$\mu m$]"
 
     rel_npts: np.int64 = np.sum((rel > tol * rel.max()))
-    if (rel_npts <= max_npts):
+    if ((0 < rel_npts) and (rel_npts <= max_npts)):
         file_path: str = os.path.join(out_dir_path, "rel.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
@@ -313,9 +315,10 @@ def main():
     ylabel: str = "Counts"
     title: str = "Liquid Water Effective Radius Distribution"
     xscale: str = "linear"
-    plot_distribution(profile, file_path, nbins = nbins, title = title,
-                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
-                      tol = tol)
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
         
     # Plot the ice water effective diameter
     dei: np.ma.MaskedArray = nc_input.variables["dei"][:] # (lay, y, x); [kg m^(-2)]
@@ -324,7 +327,7 @@ def main():
     quantity_label: str = r"Ice Water Effective Diameter [$\mu m$]"
 
     dei_npts: np.int64 = np.sum((dei > tol * dei.max()))
-    if (dei_npts <= max_npts):
+    if ((0 < dei_npts) and (dei_npts <= max_npts)):
         file_path: str = os.path.join(out_dir_path, "dei.png")
         xlabel: str = r"x [$km$]"
         ylabel: str = r"y [$km$]"
@@ -340,12 +343,14 @@ def main():
     nbins: int = 256
     xlabel: str = quantity_label
     ylabel: str = "Counts"
-    title: str = "Ice Water Effective Radius Distribution"
+    title: str = "Ice Water Effective Diameter Distribution"
     xscale: str = "linear"
-    plot_distribution(profile, file_path, nbins = nbins, title = title,
-                      xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
-                      tol = tol)
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
 
 if __name__ == "__main__":
     main()
+
 

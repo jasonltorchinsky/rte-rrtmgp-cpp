@@ -220,7 +220,7 @@ def main():
 
     ### Plot alongside the lwp
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
-    if (lwp_npts <= max_npts):
+    if ((0 < lwp_npts) and (lwp_npts <= max_npts)):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -248,7 +248,7 @@ def main():
         
     ### Plot alongside the iwp
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
-    if (iwp_npts <= max_npts):
+    if ((0 < iwp_npts) and (iwp_npts <= max_npts)):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -319,7 +319,7 @@ def main():
 
     ### Plot alongside the lwp
     lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
-    if (lwp_npts <= max_npts):
+    if ((0 < lwp_npts) and (lwp_npts <= max_npts)):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -347,7 +347,7 @@ def main():
         
     ### Plot alongside the iwp
     iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
-    if (iwp_npts <= max_npts):
+    if ((0 < iwp_npts) and (iwp_npts <= max_npts)):
         meshgrid_2d: tuple = [XX / 1000., YY / 1000.]
         profile_2d: np.ndarray = np.transpose(rt_flux_sfc_up, axes = (1, 0))
         meshgrid_3d: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
@@ -375,3 +375,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

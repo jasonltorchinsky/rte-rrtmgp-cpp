@@ -16,20 +16,21 @@ TIME="[$(date '+%T')]"
 printf "${TIME}: LINKED netCDF DATA FILES\n\n"
 
 # ASSUME: Python libraries installed
+DPSCREAM_FILE="scream_dpxx_RICO.scream.INSTANT.nhours_x1.2004-12-16-00000.nc"
 PARAMETER_FILE="parameters.json"
 INPUT_FILE="rte_rrtmgp_input.nc"
 OUTPUT_FILE="rte_rrtmgp_output.nc"
 
 ## Create input file
 
-#TIME="[$(date '+%T')]"
-#printf "${TIME}: CREATING ATMOSPHERE STATE INPUT FILE...\n\n"
+TIME="[$(date '+%T')]"
+printf "${TIME}: CONVERTING DPSCREAM OUTPUT TO RTE-RRTMGP-CPP INPUT...\n\n"
 
-#eval 'python test_sandbox_input.py --input "${PARAMETER_FILE}" '\
-#     '--output "${INPUT_FILE}" '
+eval 'python ../viz/test_dpscream_input.py --input "${DPSCREAM_FILE}" '\
+     '--output "${INPUT_FILE}" '
 
-#TIME="[$(date '+%T')]"
-#printf "${TIME}: CREATED ATMOSPHERE STATE INPUT FILE\n\n"
+TIME="[$(date '+%T')]"
+printf "${TIME}: CONVERTED DPSCREAM OUTPUT TO RTE-RRTMGP-CPP INPUT\n\n"
 
 ## Visualize input
 
