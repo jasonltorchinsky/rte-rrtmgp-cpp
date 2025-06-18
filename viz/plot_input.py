@@ -1,0 +1,356 @@
+# Standard Library Imports
+import argparse
+import os
+
+# Third-Party Library Imports
+import netCDF4 as nc
+import numpy as np
+
+# Local Library Imports
+from plot_profiles import plot_profiles_1d, plot_profile_3d, plot_distribution
+
+def main():
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "plot_input",
+        description = "Plots the input of RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    parser.add_argument("--optics",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["aerosol_optics.nc"],
+                        help = "Path to aerosol optics file.")
+
+    parser.add_argument("--outdir",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["input"],
+                        help = "Path to output generated plots.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    optics_file_path: str = os.path.normpath(args.optics[0])
+    out_dir_path: str = os.path.normpath(args.outdir[0])
+
+    ## Load the input and optics data
+    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
+    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file_path)
+
+    ## Create the output directories
+    out_dir_path: str = os.path.join(os.getcwd(), out_dir_path)
+
+    if not os.path.exists(out_dir_path):
+        os.mkdir(out_dir_path)
+
+    ## Extract the spatial variables
+    x: np.ma.MaskedArray = nc_input.variables["x"][:]
+    y: np.ma.MaskedArray = nc_input.variables["y"][:]
+
+    z_lay: np.ma.MaskedArray = nc_input.variables["z_lay"][:]
+
+    XX_lay: np.ndarray
+    YY_lay: np.ndarray
+    ZZ_lay: np.ndarray
+    XX_lay, YY_lay, ZZ_lay = np.meshgrid(x, y, z_lay, indexing = "ij")
+
+    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:]
+
+    XX_lev: np.ndarray
+    YY_lev: np.ndarray
+    ZZ_lev: np.ndarray
+    XX_lev, YY_lev, ZZ_lev = np.meshgrid(x, y, z_lev, indexing = "ij")
+
+    nx: int = np.size(x)
+    ny: int = np.size(y)
+
+    nlay: int = np.size(z_lay)
+    nlev: int = np.size(z_lev)
+    nz: int = nlay + nlev
+
+    z: np.ndarray = np.empty(nz, dtype = z_lev.dtype) # [m]
+    z[0::2] = z_lev
+    z[1::2] = z_lay
+
+    XX: np.ndarray
+    YY: np.ndarray
+    ZZ: np.ndarray
+    XX, YY, ZZ = np.meshgrid(x, y, z, indexing = "ij")
+
+    ## Extract the wavenumber information
+    wavenumber1_lw: np.ma.MaskedArray = nc_optics.variables["wavenumber1_lw"][:] # (band_lw); [cm^(-1)]
+    wavenumber2_lw: np.ma.MaskedArray = nc_optics.variables["wavenumber2_lw"][:] # (band_lw); [cm^(-1)]
+
+    wavenumber1_sw: np.ma.MaskedArray = nc_optics.variables["wavenumber1_sw"][:] # (band_sw); [cm^(-1)]
+    wavenumber2_sw: np.ma.MaskedArray = nc_optics.variables["wavenumber2_sw"][:] # (band_sw); [cm^(-1)]
+
+    band_lw: int = np.size(wavenumber1_lw)
+    band_sw: int = np.size(wavenumber1_sw)
+    
+    ### Bin edges - ASSUME: wavenumber1_Xw looks like lower bin bounds, e.g., [0, 1, 2, 3, 4, 5]
+    ### and wavenumber2_Xw looks like upper bin bounds, e.g., [1, 2, 3, 4, 5, 6]
+    wavenumber_lw: np.ndarray = np.empty(band_lw + 1, dtype = wavenumber1_lw.dtype) # [cm^(-1)]
+    wavenumber_lw[0:-1] = wavenumber1_lw
+    wavenumber_lw[-1] = wavenumber2_lw[-1]
+
+    wavenumber_sw: np.ndarray = np.empty(band_sw + 1, dtype = wavenumber1_sw.dtype) # [cm^(-1)]
+    wavenumber_sw[0:-1] = wavenumber1_sw
+    wavenumber_sw[-1] = wavenumber2_sw[-1]
+
+    ## Plot the zonally- and meridionally-averaged vertical pressure profile
+    p_lay: np.ma.MaskedArray = nc_input.variables["p_lay"][:] # (lay, y, x); [Pa]
+    p_lev: np.ma.MaskedArray = nc_input.variables["p_lev"][:] # (lev, y, x); [Pa]
+
+    p: np.ndarray = np.empty([nz, ny, nx], dtype = p_lev.dtype)
+    p[0::2,...] = p_lev
+    p[1::2,...] = p_lay
+
+    p_z: np.ndarray = np.nanmean(p, axis = (1, 2))
+
+    coord: np.ndarray = z / 1000. # (nz); [km]
+    profiles: list = [p_z] # (nz); [Pa]
+    file_path: str = os.path.join(out_dir_path, "pressure.png")
+    xlabel: str = r"Pressure $[Pa]$"
+    ylabel: str = r"z $[km]$"
+    coord_axis: str = "y"
+
+    plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
+                     coord_axis = coord_axis)
+
+    ## Plot the zonally- and meridionally-averaged vertical temperture profile
+    t_lay: np.ma.MaskedArray = nc_input.variables["t_lay"][:] # (lay, y, x); [K]
+    t_lev: np.ma.MaskedArray = nc_input.variables["t_lev"][:] # (lev, y, x); [K]
+
+    t: np.ndarray = np.empty([nz, ny, nx], dtype = t_lev.dtype) # (nz); [K]
+    t[0::2,...] = t_lev
+    t[1::2,...] = t_lay
+
+    t_z: np.ndarray = np.nanmean(t, axis = (1, 2))
+
+    coord: np.ndarray = z / 1000. # (nz); [km]
+    profiles: list = [t_z] # (nz); [K]
+    file_path: str = os.path.join(out_dir_path, "temperature.png")
+    xlabel: str = r"Temperature $[K]$"
+    ylabel: str = r"z $[km]$"
+    coord_axis: str = "y"
+
+    plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
+                     coord_axis = coord_axis)
+
+    ## Plot the zonally- and meridionally-averaged vertical volume mixing ratio profiles
+    gas_codes: list = ["ch4", "co", "co2", "h2o", "n2", "n2o", "o2", "o3", 
+                       "ccl4", "cfc11", "cfc12", "cfc22", "hfc143a", "hfc125",
+                       "hfc23", "hfc32", "hfc134a", "cf4", "no2"]
+    gas_names: list = [r"$C H_4$", r"$C O$", r"$C O_2$", r"$H_2 O$", r"$N_2$", 
+                       r"$N_2 O$", r"$O_2$", r"$O_3$", r"$C Cl_4", r"$CFC-11$",
+                       r"$CFC-12$", r"$CFC-22$", r"$HFC-143a$", r"$HFC-125$",
+                       r"$HFC-23$", r"$HFC-32$", r"$HFC-134a$", r"$C F_4$", r"$N O_2$"]
+    ngases: int = len(gas_codes)
+    profiles: list = []
+    profile_labels: list = []
+    
+    for ii in range(0, ngases):
+        if ("vmr_" + gas_codes[ii]) in nc_input.variables.keys():
+            vmr: np.ma.MaskedArray = nc_input.variables["vmr_" + gas_codes[ii]][:]
+            assert(vmr.min() >= 0.0)
+            assert(vmr.max() <= 1.0)
+            if vmr.max() > 0.: # If non-zero, then plot it
+                if vmr.ndim == 1: # Constant across domain
+                    vmr_z: np.ma.MaskedArray = np.tile(vmr, (nlay))
+                elif vmr.ndim == 3:
+                    vmr_z: np.ndarray = np.nanmean(vmr, axis = (1, 2))
+
+                profiles.append(vmr_z)
+                profile_labels.append(gas_names[ii])
+
+    coord: np.ndarray = z_lay / 1000. # (nlay); [km]
+    file_path: str = os.path.join(out_dir_path, "vmr.png")
+    xlabel: str = r"Volume Mixing Ratio"
+    ylabel: str = r"z $[km]$"
+    coord_axis: str = "y"
+    xscale: str = "log"
+
+    plot_profiles_1d(coord, profiles, file_path, profile_labels = profile_labels, 
+                     xlabel = xlabel, ylabel = ylabel, coord_axis = coord_axis,
+                     xscale = xscale)
+
+    ## Plot the zonally- and meridionally-averaged surface emissivity spectrum
+    emis_sfc: np.ma.MaskedArray = nc_input.variables["emis_sfc"][:] # (y, x, band_lw)
+
+    emis_sfc_spec: np.ndarray = np.nanmean(emis_sfc, axis = (0, 1)) # (band_lw)
+
+    ### Repeat the last value for the step plot
+    emis_sfc_spec: np.ndarray = np.concatenate((emis_sfc_spec, np.array([emis_sfc_spec[-1]]))) # (band_lw + 1)
+
+    coord: np.ndarray = wavenumber_lw # (band_lw); [cm^(-1)]
+    profiles: list = [emis_sfc_spec]
+    file_path: str = os.path.join(out_dir_path, "emis_sfc.png")
+    xlabel: str = r"Wavenumber [$cm^{-1}$]"
+    ylabel: str = r"Surface Emissivity - Longwave"
+    coord_axis: str = "x"
+    draw_style: str = "steps-post"
+
+    plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
+                     coord_axis = coord_axis, draw_style = draw_style)
+
+    ## Plot the zonally- and meridionally-averaged surface albedo (direct and diffuse)
+    sfc_alb_dir: np.ma.MaskedArray = nc_input.variables["sfc_alb_dir"][:] # (y, x, band_sw)
+    sfc_alb_dif: np.ma.MaskedArray = nc_input.variables["sfc_alb_dif"][:] # (y, x, band_sw)
+
+    sfc_alb_dir_spec: np.ndarray = np.nanmean(sfc_alb_dir, axis = (0, 1)) # (band_sw); [cm^(-1)]
+    sfc_alb_dif_spec: np.ndarray = np.nanmean(sfc_alb_dif, axis = (0, 1)) # (band_sw); [cm^(-1)]
+
+    ### Repeat the last value for the step plot
+    sfc_alb_dir_spec: np.ndarray = np.concatenate((sfc_alb_dir_spec, np.array([sfc_alb_dir_spec[-1]]))) # (band_sw + 1)
+    sfc_alb_dif_spec: np.ndarray = np.concatenate((sfc_alb_dif_spec, np.array([sfc_alb_dif_spec[-1]]))) # (band_sw + 1)
+
+    coord: np.ndarray = wavenumber_sw # (band_sw); [cm^(-1)]
+    profiles: list = [sfc_alb_dir_spec, sfc_alb_dif_spec]
+    file_path: str = os.path.join(out_dir_path, "sfc_alb.png")
+    xlabel: str = r"Wavenumber [$cm^{-1}$]"
+    ylabel: str = r"Surface Albedo - Shortwave"
+    coord_axis: str = "x"
+    draw_style: str = "steps-post"
+
+    plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
+                     coord_axis = coord_axis, draw_style = draw_style)
+
+    ## Set parameters for 3-D plots
+    tol: float = 0.0
+    max_npts: int = 650000
+
+    # Plot the liquid water path
+    lwp: np.ma.MaskedArray = nc_input.variables["lwp"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(lwp, axes = (2, 1, 0))
+    quantity_label: str = r"Liquid Water Path [$kg\,m^{-2}$]"
+
+    lwp_npts: np.int64 = np.sum((lwp > tol * lwp.max()))
+    if ((0 < lwp_npts) and (lwp_npts <= max_npts)):
+        file_path: str = os.path.join(out_dir_path, "lwp.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = quantity_label
+        cmap: str = "winter_r"
+        alpha: float = 0.05
+
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "lwp_dist.png")
+    nbins: int = 64
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Liquid Water Path Distribution"
+    xscale: str = "log"
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale,
+                          tol = tol)
+
+    # Plot the ice water path
+    iwp: np.ma.MaskedArray = nc_input.variables["iwp"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(iwp, axes = (2, 1, 0))
+    quantity_label: str = r"Ice Water Path [$kg\,m^{-2}$]"
+
+    iwp_npts: np.int64 = np.sum((iwp > tol * iwp.max()))
+    if ((0 < iwp_npts) and (iwp_npts <= max_npts)):
+        file_path: str = os.path.join(out_dir_path, "iwp.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = quantity_label
+        cmap: str = "summer_r"
+        alpha: float = 0.05
+
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "iwp_dist.png")
+    nbins: int = 64
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Ice Water Path Distribution"
+    xscale: str = "log"
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
+
+    # Plot the liquid water effective radius
+    rel: np.ma.MaskedArray = nc_input.variables["rel"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(rel, axes = (2, 1, 0))
+    quantity_label: str = r"Liquid Water Effective Radius [$\mu m$]"
+
+    rel_npts: np.int64 = np.sum((rel > tol * rel.max()))
+    if ((0 < rel_npts) and (rel_npts <= max_npts)):
+        file_path: str = os.path.join(out_dir_path, "rel.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = quantity_label
+        cmap: str = "autumn_r"
+        alpha: float = 0.05
+
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "rel_dist.png")
+    nbins: int = 256
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Liquid Water Effective Radius Distribution"
+    xscale: str = "linear"
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
+        
+    # Plot the ice water effective diameter
+    dei: np.ma.MaskedArray = nc_input.variables["dei"][:] # (lay, y, x); [kg m^(-2)]
+    meshgrid: np.ndarray = [XX_lay / 1000., YY_lay / 1000., ZZ_lay / 1000.] #  [km]
+    profile: list = np.transpose(dei, axes = (2, 1, 0))
+    quantity_label: str = r"Ice Water Effective Diameter [$\mu m$]"
+
+    dei_npts: np.int64 = np.sum((dei > tol * dei.max()))
+    if ((0 < dei_npts) and (dei_npts <= max_npts)):
+        file_path: str = os.path.join(out_dir_path, "dei.png")
+        xlabel: str = r"x [$km$]"
+        ylabel: str = r"y [$km$]"
+        zlabel: str = r"z [$km$]"
+        title: str = quantity_label
+        cmap: str = "spring_r"
+        alpha: float = 0.05
+
+        plot_profile_3d(meshgrid, profile, file_path, xlabel = xlabel, ylabel = ylabel,
+                        zlabel = zlabel, title = title, cmap = cmap, tol = tol, alpha = alpha)
+
+    file_path: str = os.path.join(out_dir_path, "dei_dist.png")
+    nbins: int = 256
+    xlabel: str = quantity_label
+    ylabel: str = "Counts"
+    title: str = "Ice Water Effective Diameter Distribution"
+    xscale: str = "linear"
+    if (np.abs(profile.max() - profile.min()) > 0.0):
+        plot_distribution(profile, file_path, nbins = nbins, title = title,
+                          xlabel = xlabel, ylabel = ylabel, xscale = xscale, 
+                          tol = tol)
+
+if __name__ == "__main__":
+    main()
+
+
