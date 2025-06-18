@@ -336,7 +336,7 @@ def main():
         rel: np.ndarray = np.transpose(eval_rbfinterpolator_z(rel_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Liquid water effective radius at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
     
     ### Limit the interpolated and extrapolated liquid water effective radius values
-    ### Should be between 2.5 and 21.5
+    ### Should be between 2.5 μm and 21.5 μm
     rel[rel < 2.5] = 2.5
     rel[rel > 21.5] = 21.5
 
@@ -357,7 +357,7 @@ def main():
         dei: np.ndarray = np.transpose(eval_rbfinterpolator_z(dei_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Ice water effective diameter at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
     
     ### Limit the interpolated and extrapolated ice water effective diameter values
-    ### Should be between 10. and 180.
+    ### Should be between 10. μm and 180. μm
     dei[dei < 10.] = 10.
     dei[dei > 180.] = 180.
 
