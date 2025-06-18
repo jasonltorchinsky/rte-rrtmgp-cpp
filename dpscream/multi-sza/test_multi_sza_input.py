@@ -1,0 +1,1109 @@
+"""
+Generates a NetCDF file that converts output from DP-SCREAM into input for 
+RTE-RRTMGP.
+
+See the following reference for more information:
+M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
+"""
+
+# Standard Library Imports
+import argparse
+import os
+
+from typing import Optional
+
+# Third-Party Library Imports
+import numpy as np
+import netCDF4 as nc
+from scipy.interpolate import RBFInterpolator, griddata
+
+# Local Library Imports
+from consts import R_d, R_v, g, np_float
+
+def main():
+    ## Parse command-line input
+    parser: argparse.ArgumentParser = argparse.ArgumentParser(
+        prog = "convert_dpscream_output",
+        description = "Creates output from DP-SCREAM to input to RTE-RRTMGP-CPP.")
+    
+    parser.add_argument("--input",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = True,
+                        help = "Path to DP-SCREAM output.")
+    
+    parser.add_argument("--output",
+                        action = "store",
+                        nargs = 1,
+                        type = str,
+                        required = False,
+                        default = ["rte_rrtmgp_input.nc"],
+                        help = "Path to RTE-RRTMGP-CPP input file.")
+    
+    args: argparse.Namespace = parser.parse_args()
+
+    input_file_path: str = os.path.normpath(args.input[0])
+    output_file_path: str = os.path.normpath(args.output[0])
+
+    ## Read the DP-SCREAM output file
+    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
+
+    ## Select a time-step if there are multiple
+    time: np.ma.MaskedArray = nc_input.variables["time"][:].astype(np_float) # Days since given date; (time)
+    ntime: int = time.size
+    if ntime > 0:
+        time_idx: Optional[int] = -1
+    else:
+        time_idx: Optional[idx] = None
+
+    ## Reconstruct the horizontal grid
+    lon: np.ma.MaskedArray = nc_input.variables["lon"][:].astype(np_float) # Column-center - x-dimension [m]; (ncol)
+    lat: np.ma.MaskedArray = nc_input.variables["lat"][:].astype(np_float) # Column center - y-dimension [m]; (ncol)
+
+    sort_mask: np.ndarray = np.lexsort((lon, lat)) # Mask that sorts arrays for restructuring into 1-D x- and y-grids
+
+    n_col_x: int = np.unique(lon).size # No. columns in x
+    n_col_y: int = np.unique(lat).size # No. columns in y
+    cols: np.ma.MaskedArray = np.stack((lon[sort_mask], lat[sort_mask]), axis = 1).reshape(n_col_x, n_col_y, 2)
+
+    ### NOTE: The number of points in the horizontal acceleration grid "should"
+    ### be between 1/10 and 1/20 of n_col_x, n_col_y.
+    ngrid_x: int = np.ceil(n_col_x / 10)
+    ngrid_y: int = np.ceil(n_col_y / 10)
+    
+    ### NOTE: The names xh, yh seem to refer to the interfaces between columns,
+    ### but in the original rcemip experiment, they just tack on an extra value.
+    ### They don't seem to be directly used in the code, so we will use them
+    ### to be interfaces between columns.
+    ### NOTE: Assume that horizontal grids are regularly spaced.
+
+    x: np.ma.MaskedArray = (cols[:,:,0])[0,:] # x-midpoints of each column [m]; (n_col_x)
+    dx: np_float = x[1] - x[0]
+    xh: np.ma.MaskedArray = np.append(x - (dx / 2.), x[-1] + (dx / 2.)) # x-interfaces of each column [m]; (n_col_x + 1)
+
+    y: np.ma.MaskedArray = (cols[:,:,1])[:,0] # x-midpoints of each column [m]; (n_col_y)
+    dy: np_float = y[1] - y[0]
+    yh: np.ma.MaskedArray = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
+
+    ## Reconstruct the veritcal grids
+    z_mid: np.ma.MaskedArray = nc_input.variables["z_mid"][:].astype(np_float) # Level midpoints [m]; (time, ncol, n_lay_z)
+    z_int: np.ma.MaskedArray = nc_input.variables["z_int"][:].astype(np_float) # Level interfaces [m]; (time, ncol, n_lev_z)
+
+    if time_idx is not None:
+        z_mid: np.ma.MaskedArray = z_mid[time_idx,...] # (ncol, n_lay_z)
+        z_int: np.ma.MaskedArray = z_int[time_idx,...] # (ncol, n_lev_z)
+    else:
+        z_mid: np.ma.MaskedArray = np.squeeze(z_mid, axis = 0) # (ncol, n_lay_z)
+        z_int: np.ma.MaskedArray = np.squeeze(z_int, axis = 0) # (ncol, n_lev_z)
+
+    n_lay_z: int = z_mid.shape[1]
+    n_lev_z: int = z_int.shape[1]
+    assert(n_lev_z == n_lay_z + 1)
+
+    z_mid: np.ma.MaskedArray = z_mid[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # Layer midpoints [m]; (n_col_x, n_col_y, n_lay_z)
+    z_int: np.ma.MaskedArray = z_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # Layer interfaces [m]; (n_col_x, n_col_y, n_lev_z)
+    
+    ### Interleave these into a single vertical grid
+    n_z: int = n_lay_z + n_lev_z
+    z: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = z_mid.dtype)
+    z[:,:,1::2] = z_mid
+    z[:,:,0::2] = z_int
+
+    ### NOTE: The number of points in the vertical acceleration grid "should"
+    ### be between 1/10 and 1/20 of n_lay_z.
+    ngrid_z: int = np.ceil(n_lay_z / 10)
+
+    ### Create the scattered point array for interpolating variables from
+    XYZ_mid: np.ma.MaskedArray = np.concatenate((np.tile(np.expand_dims(cols, axis = 2), (1, 1, n_lay_z, 1)), np.expand_dims(z_mid, axis = 3)), axis = 3) # (n_col_x, n_col_y, n_lay_z, 3)
+    XYZ_mid: np.ma.MaskedArray = XYZ_mid.reshape(n_col_x * n_col_y * n_lay_z, 3)
+
+    XYZ_int: np.ma.MaskedArray = np.concatenate((np.tile(np.expand_dims(cols, axis = 2), (1, 1, n_lev_z, 1)), np.expand_dims(z_int, axis = 3)), axis = 3) # (n_col_x, n_col_y, n_lev_z, 3)
+    XYZ_int: np.ma.MaskedArray = XYZ_int.reshape(n_col_x * n_col_y * n_lev_z, 3)
+
+    ### Create a regularly-spaced grid for interpolating variables to.
+    z_min: np_float = 0.0
+    z_max: np_float = z_int.max()
+
+    z_lev: np.ndarray = np.linspace(z_min, z_max, n_lev_z) # Regularly-spaced layer interfaces [m]; (n_lev_z)
+    z_lay: np.ndarray = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced layer midpoints [m]; (n_lay_z)
+
+    ZZ_lev: np.ndarray
+    _, _, ZZ_lev = np.meshgrid(x, y, z_lev, indexing = "ij")
+
+    XX_lay: np.nadarray
+    YY_lay: np.ndarray
+    ZZ_lay: np.ndarray
+    XX_lay, YY_lay, ZZ_lay = np.meshgrid(x, y, z_lay, indexing = "ij")
+
+    method: str = "rbf"
+    assert(method in ["nearest", "rbf"])
+    epsilon: float = 1.0
+
+    fields: dict = {}
+    dpscream_field_keys: list = ["p", "T", "RelativeHumidity", "qc", "qi",
+                                 "eff_radius_qc", "eff_radius_qi", "ch4_volume_mix_ratio",
+                                 "co_volume_mix_ratio", "co2_volume_mix_ratio",
+                                 "h2o_volume_mix_ratio", "n2_volume_mix_ratio",
+                                 "n2o_volume_mix_ratio", "o2_volume_mix_ratio",
+                                 "o3_volume_mix_ratio"]
+    rte_field_keys: list = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", "vmr_ch4",
+                            "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", "vmr_o2",
+                            "vmr_o3"]
+
+    for ii in range(len(dpscream_field_keys)):
+        dpscream_field_key: str = dpscream_field_keys[ii]
+        rte_field_key: str = rte_field_keys[ii]
+        ## Fields either have layer midpoint and interface values with an 
+        ## additional string in their key, or just layer midpoint values that are
+        ## just the field key
+        if dpscream_field_key in nc_input.variables.keys():
+            field_mid: np.ma.MaskedArray = nc_input.variables[dpscream_field_key][:].astype(np_float) # Field at layer midpoints; (time, ncol, n_lay_z)
+            field_int: Optional[np.ma.MaskedArray] = None # Field at layer interfaces; (time, ncol, n_lay_z)
+
+            z_field: np.ndarray = z_mid
+        else:
+            dpscream_field_key_mid: str = dpscream_field_key + "_mid"
+            ## Exceptions
+            if dpscream_field_key in ["T"]:
+                dpscream_field_key: str = dpscream_field_key + "int_rad"
+            else:
+                dpscream_field_key_int: str = dpscream_field_key + "_int"
+
+            ## We should alywas have fields values at layer midpoints
+            ## Unless we don't, then this needs to be fixed
+            assert(dpscream_field_key_mid in nc_input.variables.keys())
+            field_mid: np.ma.MaskedArray = nc_input.variables[dpscream_field_key_mid][:].astype(np_float) # Field at layer midpoints; (time, ncol, n_lay_z)
+            
+            if dpscream_field_key_int in nc_input.variables.keys():
+                field_int: Optional[np.ma.MaskedArray] = nc_input.variables[dpscream_field_key_int][:].astype(np_float) # Field at layer interfaces; (time, ncol, n_lay_z)
+                z_field: np.ndarray = z
+            else:
+                field_int: Optional[np.ma.MaskedArray] = None # Field at layer interfaces; (time, ncol, n_lay_z)
+                z_field: np.ndarray = z_mid
+
+        ## Specify a given time-step, if the data file has multiple
+        if time_idx is not None:
+            field_mid: np.ma.MaskedArray = field_mid[time_idx,...] # (ncol, n_lay_z)
+            if field_int is not None:
+                field_int: np.ma.MaskedArray = field_int[time_idx,...] # (ncol, n_lev_z)
+        else:
+            field_mid: np.ma.MaskedArray = np.squeeze(field_mid, axis = 0) # (ncol, n_lay_z)
+            if field_int is not None:
+                field_int: np.ma.MaskedArray = np.squeeze(field_int, axis = 0) # (ncol, n_lev_z)
+
+        ## Reshape into x- and y-columns
+        field_mid: np.ma.MaskedArray = field_mid[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+        if field_int is not None:
+            field_int: np.ma.MaskedArray = field_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
+
+        ## If we have field values at layer midpoints and interfaces, interleave them
+        if field_int is not None:
+            field: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = field_mid.dtype)
+            field[:,:,1::2] = field_mid
+            field[:,:,0::2] = field_int
+        else:
+            field: np.ndarray = np.ma.getdata(field_mid)
+
+        ## Exceptions
+        if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
+            field: np.ndarray = 2. * field
+        elif rte_field_key in ["lwp", "iwp"]: # Derived from multiple quantities
+            p_int: np.ma.MaskedArray = nc_input.variables["p_int"][:].astype(np_float) # Pressure at layer interfaces [Pa]; (time, ncol, n_lev_z)
+            if time_idx is not None:
+                p_int: np.ma.MaskedArray = p_int[time_idx,...] # (ncol, n_lev_z)
+            else:
+                p_int: np.ma.MaskedArray = np.squeeze(p_int, axis = 0) # (ncol, n_lev_z)
+            p_int: np.ma.MaskedArray = p_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
+            dp: np.ma.MaskedArray = p_int[:,:,1:] - p_int[:,:,:-1] # Layer pressure thickness [Pa]; (n_col_x, n_col_y, n_lay_z)
+
+            field: np.ndarray = field * dp / g
+
+        ## Get field min and max
+        ## Exceptions
+        if rte_field_key in ["rel"]: # Between 2.5 μm and 21.5 μm
+            field_min: float = 2.5
+            field_max: float = 21.5
+        elif rte_field_key in ["dei"]: # Between 10. μm and 180. μm
+            field_min: float = 10
+            field_max: float = 180.
+        else:
+            field_min: float = field.max()
+            field_max: float = field.max()
+
+        ## Interpolate the values to regular vertical layers
+        if ((method == "nearest") or (rte_field_key == "vmr_h2o")):
+            field_lay: np.ndarray = np.transpose(remap_z(z_field, field, ZZ_lay), axes = (2, 1, 0)) # Field at regular layer midpoints; (n_lay_z, n_col_y, n_col_x)
+            field_lev: np.ndarray = np.transpose(remap_z(z_field, field, ZZ_lev), axes = (2, 1, 0)) # Field at regular layer interfaces; (n_lev_z, n_col_y, n_col_x)
+        elif method == "rbf":
+            field_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_field, field, epsilon = epsilon) # Interpolant of field in each column
+            field_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(field_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Field at regular layer midpoints; (n_lay_z, n_col_y, n_col_x)
+            field_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(field_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Field at regular layer interfaces; (n_lev_z, n_col_y, n_col_x)
+
+        ## Limit the interpolated (and extrapolated) field values
+        ## Exceptions:
+        field_lay[field_lay < field_min] = field_min
+        field_lay[field_lay > field_max] = field_max
+
+        field_lev[field_lev < field_min] = field_min
+        field_lev[field_lev > field_max] = field_max
+
+        ## Exceptions
+        if rte_field_key in ["rh", "q", "lwp", "iwp", "rel", "dei", "vmr_ch4", "vmr_co",
+                            "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", "vmr_o2",
+                            "vmr_o3"]:
+            fields[rte_field_key] = field_lay
+        else:
+            rte_field_key_lay: str = rte_field_key + "_lay"
+            rte_field_key_lev: str = rte_field_key + "_lev"
+
+            fields[rte_field_key_lay] = field_lay
+            fields[rte_field_key_lev] = field_lev
+
+    ## TO-DO: 2-D fields specified in the DP-SCREAM output
+    ### Generalize the below code for all 2-D quanitites, will look like loop above
+    surf_radiative_T: np.ma.MaskedArray = nc_input.variables["surf_radiative_T"][:].astype(np_float) # Surface temperature [K]; (time, ncol)
+    if time_idx is not None:
+        surf_radiative_T: np.ma.MaskedArray = surf_radiative_T[time_idx] # (ncol)
+    else:
+        surf_radiative_T: np.ma.MaskedArray = np.squeeze(surf_radiative_T, axis = 0) # (ncol)
+    surf_radiative_T: np.ma.MaskedArray = surf_radiative_T[sort_mask].reshape(n_col_x, n_col_y) # (n_col_x, n_col_y)
+    surf_radiative_T: np.ndarray = np.transpose(np.ma.getdata(surf_radiative_T), axes = (1, 0)) # (n_col_y, n_col_x)
+    fields["t_sfc"]: np.ndarray = surf_radiative_T
+
+    ## Special fields specified in the DP-SCREAM output
+    ## Obtain the number of shortwave and longwave bands.
+    swband: np.ma.MaskedArray = nc_input.variables["swband"][:].astype(np_float) # Shortwave bands [cm^(-1)]; (n_bnd_sw)
+    lwband: np.ma.MaskedArray = nc_input.variables["lwband"][:].astype(np_float) # Longwave bands [cm^(-1)]; (n_bnd_lw)
+
+    n_bnd_sw: int = swband.size
+    n_bnd_lw: int = lwband.size
+
+    ## Fields that are not specified in the DP-SCREAM output
+    ## Longwave boundary conditions
+    fields["emis_sfc"]: np.ndarray = np.ones((n_col_y, n_col_x)) # Surface emissivity [N/A]
+
+    ## Shortwave boundary conditions
+    fields["sfc_alb_dir"]: np.ndarray = np.ones((n_col_y, n_col_x, n_bnd_sw)) * 0.07 # Surface Albedo - Direct
+    fields["sfc_alb_dif"]: np.ndarray = np.ones((n_col_y, n_col_x, n_bnd_sw)) * 0.07 # Surface Albedo - Diffuse
+
+    fields["tsi"]: float = 551.58 # Total Solar Irradiance [W m^(-2)]
+
+    fields["azi"]: float = 1.834 # Azimuthal Angle [Radians]
+
+        
+    breakpoint()
+    ### CONTINUE FROM BREAKPOINT
+
+        
+
+
+    ## Interpolate the pressure to the regularly-spaced grid.
+    ### NOTE: We should interweave p_mid and p_int and interpolate that to 
+    ### the regularly-spaced grid. As a first pass, we do these individually.
+    ### NOTE: The surface pressure is stored in a different variable, but that
+    ### would add an extra level relative to the other state variables.
+    p_mid: np.ma.MaskedArray = nc_input.variables["p_mid"][:].astype(np_float) # Pressure at layer midpoints [Pa]; (time, ncol, n_lay_z)
+    p_int: np.ma.MaskedArray = nc_input.variables["p_int"][:].astype(np_float) # Pressure at layer interfaces [Pa]; (time, ncol, n_lev_z)
+    
+    if time_idx is not None:
+        p_mid: np.ma.MaskedArray = p_mid[time_idx,...] # (ncol, n_lay_z)
+        p_int: np.ma.MaskedArray = p_int[time_idx,...] # (ncol, n_lev_z)
+    else:
+        p_mid: np.ma.MaskedArray = np.squeeze(p_mid, axis = 0) # (ncol, n_lay_z)
+        p_int: np.ma.MaskedArray = np.squeeze(p_int, axis = 0) # (ncol, n_lev_z)
+
+    p_mid: np.ma.MaskedArray = p_mid[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+    p_int: np.ma.MaskedArray = p_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
+
+    ### Interleave these into a single array
+    p: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = p_mid.dtype)
+    p[:,:,1::2] = p_mid
+    p[:,:,0::2] = p_int
+
+    if method == "nearest":
+        p_lay: np.ndarray = np.transpose(remap_z(z, p, ZZ_lay), axes = (2, 1, 0)) # Pressure at regular layer midpoints [Pa]; (n_lay_z, n_col_y, n_col_x)
+        p_lev: np.ndarray = np.transpose(remap_z(z, p, ZZ_lev), axes = (2, 1, 0)) # Pressure at regular layer interfaces [Pa]; (n_lev_z, n_col_y, n_col_x)
+    elif method == "rbf":
+        p_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z, p, epsilon = epsilon) # Interpolant of pressure in each column [Pa]
+        p_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(p_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Pressure at regular layer midpoints [Pa]; (n_lay_z, n_col_y, n_col_x)
+        p_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(p_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Pressure at regular layer interfaces [Pa]; (n_lev_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated pressure values
+    p_lay[p_lay < p.min()] = p.min()
+    p_lay[p_lay > p.max()] = p.max()
+
+    p_lev[p_lev < p.min()] = p.min()
+    p_lev[p_lev > p.max()] = p.max()
+    
+    ## Interpolate the temperature to the regularly-spaced grid.
+    T_mid: np.ma.MaskedArray = nc_input.variables["T_mid"][:].astype(np_float) # Temperature at layer midpoints [K]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        T_mid: np.ma.MaskedArray = T_mid[time_idx,...] # (ncol, n_lay_z)
+    else:
+        T_mid: np.ma.MaskedArray = np.squeeze(T_mid, axis = 0) # (ncol, n_lay_z)
+
+    T_mid: np.ma.MaskedArray = T_mid[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if "T_int_rad" in nc_input.variables.keys():
+        T_int: np.ma.MaskedArray = nc_input.variables["T_int_rad"][:].astype(np_float) # Temperature at layer interfaces [K]; (time, ncol, n_lev_z)
+
+        if time_idx is not None:
+            T_int: np.ma.MaskedArray = T_int[time_idx,...] # (ncol, n_lev_z)
+        else:
+            T_int: np.ma.MaskedArray = np.squeeze(T_int, axis = 0) # (ncol, n_lev_z)
+
+        T_int: np.ma.MaskedArray = T_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
+
+        ### Interleave these into a single array
+        T: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = T_mid.dtype)
+        T[:,:,1::2] = T_mid
+        T[:,:,0::2] = T_int
+
+        if method == "nearest":
+            T_lay: np.ndarray = np.transpose(remap_z(z, T, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(remap_z(z, T, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+        elif method == "rbf":
+            T_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z, T, epsilon = epsilon) # Interpolant of temperature in each column [T]
+            T_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+
+        ### Limit the interpolated and extrapolated temperature values
+        T_lay[T_lay < T.min()] = T.min()
+        T_lay[T_lay > T.max()] = T.max()
+    
+        T_lev[T_lev < T.min()] = T.min()
+        T_lev[T_lev > T.max()] = T.max()
+    else:
+        if method == "nearest":
+            T_lay: np.ndarray = np.transpose(remap_z(z_mid, T_mid, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(remap_z(z_mid, T_mid, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+        elif method == "rbf":
+            T_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, T_mid, epsilon = epsilon) # Interpolant of temperature in each column [T]
+            T_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Temperature at regular layer midpoints [K]; (n_lay_z, n_col_y, n_col_x)
+            T_lev: np.ndarray = np.transpose(eval_rbfinterpolator_z(T_rbfinterpolator_z, ZZ_lev), axes = (2, 1, 0)) # Temperature at regular layer interfaces [K]; (n_lev_z, n_col_y, n_col_x)
+
+        ### Limit the interpolated and extrapolated temperature values
+        T_lay[T_lay < T_mid.min()] = T_mid.min()
+        T_lay[T_lay > T_mid.max()] = T_mid.max()
+    
+        T_lev[T_lev < T_mid.min()] = T_mid.min()
+        T_lev[T_lev > T_mid.max()] = T_mid.max()
+
+    ## Interpolate the relative humidity to the regularly-spaced grid.
+    RelativeHumidity: np.ma.MaskedArray = nc_input.variables["RelativeHumidity"][:].astype(np_float) # Relative humidity at layer midpoints [N/A]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        RelativeHumidity: np.ma.MaskedArray = RelativeHumidity[time_idx,...] # (ncol, n_lay_z)
+    else:
+        RelativeHumidity: np.ma.MaskedArray = np.squeeze(RelativeHumidity, axis = 0) # (ncol, n_lay_z)
+
+    RelativeHumidity: np.ma.MaskedArray = RelativeHumidity[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        rh_lay: np.ndarray = np.transpose(remap_z(z_mid, RelativeHumidity, ZZ_lay), axes = (2, 1, 0)) # Relative humidity at regular layer midpoints; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf":
+        rh_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, RelativeHumidity) # Interpolant of relative humidity in each column
+        rh_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(rh_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Relative humidity at regular layer midpoints; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated relative humidity values
+    rh_lay[rh_lay < RelativeHumidity.min()] = RelativeHumidity.min()
+    rh_lay[rh_lay > RelativeHumidity.max()] = RelativeHumidity.max()
+
+    ## Interpolate specific humidity to the regularly-spaced grid.
+    ### NOTE: I assume that "humidity mixing ratio" is the same as "specific humidity"
+    qv: np.ma.MaskedArray = nc_input.variables["qv"][:].astype(np_float) # Specific humidity at layer midpoints [N/A]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        qv: np.ma.MaskedArray = qv[time_idx,...] # (ncol, n_lay_z)
+    else:
+        qv: np.ma.MaskedArray = np.squeeze(qv, axis = 0) # (ncol, n_lay_z)
+
+    qv: np.ma.MaskedArray = qv[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    #if method == "nearest":
+    q_lay: np.ndarray = np.transpose(remap_z(z_mid, qv, ZZ_lay), axes = (2, 1, 0)) # Specific humidity at regular layer midpoints; (n_col_x, n_col_y, n_lay_z)
+    #elif method == "rbf":
+    #    q_lay_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, qv) # Interpolant of specific humidity in each column
+    #    q_lay: np.ndarray = np.transpose(eval_rbfinterpolator_z(q_lay_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Specific humidity at regular layer midpoints; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated specific humidity values
+    q_lay[q_lay < qv.min()] = qv.min()
+    q_lay[q_lay > qv.max()] = qv.max()
+
+    ## Obtain the number of shortwave and longwave bands.
+    swband: np.ma.MaskedArray = nc_input.variables["swband"][:].astype(np_float) # Shortwave bands [cm^(-1)]; (n_bnd_sw)
+    lwband: np.ma.MaskedArray = nc_input.variables["lwband"][:].astype(np_float) # Longwave bands [cm^(-1)]; (n_bnd_lw)
+
+    n_bnd_sw: int = swband.size
+    n_bnd_lw: int = lwband.size
+
+    ## Calculate the lwp, iwp on the regularly-spaced grid.
+    qc: np.ma.MaskedArray = nc_input.variables["qc"][:].astype(np_float) # Cloud liquid water mixing ratio at layer midpoints [N/A]; (time, ncol, n_lay_z)
+    qi: np.ma.MaskedArray = nc_input.variables["qi"][:].astype(np_float) # Cloud ice water mixing ratio at layer midpoints [N/A]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        qc: np.ma.MaskedArray = qc[time_idx,...] # (ncol, n_lay_z)
+        qi: np.ma.MaskedArray = qi[time_idx,...] # (ncol, n_lay_z)
+    else:
+        qc: np.ma.MaskedArray = np.squeeze(qc, axis = 0) # (ncol, n_lay_z)
+        qi: np.ma.MaskedArray = np.squeeze(qi, axis = 0) # (ncol, n_lay_z)
+
+    qc: np.ma.MaskedArray = qc[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+    qi: np.ma.MaskedArray = qi[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    dp: np.ma.MaskedArray = p_int[:,:,1:] - p_int[:,:,:-1] # Layer pressure thickness [Pa]; (n_col_x, n_col_y, n_lay_z)
+
+    lwp_mid: np.ma.MaskedArray = qc * dp / g # Liquid water path [kg m^(-2)]; (n_col_x, n_col_y, n_lay_z)
+    if method == "nearest":
+        lwp: np.ndarray = np.transpose(remap_z(z_mid, lwp_mid, ZZ_lay), axes = (2, 1, 0)) # Liquid water path at regular layer midpoints [kg m^(-2)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf":
+        lwp_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, lwp_mid, epsilon = epsilon) # Interpolant of liquid water path in each column [kg m^(-2)]
+        lwp: np.ndarray = np.transpose(eval_rbfinterpolator_z(lwp_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Liquid water path at regular layer midpoints [kg m^(-2)]; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated liquid water path values
+    lwp[lwp < lwp_mid.min()] = lwp_mid.min()
+    lwp[lwp > lwp_mid.max()] = lwp_mid.max()
+
+    iwp_mid: np.ma.MaskedArray = qi * dp / g # Ice water path [kg m^(-2)]; (n_col_x, n_col_y, n_lay_z)
+    if method == "nearest":
+        iwp: np.ndarray = np.transpose(remap_z(z_mid, iwp_mid, ZZ_lay), axes = (2, 1, 0)) # Ice water path at regular layer midpoints [kg m^(-2)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf":
+        iwp_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, iwp_mid, epsilon = epsilon) # Interpolant of ice water path in each column [kg m^(-2)]
+        iwp: np.ndarray = np.transpose(eval_rbfinterpolator_z(iwp_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Ice water path at regular layer midpoints [kg m^(-2)]; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated ice water path values
+    iwp[iwp < iwp_mid.min()] = iwp_mid.min()
+    iwp[iwp > iwp_mid.max()] = iwp_mid.max()
+
+    ## Interpolate effective liquid water radius to the regularly-spaced grid.
+    eff_radius_qc: np.ma.MaskedArray = nc_input.variables["eff_radius_qc"][:].astype(np_float) # Effective raidus of cloud rain particles [μm]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        eff_radius_qc: np.ma.MaskedArray = eff_radius_qc[time_idx,...] # (ncol, n_lay_z)
+    else:
+        eff_radius_qc: np.ma.MaskedArray = np.squeeze(eff_radius_qc, axis = 0) # (ncol, n_lay_z)
+
+    eff_radius_qc: np.ma.MaskedArray = eff_radius_qc[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        rel: np.ndarray = np.transpose(remap_z(z_mid, eff_radius_qc, ZZ_lay), axes = (2, 1, 0)) # Liquid water effective radius at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf":    
+        rel_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, eff_radius_qc, epsilon = epsilon) # Interpolant of liquid water effective radius in each column [μm]
+        rel: np.ndarray = np.transpose(eval_rbfinterpolator_z(rel_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Liquid water effective radius at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated liquid water effective radius values
+    ### Should be between 2.5 μm and 21.5 μm
+    rel[rel < 2.5] = 2.5
+    rel[rel > 21.5] = 21.5
+
+    ## Interpolate effective ice water diameter to the regularly-spaced grid.
+    eff_radius_qi: np.ma.MaskedArray = nc_input.variables["eff_radius_qi"][:].astype(np_float) # Effective raidus of cloud ice particles [μm]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        eff_radius_qi: np.ma.MaskedArray = eff_radius_qi[time_idx,...] # (ncol, n_lay_z)
+    else:
+        eff_radius_qi: np.ma.MaskedArray = np.squeeze(eff_radius_qi, axis = 0) # (ncol, n_lay_z)
+    
+    eff_radius_qi: np.ma.MaskedArray = eff_radius_qi[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        dei: np.ndarray = np.transpose(remap_z(z_mid, 2. * eff_radius_qi, ZZ_lay), axes = (2, 1, 0)) # Ice water effective diameter at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        dei_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, 2. * eff_radius_qi, epsilon = epsilon) # Interpolant of ice water effective diameter in each column [μm]
+        dei: np.ndarray = np.transpose(eval_rbfinterpolator_z(dei_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # Ice water effective diameter at regular layer midpoints [μm]; (n_lay_z, n_col_y, n_col_x)
+    
+    ### Limit the interpolated and extrapolated ice water effective diameter values
+    ### Should be between 10. μm and 180. μm
+    dei[dei < 10.] = 10.
+    dei[dei > 180.] = 180.
+
+    ## Interpolate volume mixing ratios to the regularly-spaced grid
+    ### ch4 - CH4 - Methane
+    ch4_volume_mix_ratio: np.ma.masked_array = nc_input.variables["ch4_volume_mix_ratio"][:].astype(np_float) # CH4 volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        ch4_volume_mix_ratio: np.ma.MaskedArray = ch4_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        ch4_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(ch4_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    ch4_volume_mix_ratio: np.ma.MaskedArray = ch4_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        ch4: np.ndarray = np.transpose(remap_z(z_mid, ch4_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CH4 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        ch4_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, ch4_volume_mix_ratio, epsilon = epsilon) # Interpolant of CH4 volume mixing ratio
+        ch4: np.ndarray = np.transpose(eval_rbfinterpolator_z(ch4_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CH4 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CH4 volume mixing ratio
+    ch4[ch4 < ch4_volume_mix_ratio.min()] = ch4_volume_mix_ratio.min()
+    ch4[ch4 > ch4_volume_mix_ratio.max()] = ch4_volume_mix_ratio.max()
+
+    ### co - CO - Carbon Monoxide
+    co_volume_mix_ratio: np.ma.masked_array = nc_input.variables["co_volume_mix_ratio"][:].astype(np_float) # CO volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        co_volume_mix_ratio: np.ma.MaskedArray = co_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        co_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(co_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+    
+    co_volume_mix_ratio: np.ma.MaskedArray = co_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        co: np.ndarray = np.transpose(remap_z(z_mid, co_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CO volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        co_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, co_volume_mix_ratio, epsilon = epsilon) # Interpolant of CO volume mixing ratio
+        co: np.ndarray = np.transpose(eval_rbfinterpolator_z(co_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CO volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CO volume mixing ratio
+    co[co < co_volume_mix_ratio.min()] = co_volume_mix_ratio.min()
+    co[co > co_volume_mix_ratio.max()] = co_volume_mix_ratio.max()
+
+    ### co2 - CO2 - Carbon Dioxide
+    co2_volume_mix_ratio: np.ma.masked_array = nc_input.variables["co2_volume_mix_ratio"][:].astype(np_float) # CO2 volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        co2_volume_mix_ratio: np.ma.MaskedArray = co2_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        co2_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(co2_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    co2_volume_mix_ratio: np.ma.MaskedArray = co2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        co2: np.ndarray = np.transpose(remap_z(z_mid, co2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # CO2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        co2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, co2_volume_mix_ratio, epsilon = epsilon) # Interpolant of CO2 volume mixing ratio
+        co2: np.ndarray = np.transpose(eval_rbfinterpolator_z(co2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # CO2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated CO2 volume mixing ratio
+    co2[co2 < co2_volume_mix_ratio.min()] = co2_volume_mix_ratio.min()
+    co2[co2 > co2_volume_mix_ratio.max()] = co2_volume_mix_ratio.max()
+
+    ### h2o - H2O - Water Vapor
+    h2o_volume_mix_ratio: np.ma.masked_array = nc_input.variables["h2o_volume_mix_ratio"][:].astype(np_float) # H2O volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        h2o_volume_mix_ratio: np.ma.MaskedArray = h2o_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        h2o_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(h2o_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    h2o_volume_mix_ratio: np.ma.MaskedArray = h2o_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    #if method == "nearest":
+    h2o: np.ndarray = np.transpose(remap_z(z_mid, h2o_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # H2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    #elif method == "rbf": 
+    #    h2o_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, h2o_volume_mix_ratio, epsilon = epsilon) # Interpolant of H2O volume mixing ratio
+    #    h2o: np.ndarray = np.transpose(eval_rbfinterpolator_z(h2o_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # H2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated H2O volume mixing ratio
+    h2o[h2o < h2o_volume_mix_ratio.min()] = h2o_volume_mix_ratio.min()
+    h2o[h2o > h2o_volume_mix_ratio.max()] = h2o_volume_mix_ratio.max()
+
+    ### n2 - N2 - Nitrogen
+    n2_volume_mix_ratio: np.ma.masked_array = nc_input.variables["n2_volume_mix_ratio"][:].astype(np_float) # N2 volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        n2_volume_mix_ratio: np.ma.MaskedArray = n2_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        n2_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(n2_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    n2_volume_mix_ratio: np.ma.MaskedArray = n2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        n2: np.ndarray = np.transpose(remap_z(z_mid, n2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # N2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        n2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, n2_volume_mix_ratio, epsilon = epsilon) # Interpolant of N2 volume mixing ratio
+        n2: np.ndarray = np.transpose(eval_rbfinterpolator_z(n2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # N2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated N2 volume mixing ratio
+    n2[n2 < n2_volume_mix_ratio.min()] = n2_volume_mix_ratio.min()
+    n2[n2 > n2_volume_mix_ratio.max()] = n2_volume_mix_ratio.max()
+
+    ### n2o - N2O - Nitrous Oxide
+    n2o_volume_mix_ratio: np.ma.masked_array = nc_input.variables["n2o_volume_mix_ratio"][:].astype(np_float) # N2O volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        n2o_volume_mix_ratio: np.ma.MaskedArray = n2o_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        n2o_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(n2o_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    n2o_volume_mix_ratio: np.ma.MaskedArray = n2o_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        n2o: np.ndarray = np.transpose(remap_z(z_mid, n2o_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # N2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        n2o_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, n2o_volume_mix_ratio, epsilon = epsilon) # Interpolant of N2O volume mixing ratio
+        n2o: np.ndarray = np.transpose(eval_rbfinterpolator_z(n2o_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # N2O volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated N2O volume mixing ratio
+    n2o[n2o < n2o_volume_mix_ratio.min()] = n2o_volume_mix_ratio.min()
+    n2o[n2o > n2o_volume_mix_ratio.max()] = n2o_volume_mix_ratio.max()
+
+    ### o2 - O2 - Oxygen
+    o2_volume_mix_ratio: np.ma.masked_array = nc_input.variables["o2_volume_mix_ratio"][:].astype(np_float) # O2 volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        o2_volume_mix_ratio: np.ma.MaskedArray = o2_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        o2_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(o2_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    o2_volume_mix_ratio: np.ma.MaskedArray = o2_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        o2: np.ndarray = np.transpose(remap_z(z_mid, o2_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # O2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        o2_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, o2_volume_mix_ratio, epsilon = epsilon) # Interpolant of O2 volume mixing ratio
+        o2: np.ndarray = np.transpose(eval_rbfinterpolator_z(o2_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # O2 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated O2 volume mixing ratio
+    o2[o2 < o2_volume_mix_ratio.min()] = o2_volume_mix_ratio.min()
+    o2[o2 > o2_volume_mix_ratio.max()] = o2_volume_mix_ratio.max()
+
+    ### o3 - O3 - Ozone
+    ### RRTMGP in Single Precision will fail with lower ozone concentrations than 1.e-13, apparently
+    o3_volume_mix_ratio: np.ma.masked_array = nc_input.variables["o3_volume_mix_ratio"][:].astype(np_float) # O3 volume mixing ratio [kg kg^(-1)]; (time, ncol, n_lay_z)
+
+    if time_idx is not None:
+        o3_volume_mix_ratio: np.ma.MaskedArray = o3_volume_mix_ratio[time_idx,...] # (ncol, n_lay_z)
+    else:
+        o3_volume_mix_ratio: np.ma.MaskedArray = np.squeeze(o3_volume_mix_ratio, axis = 0) # (ncol, n_lay_z)
+
+    o3_volume_mix_ratio: np.ma.MaskedArray = o3_volume_mix_ratio[sort_mask,:].reshape(n_col_x, n_col_y, n_lay_z) # (n_col_x, n_col_y, n_lay_z)
+
+    if method == "nearest":
+        o3: np.ndarray = np.transpose(remap_z(z_mid, o3_volume_mix_ratio, ZZ_lay), axes = (2, 1, 0)) # O3 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+    elif method == "rbf": 
+        o3_rbfinterpolator_z: np.ndarray = rbfinterpolator_z(z_mid, o3_volume_mix_ratio, epsilon = epsilon) # Interpolant of O3 volume mixing ratio
+        o3: np.ndarray = np.transpose(eval_rbfinterpolator_z(o3_rbfinterpolator_z, ZZ_lay), axes = (2, 1, 0)) # O3 volume mixing ratio at regular layer midpoints [kg kg^(-1)]; (n_lay_z, n_col_y, n_col_x)
+
+    ### Limit the interpolated and extrapolated O3 volume mixing ratio
+    o3[o3 < o3_volume_mix_ratio.min()] = o3_volume_mix_ratio.min()
+    o3[o3 > o3_volume_mix_ratio.max()] = o3_volume_mix_ratio.max()
+
+    ## Set other VMRs
+    ccl4: float = 0.0     # Carbon Tetrachloride [kg kg^(-1)]
+    cfc11: float = 0.0    # Trichlorofluoromethane (CFC-11) [kg kg^(-1)]
+    cfc12: float = 0.0    # Dichlorodifluoromethane (CFC-12) [kg kg^(-1)]
+    cfc22: float = 0.0    # Chlorodifluoromethane (HCFC-22) [kg kg^(-1)]
+    hfc143a: float = 0.0  # 1,1,1-Trifluoroethane (HFC-143a) [kg kg^(-1)]
+    hfc125: float = 0.0   # Pentafluoroethane (HFC-125) [kg kg^(-1)]
+    hfc32: float = 0.0    # Difluoromethane (HFC-32) [kg kg^(-1)]
+    hfc23: float = 0.0    # Trifluoromethane (HFC-23) [kg kg^(-1)]
+    hfc134a: float = 0.0  # 1,1,1,2-Tetrafluoroethane (HFC-134a) [kg kg^(-1)]
+    cf4: float = 0.0      # Carbon Tetrafluoride (CF₄) [kg kg^(-1)]
+    no2: float = 0.0      # Nitrogen Dioxide [kg kg^(-1)]
+
+    ## Aerosol mixing ratios
+    aermr01: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (0.03 - 0.5 µm)
+    aermr02: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (0.5 - 5 µm)
+    aermr03: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (5 - 20 µm)
+    aermr04: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.03 - 0.55 µm)
+    aermr05: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.55 - 0.9 µm)
+    aermr06: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.9 - 20 µm)
+    aermr07: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophilic Organic Matter Aerosol
+    aermr08: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophobic Organic Matter Aerosol
+    aermr09: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophilic Black Carbon Aerosol
+    aermr10: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophobic Black Carbon Aerosol
+    aermr11: np.ndarray = np.zeros((n_lay_z, n_col_y, n_col_x)) # Sulfate Aerosol
+
+    ## Longwave boundary conditions
+    emis_sfc: float = 1. # Surface emissivity [N/A]
+    t_sfc: float = 300.  # Surface temperature [K]
+
+    ## Shortwave boundary conditions
+    if False and ("cosine_solar_zenith_angle" in nc_input.variables.keys()):
+        mu0: np.float64 = nc_input.variables["cosine_solar_zenith_angle"][:].astype(np_float) # Cosine solar zenith angle [N/A]; (time, ncol)
+
+        if time_idx is not None:
+            mu0: np.ma.MaskedArray = mu0[time_idx,...] # (ncol)
+        else:
+            mu0: np.ma.MaskedArray = np.squeeze(mu0, axis = 0) # (ncol)
+
+        ### RTE-RRTMGP expacts a float
+        mu0: np.ndarray = mu0.data # (ncol)
+        mu0: np.float64 = np.mean(mu0)
+        #### Masked values are outside range - default to 1.0 (directly overhead)
+        if (mu0 > 1.0) or (mu0 < -1.0):
+            mu0: np.float64 = np.float64(1.0)
+    else:
+        solar_zenith_angle: np.float64 = np.deg2rad(45.0)
+        mu0: np.float64 = np.cos(solar_zenith_angle)
+
+    sfc_alb_dir: np.ndarray = np.ones((n_col_y, n_col_x, n_bnd_sw)) * 0.07 # Surface Albedo - Direct
+    sfc_alb_dif: np.ndarray = np.ones((n_col_y, n_col_x, n_bnd_sw)) * 0.07 # Surface Albedo - Diffuse
+
+    total_solar_irradiance: float = 551.58 # [W m^(-2)]
+
+    azi: float = 1.834 # Azimuthal Angle [Radians]
+
+    ## Write input to file
+    nc_float: str = "f8"
+    nc_file: nc.Dataset = nc.Dataset(output_file_path, mode = "w",
+                                     datamodel = "NETCDF4", clobber = True)
+
+    nc_file.createDimension("x", n_col_x)
+    nc_file.createDimension("y", n_col_y)
+    nc_file.createDimension("lay", n_lay_z)
+    nc_file.createDimension("lev", n_lev_z)
+    nc_file.createDimension("z", n_lay_z)
+    nc_file.createDimension("xh", n_col_x + 1)
+    nc_file.createDimension("yh", n_col_y + 1)
+    nc_file.createDimension("zh", n_lev_z)
+    nc_file.createDimension("band_lw", n_bnd_lw)
+    nc_file.createDimension("band_sw", n_bnd_sw)
+
+    ## Spatial grid
+    nc_ngrid_x: nc._netCDF4.Variable = nc_file.createVariable("ngrid_x", nc_float)
+    nc_ngrid_x.description = "No. 'acceleration grid' points in the x-direction"
+    nc_ngrid_x[:] = ngrid_x
+
+    nc_ngrid_y: nc._netCDF4.Variable = nc_file.createVariable("ngrid_y", nc_float)
+    nc_ngrid_y.description = "No. 'acceleration grid' points in the y-direction"
+    nc_ngrid_y[:] = ngrid_y
+
+    nc_ngrid_z: nc._netCDF4.Variable = nc_file.createVariable("ngrid_z", nc_float)
+    nc_ngrid_z.description = "No. 'acceleration grid' points in the z-direction"
+    nc_ngrid_z[:] = ngrid_z
+
+    nc_x: nc._netCDF4.Variable = nc_file.createVariable("x", nc_float, "x")
+    nc_x.description = "x-dimension - column midpoints"
+    nc_x.units = "m"
+    nc_x[:] = x
+
+    nc_y: nc._netCDF4.Variable = nc_file.createVariable("y", nc_float, "y")
+    nc_y.description = "y-dimension - column midpoints"
+    nc_y.units = "m"
+    nc_y[:] = y
+
+    nc_z: nc._netCDF4.Variable = nc_file.createVariable("z", nc_float, "z")
+    nc_z.description = "z-dimension - layer midpoints"
+    nc_z.units = "m"
+    nc_z[:] = z_lay
+
+    nc_xh: nc._netCDF4.Variable = nc_file.createVariable("xh", nc_float, "xh")
+    nc_xh.description = "x-dimension - column interfaces"
+    nc_xh.units = "m"
+    nc_xh[:] = xh
+
+    nc_yh: nc._netCDF4.Variable = nc_file.createVariable("yh", nc_float, "yh")
+    nc_yh.description = "y-dimension - column interfaces"
+    nc_yh.units = "m"
+    nc_yh[:] = yh
+
+    nc_zh: nc._netCDF4.Variable = nc_file.createVariable("zh", nc_float, "zh")
+    nc_zh.description = "z-dimension - layer interfaces"
+    nc_zh.units = "m"
+    nc_zh[:] = z_lev
+
+    nc_z_lay: nc._netCDF4.Variable = nc_file.createVariable("z_lay", nc_float, ("lay"))
+    nc_z_lay.description = "z-dimension - layer midpoints"
+    nc_z_lay.units = "m"
+    nc_z_lay[:] = z_lay
+
+    nc_z_lev: nc._netCDF4.Variable = nc_file.createVariable("z_lev", nc_float, ("lev"))
+    nc_z_lev.description = "z-dimension - layer interfaces"
+    nc_z_lev.units = "m"
+    nc_z_lev[:] = z_lev
+
+    ## Pressure
+    nc_p_lay: nc._netCDF4.Variable = nc_file.createVariable("p_lay", nc_float, ("lay", "y", "x"))
+    nc_p_lay.description = "Pressure - layer midpoints"
+    nc_p_lay.units = "Pa"
+    nc_p_lay[:,:,:] = p_lay
+
+    nc_p_lev: nc._netCDF4.Variable = nc_file.createVariable("p_lev", nc_float, ("lev", "y", "x"))
+    nc_p_lev.description = "Pressure - layer interfaces"
+    nc_p_lev.units = "Pa"
+    nc_p_lev[:,:,:] = p_lev
+
+    ## Temperature
+    nc_T_lay: nc._netCDF4.Variable = nc_file.createVariable("t_lay", nc_float, ("lay", "y", "x"))
+    nc_T_lay.description = "Temperature - layer midpoints"
+    nc_T_lay.units = "K"
+    nc_T_lay[:,:,:] = T_lay
+
+    nc_T_lev: nc._netCDF4.Variable = nc_file.createVariable("t_lev", nc_float, ("lev", "y", "x"))
+    nc_T_lev.description = "Temperature - layer interfaces"
+    nc_T_lev.units = "K"
+    nc_T_lev[:,:,:] = T_lev
+
+    ## Relative humidity
+    nc_rh_lay: nc._netCDF4.Variable = nc_file.createVariable("rh", nc_float, ("lay", "y", "x"))
+    nc_rh_lay.description = "Relative humidity - layer midpoints"
+    nc_rh_lay.units = "Pa Pa^(-1)"
+    nc_rh_lay[:,:,:] = rh_lay
+
+    ## Gas volume mixing ratios
+    nc_co2: nc._netCDF4.Variable = nc_file.createVariable("vmr_co2", nc_float, ("lay", "y", "x"))
+    nc_co2.description = "Volume mixing ratio - Carbon Dioxide (CO2)"
+    nc_co2.units = "kg kg^(-1)"
+    nc_co2[:,:,:] = co2
+    
+    nc_ch4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ch4", nc_float, ("lay", "y", "x"))
+    nc_ch4.description = "Volume mixing ratio - Methane (CH4)"
+    nc_ch4.units = "kg kg^(-1)"
+    nc_ch4[:,:,:] = ch4
+    
+    nc_n2o: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2o", nc_float, ("lay", "y", "x"))
+    nc_n2o.description = "Volume mixing ratio - Nitrous Oxide (N2O)"
+    nc_n2o.units = "kg kg^(-1)"
+    nc_n2o[:,:,:] = n2o
+    
+    nc_o3: nc._netCDF4.Variable = nc_file.createVariable("vmr_o3", nc_float, ("lay", "y", "x"))
+    nc_o3.description = "Volume mixing ratio - Ozone (O3)"
+    nc_o3.units = "kg kg^(-1)"
+    nc_o3[:,:,:] = o3
+    
+    nc_h2o: nc._netCDF4.Variable = nc_file.createVariable("vmr_h2o", nc_float, ("lay", "y", "x"))
+    nc_h2o.description = "Volume mixing ratio - Water Vapor (H2O)"
+    nc_h2o.units = "kg kg^(-1)"
+    nc_h2o[:,:,:] = h2o
+    
+    nc_n2: nc._netCDF4.Variable = nc_file.createVariable("vmr_n2", nc_float, ("lay", "y", "x"))
+    nc_n2.description = "Volume mixing ratio - Nitrogen (N2)"
+    nc_n2.units = "kg kg^(-1)"
+    nc_n2[:,:,:] = n2
+    
+    nc_o2: nc._netCDF4.Variable = nc_file.createVariable("vmr_o2", nc_float, ("lay", "y", "x"))
+    nc_o2.description = "Volume mixing ratio - Oxygen (O2)"
+    nc_o2.units = "kg kg^(-1)"
+    nc_o2[:,:,:] = o2
+    
+    nc_co: nc._netCDF4.Variable = nc_file.createVariable("vmr_co", nc_float, ("lay", "y", "x"))
+    nc_co.description = "Volume mixing ratio - Carbon Monoxide (CO)"
+    nc_co.units = "kg kg^(-1)"
+    nc_co[:,:,:] = co
+    
+    nc_ccl4: nc._netCDF4.Variable = nc_file.createVariable("vmr_ccl4", nc_float)
+    nc_ccl4.description = "Volume mixing ratio - Carbon Tetrachloride (CCl4)"
+    nc_ccl4.units = "kg kg^(-1)"
+    nc_ccl4[:] = ccl4
+    
+    nc_cfc11: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc11", nc_float)
+    nc_cfc11.description = "Volume mixing ratio - Trichlorofluoromethane (CFC-11)"
+    nc_cfc11.units = "kg kg^(-1)"
+    nc_cfc11[:] = cfc11
+    
+    nc_cfc12: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc12", nc_float)
+    nc_cfc12.description = "Volume mixing ratio - Dichlorodifluoromethane (CFC-12)"
+    nc_cfc12.units = "kg kg^(-1)"
+    nc_cfc12[:] = cfc12
+    
+    nc_cfc22: nc._netCDF4.Variable = nc_file.createVariable("vmr_cfc22", nc_float)
+    nc_cfc22.description = "Volume mixing ratio - Chlorodifluoromethane (CFC-22)"
+    nc_cfc22.units = "kg kg^(-1)"
+    nc_cfc22[:] = cfc22
+    
+    nc_hfc143a: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc143a", nc_float)
+    nc_hfc143a.description = "Volume mixing ratio - 1,1,1-Trifluoroethane (HFC-143a)"
+    nc_hfc143a.units = "kg kg^(-1)"
+    nc_hfc143a[:] = hfc143a
+    
+    nc_hfc125: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc125", nc_float)
+    nc_hfc125.description = "Volume mixing ratio - Pentafluoroethane (HFC-125)"
+    nc_hfc125.units = "kg kg^(-1)"
+    nc_hfc125[:] = hfc125
+    
+    nc_hfc23: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc23", nc_float)
+    nc_hfc23.description = "Volume mixing ratio - Trifluoromethane (HFC-23)"
+    nc_hfc23.units = "kg kg^(-1)"
+    nc_hfc23[:] = hfc23
+    
+    nc_hfc32: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc32", nc_float)
+    nc_hfc32.description = "Volume mixing ratio - Difluoromethane (HFC-32)"
+    nc_hfc32.units = "kg kg^(-1)"
+    nc_hfc32[:] = hfc32
+    
+    nc_hfc134a: nc._netCDF4.Variable = nc_file.createVariable("vmr_hfc134a", nc_float)
+    nc_hfc134a.description = "Volume mixing ratio - 1,1,1,2-Tetrafluoroethane (HFC-134a)"
+    nc_hfc134a.units = "kg kg^(-1)"
+    nc_hfc134a[:] = hfc134a
+    
+    nc_cf4: nc._netCDF4.Variable = nc_file.createVariable("vmr_cf4", nc_float)
+    nc_cf4.description = "Volume mixing ratio - Carbon Tetrafluoride (CF4)"
+    nc_cf4.units = "kg kg^(-1)"
+    nc_cf4[:] = cf4
+    
+    nc_no2: nc._netCDF4.Variable = nc_file.createVariable("vmr_no2", nc_float)
+    nc_no2.description = "Volume mixing ratio - Nitrogen Dioxide (NO2)"
+    nc_no2.units = "kg kg^(-1)"
+    nc_no2[:] = no2
+
+    ## Aerosols mixing ratios
+    nc_aermr01: nc._netCDF4.Variable = nc_file.createVariable("aermr01", nc_float, ("lay", "y", "x"))
+    nc_aermr01.description = "Aerosol mixing ratio - Sea salt aerosol (0.03 - 0.5 µm)"
+    nc_aermr01.units = "kg kg^(-1)"
+    nc_aermr01[:] = aermr01
+
+    nc_aermr02: nc._netCDF4.Variable = nc_file.createVariable("aermr02", nc_float, ("lay", "y", "x"))
+    nc_aermr02.description = "Aerosol mixing ratio - Sea salt aerosol (0.5 - 5 µm)"
+    nc_aermr02.units = "kg kg^(-1)"
+    nc_aermr02[:] = aermr02
+
+    nc_aermr03: nc._netCDF4.Variable = nc_file.createVariable("aermr03", nc_float, ("lay", "y", "x"))
+    nc_aermr03.description = "Aerosol mixing ratio - Sea salt aerosol (5 - 20 µm)"
+    nc_aermr03.units = "kg kg^(-1)"
+    nc_aermr03[:] = aermr03
+
+    nc_aermr04: nc._netCDF4.Variable = nc_file.createVariable("aermr04", nc_float, ("lay", "y", "x"))
+    nc_aermr04.description = "Aerosol mixing ratio - Dust aerosol (0.03 - 0.55 µm)"
+    nc_aermr04.units = "kg kg^(-1)"
+    nc_aermr04[:] = aermr04
+
+    nc_aermr05: nc._netCDF4.Variable = nc_file.createVariable("aermr05", nc_float, ("lay", "y", "x"))
+    nc_aermr05.description = "Aerosol mixing ratio - Dust aerosol (0.55 - 0.9 µm)"
+    nc_aermr05.units = "kg kg^(-1)"
+    nc_aermr05[:] = aermr05
+
+    nc_aermr06: nc._netCDF4.Variable = nc_file.createVariable("aermr06", nc_float, ("lay", "y", "x"))
+    nc_aermr06.description = "Aerosol mixing ratio - Dust aerosol (0.9 - 20 µm)"
+    nc_aermr06.units = "kg kg^(-1)"
+    nc_aermr06[:] = aermr06
+
+    nc_aermr07: nc._netCDF4.Variable = nc_file.createVariable("aermr07", nc_float, ("lay", "y", "x"))
+    nc_aermr07.description = "Aerosol mixing ratio - Hydrophilic organic matter aerosol"
+    nc_aermr07.units = "kg kg^(-1)"
+    nc_aermr07[:] = aermr07
+
+    nc_aermr08: nc._netCDF4.Variable = nc_file.createVariable("aermr08", nc_float, ("lay", "y", "x"))
+    nc_aermr08.description = "Aerosol mixing ratio - Hydrophobic organic matter aerosol"
+    nc_aermr08.units = "kg kg^(-1)"
+    nc_aermr08[:] = aermr08
+
+    nc_aermr09: nc._netCDF4.Variable = nc_file.createVariable("aermr09", nc_float, ("lay", "y", "x"))
+    nc_aermr09.description = "Aerosol mixing ratio - Hydrophilic black carbon aerosol"
+    nc_aermr09.units = "kg kg^(-1)"
+    nc_aermr09[:] = aermr09
+
+    nc_aermr10: nc._netCDF4.Variable = nc_file.createVariable("aermr10", nc_float, ("lay", "y", "x"))
+    nc_aermr10.description = "Aerosol mixing ratio - Hydrophobic black carbon aerosol"
+    nc_aermr10.units = "kg kg^(-1)"
+    nc_aermr10[:] = aermr10
+
+    nc_aermr11: nc._netCDF4.Variable = nc_file.createVariable("aermr11", nc_float, ("lay", "y", "x"))
+    nc_aermr11.description = "Aerosol mixing ratio - Sulphate aerosol"
+    nc_aermr11.units = "kg kg^(-1)"
+    nc_aermr11[:] = aermr11
+
+    ## Longwave boundary conditions
+    nc_emis_sfc: nc._netCDF4.Variable = nc_file.createVariable("emis_sfc" , nc_float, ("y", "x", "band_lw"))
+    nc_emis_sfc.description = "Surface emissivity"
+    nc_emis_sfc.units = "N/A"
+    nc_emis_sfc[:,:,:] = emis_sfc
+
+    nc_t_sfc: nc._netCDF4.Variable = nc_file.createVariable("t_sfc" , nc_float, ("y", "x"))
+    nc_t_sfc.description = "Surface temperature"
+    nc_t_sfc.units = "K"
+    nc_t_sfc[:,:] = t_sfc
+
+    ## Shortwave boundary conditions
+    nc_mu0: nc._netCDF4.Variable = nc_file.createVariable("mu0", nc_float, ("y", "x"))
+    nc_mu0.description = "Cosine of solar zenith angle"
+    nc_mu0.units = "N/A"
+    nc_mu0[:,:] = mu0
+
+    nc_sfc_alb_dir: nc._netCDF4.Variable = nc_file.createVariable("sfc_alb_dir", nc_float, ("y", "x", "band_sw"))
+    nc_sfc_alb_dir.description = "Surface albedo - direct"
+    nc_sfc_alb_dir.units = "N/A"
+    nc_sfc_alb_dir[:,:,:] = sfc_alb_dir
+
+    nc_sfc_alb_dif: nc._netCDF4.Variable = nc_file.createVariable("sfc_alb_dif", nc_float, ("y", "x", "band_sw"))
+    nc_sfc_alb_dif.description = "Surface albedo - diffuse"
+    nc_sfc_alb_dif.units = "N/A"
+    nc_sfc_alb_dif[:,:,:] = sfc_alb_dif
+
+    nc_tsi: nc._netCDF4.Variable = nc_file.createVariable("tsi", nc_float, ("y", "x"))
+    nc_tsi.description = "Total solar irradiance"
+    nc_tsi.units = "W m^(-2)"
+    nc_tsi[:,:] = total_solar_irradiance
+
+    nc_azi: nc._netCDF4.Variable = nc_file.createVariable("azi", nc_float, ("y", "x"))
+    nc_azi.description = "Azimuthal angle"
+    nc_azi.units = "radians"
+    nc_azi[:,:] = azi
+
+    ## Clouds
+    nc_lwp: nc._netCDF4.Variable = nc_file.createVariable("lwp", nc_float, ("lay", "y", "x"))
+    nc_lwp.description = "Liquid water path"
+    nc_lwp.units = "kg m^(-2)"
+    nc_lwp[:,:,:] = lwp
+
+    nc_iwp: nc._netCDF4.Variable = nc_file.createVariable("iwp", nc_float, ("lay", "y", "x"))
+    nc_iwp.description = "Ice water path"
+    nc_iwp.units = "kg m^(-2)"
+    nc_iwp[:,:,:] = iwp
+
+    nc_rel: nc._netCDF4.Variable = nc_file.createVariable("rel", nc_float, ("lay", "y", "x"))
+    nc_rel.description = "Liquid water effective radius"
+    nc_rel.units = "μm"
+    nc_rel[:,:,:] = rel
+
+    nc_dei: nc._netCDF4.Variable = nc_file.createVariable("dei", nc_float, ("lay", "y", "x"))
+    nc_dei.description = "Ice water effective diameter"
+    nc_dei.units = "μm"
+    nc_dei[:,:,:] = dei
+
+    nc_file.close()
+
+def remap_z(ZZ_src: tuple, values_src: np.ndarray, ZZ_tgt: tuple, 
+            method: str = "nearest", fill_value: float = np.nan, rescale: bool = False):
+    
+    ## ZZ_* is the third entry in the meshgrid
+    src_shape: tuple = ZZ_src.shape
+    tgt_shape: tuple = ZZ_tgt.shape
+
+    assert(src_shape[0:2] == tgt_shape[0:2])
+
+    nx: int = src_shape[0]
+    ny: int = src_shape[1]
+    ntgt: int = tgt_shape[2]
+
+    values_tgt: np.ndarray = np.zeros((nx, ny, ntgt), dtype = values_src.dtype)
+
+    for ii in range(0, nx):
+        for jj in range(0, ny):
+            values_tgt[ii, jj, :] = griddata(ZZ_src[ii, jj, :], values_src[ii, jj, :], 
+                ZZ_tgt[ii, jj, :], method = method, fill_value = fill_value, rescale = rescale)
+            
+    return values_tgt
+
+def rbfinterpolator_z(y: np.ndarray, d: np.ndarray, neighbors: Optional[int] = None, 
+                      smoothing: float = 0.0, kernel: str = "thin_plate_spline", 
+                      epsilon: Optional[float] = None, degree: Optional[int] = None) -> np.ndarray:
+    ## y is the third entry in the meshgrid
+    y_shape: tuple = y.shape
+    nx: int
+    ny: int
+    nx, ny = y_shape[0:2]
+
+    interp: np.ndarray = np.empty((nx, ny), dtype = "O")
+
+    for ii in range(0, nx):
+        for jj in range(0, ny):
+            interp[ii, jj] = \
+                RBFInterpolator(np.expand_dims(y[ii, jj, :], axis = 1), d[ii, jj, :], 
+                neighbors = neighbors, smoothing = smoothing, kernel = kernel,
+                epsilon = epsilon, degree = degree)
+            
+    return interp
+
+def eval_rbfinterpolator_z(interp: np.ndarray, y: np.ndarray) -> np.ndarray:
+    ## y is the third entry in the meshgrid
+    y_shape: tuple = y.shape
+    nx: int
+    ny: int
+    nz: int
+    nx, ny, nz = y_shape
+
+    values_tgt: np.ndarray = np.empty((nx, ny, nz), dtype = np_float)
+
+    for ii in range(0, nx):
+        for jj in range(0, ny):
+            values_tgt[ii, jj, :] = interp[ii,jj](np.expand_dims(y[ii,jj,:], axis = 1))
+
+    return values_tgt
+
+if __name__ == "__main__":
+    main()
+
