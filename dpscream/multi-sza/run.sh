@@ -128,5 +128,8 @@ INPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.in.nc
 eval 'python "${VIZ_DIR}"/plot_sza_comparison.py --input "${INPUT_FILE}" '\
      ' --output "${OUTPUT_FILE_ROOT}" --outdir "${OUTPUT_VIZ_DIR}" --szas "${SZAS_PYTHON}" '
 
+eval 'python "${VIZ_DIR}"/plot_sza_statistics.py --input "${INPUT_FILE}" '\
+     ' --output "${OUTPUT_FILE_ROOT}" --outdir "${OUTPUT_VIZ_DIR}" --szas "${SZAS_PYTHON}" '
+
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED OUTPUT\n\n"
