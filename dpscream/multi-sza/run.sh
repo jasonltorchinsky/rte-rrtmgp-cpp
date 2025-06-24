@@ -15,8 +15,8 @@ DPSCREAM_FILE_PATH=${DPSCREAM_DATA_DIR}/${DPSCREAM_FILE_NAME}
 
 PARAMETER_FILE="parameters.json"
 OUT_DIR=${DPSCREAM_FILE_NAME_ROOT}
-INPUT_FILE=${OUT_DIR}/${DPSCREAM_FILE_NAME_ROOT}".in.nc"
-OUTPUT_FILE=${OUT_DIR}/${DPSCREAM_FILE_NAME_ROOT}".out.nc"
+INPUT_FILE_ROOT=${OUT_DIR}/${DPSCREAM_FILE_NAME_ROOT}
+OUTPUT_FILE_ROOT=${OUT_DIR}/${DPSCREAM_FILE_NAME_ROOT}
 
 DEFAULT_INPUT_FILE="rte_rrtmgp_input.nc"
 DEFAULT_OUTPUT_FILE="rte_rrtmgp_output.nc"
@@ -25,6 +25,10 @@ OUT_VIZ_DIR=${OUT_DIR}/"viz"
 INPUT_VIZ_DIR=${OUT_VIZ_DIR}/"input"
 OUTPUT_VIZ_DIR=${OUT_VIZ_DIR}/"output"
 COMPARISON_VIZ_DIR=${OUT_VIZ_DIR}/"comparison"
+
+## Input variables
+SZAS_SH="85 80 70 60 50 40 30 20 10 0"
+SZAS_PYTHON="[85., 80., 70., 60., 50., 40., 30., 20., 10., 0.]"
 
 ## Create subdirectories
 mkdir -p ${OUT_DIR}
@@ -53,9 +57,8 @@ printf "${TIME}: LINKED netCDF DATA FILES\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: CONVERTING DPSCREAM OUTPUT TO RTE-RRTMGP-CPP INPUT...\n\n"
 
-eval 'python test_dpscream_input.py --input "${DPSCREAM_FILE_PATH}" '\
-     '--output "${INPUT_FILE}" '
-ln -sf ${INPUT_FILE} ${DEFAULT_INPUT_FILE}
+#eval 'python test_multi_sza_input.py --input "${DPSCREAM_FILE_PATH}" '\
+#     '--output "${INPUT_FILE_ROOT}" --szas "${SZAS_PYTHON}" '
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: CONVERTED DPSCREAM OUTPUT TO RTE-RRTMGP-CPP INPUT\n\n"
@@ -65,7 +68,11 @@ printf "${TIME}: CONVERTED DPSCREAM OUTPUT TO RTE-RRTMGP-CPP INPUT\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING ATMOSPHERE STATE...\n\n"
 
-eval 'python "${VIZ_DIR}"/plot_input.py --input "${INPUT_FILE}" --outdir "${INPUT_VIZ_DIR}"'
+SZA=$(echo ${SZAS_SH} | awk '{print $1}')
+PADDED_SZA=$(printf "%04d" "${SZA}")
+INPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.in.nc
+
+#eval 'python "${VIZ_DIR}"/plot_input.py --input "${INPUT_FILE}" --outdir "${INPUT_VIZ_DIR}"'
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
@@ -76,9 +83,17 @@ printf "${TIME}: VISUALIZED ATMOSPHERE STATE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: RUNNING RTE+RRTMGP-CPP...\n\n"
 
-bsub -I -n 1 -W 00:10 -gpu num=1 ${BUILD_DIR}/test_rte_rrtmgp_rt_gpu --cloud-optics
-mv ${DEFAULT_OUTPUT_FILE} ${OUTPUT_FILE}
-ln -sf ${OUTPUT_FILE} ${DEFAULT_OUTPUT_FILE}
+for SZA in ${SZAS_SH};
+do
+	PADDED_SZA=$(printf "%04d" "${SZA}")
+	INPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.in.nc
+	ln -sf ${INPUT_FILE} ${DEFAULT_INPUT_FILE}
+
+	#bsub -I -n 1 -W 00:10 -gpu num=1 ${BUILD_DIR}/test_rte_rrtmgp_rt_gpu --cloud-optics --raytracing 2048
+
+	OUTPUT_FILE=${OUTPUT_FILE_ROOT}.${PADDED_SZA}.out.nc
+	mv ${DEFAULT_OUTPUT_FILE} ${OUTPUT_FILE}
+done
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: RTE+RRTMGP-CPP COMPLETE\n\n"
@@ -88,11 +103,30 @@ printf "${TIME}: RTE+RRTMGP-CPP COMPLETE\n\n"
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZING OUTPUT...\n\n"
 
-eval 'python "${VIZ_DIR}"/plot_output.py --input "${INPUT_FILE}" '\
-     '--output "${OUTPUT_FILE}" --outdir "${OUTPUT_VIZ_DIR}"'
+for SZA in ${SZAS_SH};
+do
+	PADDED_SZA=$(printf "%04d" "${SZA}")
+	INPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.in.nc
+        OUTPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.out.nc
 
-eval 'python "${VIZ_DIR}"/plot_comparison.py --input "${INPUT_FILE}" '\
-     '--output "${OUTPUT_FILE}" --outdir "${COMPARISON_VIZ_DIR}" '
+	OUTPUT_VIZ_SZA_DIR=${OUTPUT_VIZ_DIR}/${PADDED_SZA}
+	COMPARISON_VIZ_SZA_DIR=${COMPARISON_VIZ_DIR}/${PADDED_SZA}
+
+	mkdir -p ${OUTPUT_VIZ_SZA_DIR}
+	mkdir -p ${COMPARISON_VIZ_SZA_DIR}
+
+	eval 'python "${VIZ_DIR}"/plot_output.py --input "${INPUT_FILE}" '\
+	     '--output "${OUTPUT_FILE}" --outdir "${OUTPUT_VIZ_SZA_DIR}"'
+
+	eval 'python "${VIZ_DIR}"/plot_comparison.py --input "${INPUT_FILE}" '\
+	     '--output "${OUTPUT_FILE}" --outdir "${COMPARISON_VIZ_SZA_DIR}" '
+done
+
+SZA=$(echo ${SZAS_SH} | awk '{print $1}')
+PADDED_SZA=$(printf "%04d" "${SZA}")
+INPUT_FILE=${INPUT_FILE_ROOT}.${PADDED_SZA}.in.nc
+eval 'python "${VIZ_DIR}"/plot_sza_comparison.py --input "${INPUT_FILE}" '\
+     ' --output "${OUTPUT_FILE_ROOT}" --outdir "${OUTPUT_VIZ_DIR}" --szas "${SZAS_PYTHON}" '
 
 TIME="[$(date '+%T')]"
 printf "${TIME}: VISUALIZED OUTPUT\n\n"

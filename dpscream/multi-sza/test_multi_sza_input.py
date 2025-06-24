@@ -193,7 +193,7 @@ def main():
             dpscream_field_key_mid: str = dpscream_field_key + "_mid"
             ## Exceptions
             if dpscream_field_key in ["T"]:
-                dpscream_field_key: str = dpscream_field_key + "int_rad"
+                dpscream_field_key_int: str = dpscream_field_key + "_int_rad"
             else:
                 dpscream_field_key_int: str = dpscream_field_key + "_int"
 
@@ -224,13 +224,19 @@ def main():
         if field_int is not None:
             field_int: np.ma.MaskedArray = field_int[sort_mask,:].reshape(n_col_x, n_col_y, n_lev_z) # (n_col_x, n_col_y, n_lev_z)
 
+        ## Adjust the masked value for volume mixing ratios
+        if dpscream_field_key[-16:] == "volume_mix_ratio":
+            field_mid.fill_value: float = 0.
+            if field_int is not None:
+                field_int.fill_value: float = 0.
+
         ## If we have field values at layer midpoints and interfaces, interleave them
         if field_int is not None:
             field: np.ndarray = np.empty([n_col_x, n_col_y, n_z], dtype = field_mid.dtype)
-            field[:,:,1::2] = field_mid
-            field[:,:,0::2] = field_int
+            field[:,:,1::2] = field_mid.filled()
+            field[:,:,0::2] = field_int.filled()
         else:
-            field: np.ndarray = np.ma.getdata(field_mid)
+            field: np.ndarray = field_mid.filled()
 
         ## Exceptions
         if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
@@ -252,10 +258,10 @@ def main():
             field_min: float = 2.5
             field_max: float = 21.5
         elif rte_field_key in ["dei"]: # Between 10. μm and 180. μm
-            field_min: float = 10
+            field_min: float = 10.
             field_max: float = 180.
         else:
-            field_min: float = field.max()
+            field_min: float = field.min()
             field_max: float = field.max()
 
         ## Interpolate the values to regular vertical layers
@@ -328,7 +334,7 @@ def main():
 
     fields["tsi"]: float = 551.58 # Total Solar Irradiance [W m^(-2)]
 
-    fields["azi"]: float = 1.834 # Azimuthal Angle [Radians]
+    fields["azi"]: float = 0.0 # Azimuthal Angle [Radians]
 
     ## Set quantities not expected to be set in the DP-SCREAM output
     ### Gas volume mixing ratios
@@ -360,7 +366,8 @@ def main():
     ## Write to RTE-RRTMGP-CPP input file, with the varying given solar zenith angles
     nc_float: str = "f8"
     for sza in szas:
-        fields["mu0"]: np_float = np.zeros((n_col_y, n_col_x)) + np.cos(sza) # Cosine of SZA
+        sza_rad: np.float64 = np.deg2rad(sza)
+        fields["mu0"]: np_float = np.zeros((n_col_y, n_col_x)) + np.cos(sza_rad) # Cosine of SZA
 
         sza_str: str = "{:04.0f}".format(sza)
         output_file_path: str = output_file_path_base + "." + sza_str + ".in.nc"

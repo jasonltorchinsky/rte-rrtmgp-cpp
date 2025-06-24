@@ -141,7 +141,7 @@ fields_descriptions: dict = {
     "sfc_alb_dif" : "Surface Albedo - Diffuse",
     "tsi" : "Total Solar Irradiance",
     "mu0" : "Cosine of Solar Zenith Angle",
-    "azi" : "Azimutal Angle",
+    "azi" : "Azimuthal Angle",
 }
 
 fields_units: dict = {
