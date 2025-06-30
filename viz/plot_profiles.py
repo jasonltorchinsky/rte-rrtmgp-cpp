@@ -53,9 +53,12 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     fig, ax = plt.subplots(layout = "constrained")
 
     ## Plot the profiles
-    colors: list = ["#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77",
+    colors: list[str] = ["#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77",
                     "#CC6677", "#AA4499", "#882255"]
     ncolors: int = len(colors)
+
+    linestyles: list[str] = ["solid", "dashed", "dotted"]
+    nlinestyles: int = len(linestyles)
 
     for idx in range(0, len(profiles)):
         profile: np.ndarray = profiles[idx]
@@ -73,8 +76,8 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
             x_min: np.float64 = np.min([x_min, x_data.min()])
             x_max: np.float64 = np.max([x_max, x_data.max()])
 
-        ax.plot(x_data, y_data, color = colors[idx%ncolors], label = label,
-                drawstyle = kwargs["draw_style"])
+        ax.plot(x_data, y_data, color = colors[idx%ncolors], linestyle = linestyles[idx%nlinestyles],
+                label = label, drawstyle = kwargs["draw_style"])
 
     if kwargs["profile_labels"] is not None:
         ax.legend()
