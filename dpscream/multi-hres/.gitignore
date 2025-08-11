@@ -1,0 +1,4 @@
+*.nc
+*.txt
+scream*
+__pycache__/*
