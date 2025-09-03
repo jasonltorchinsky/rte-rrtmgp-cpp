@@ -9,7 +9,7 @@ import netCDF4 as nc
 
 # Local Library Imports
 from consts import np_float, np_INF
-from plot_profiles import plot_profiles_1d, plot_profile_2d, plot_profiles_2d_3d
+from plot_tools import plot_profiles_1d, plot_profile_2d, plot_profiles_2d_3d
 
 def main():
     ## Parse command-line input
@@ -388,8 +388,6 @@ def main():
                             cbarlabel = cbarlabel, cmin = cmin, cmax = cmax,
                             cmap = cmap)
     
-
 if __name__ == "__main__":
     main()
-
 

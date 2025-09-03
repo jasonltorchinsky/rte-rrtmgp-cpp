@@ -7,7 +7,7 @@ import netCDF4 as nc
 import numpy as np
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_3d, plot_distribution
+from plot_profiles import plot_profiles_1d, plot_profile_2d, plot_profile_3d, plot_distribution
 
 def main():
     ## Parse command-line input
@@ -71,6 +71,10 @@ def main():
     YY_lev: np.ndarray
     ZZ_lev: np.ndarray
     XX_lev, YY_lev, ZZ_lev = np.meshgrid(x, y, z_lev, indexing = "ij")
+
+    XX_sfc: np.ndarray
+    YY_sfc: np.ndarray
+    XX_sfc, YY_sfc = np.meshgrid(x, y, indexing = "ij")
 
     nx: int = np.size(x)
     ny: int = np.size(y)
@@ -147,6 +151,22 @@ def main():
 
     plot_profiles_1d(coord, profiles, file_path, xlabel = xlabel, ylabel = ylabel,
                      coord_axis = coord_axis)
+
+    ## Plot the surface temperature profile
+    t_sfc: np.ma.MaskedArray = nc_input.variables["t_sfc"][:] # (y, x); [K]
+
+    meshgrid: tuple = [XX_sfc / 1000., YY_sfc / 1000.]
+    profile: np.ndarray = np.transpose(t_sfc, axes = (1, 0))
+    file_path: str = os.path.join(out_dir_path, "t_sfc.png")
+    xlabel: str = r"x [$km$]"
+    ylabel: str = r"y [$km$]"
+    cbarlabel: str = r"Surface Temperature $[K]$"
+    cmin: float = t_sfc.min()
+    cmax: float = t_sfc.max()
+
+    if (cmax > cmin):
+        plot_profile_2d(meshgrid, profile, file_path, xlabel = xlabel,
+                        ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
 
     ## Plot the zonally- and meridionally-averaged vertical volume mixing ratio profiles
     gas_codes: list = ["ch4", "co", "co2", "h2o", "n2", "n2o", "o2", "o3", 

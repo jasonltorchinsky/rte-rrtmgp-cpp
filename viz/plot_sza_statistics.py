@@ -175,8 +175,6 @@ def main():
         rt_flux_sfc_dn_dict[sza]: np.ma.MaskedArray = rt_flux_sfc_dn # (y, x); [W m^(-2)]
         rt_flux_abs_dict[sza]: np.ma.MaskedArray = rt_flux_abs
 
-        breakpoint()
-
     ## Bulk Mean 3D Signal - ToD Upward, Surface Upward, Surface Downward, and Absorbed Flux
     profile_short_names: list[str] = ["flux_tod_up", "flux_sfc_up", "flux_sfc_dn", "flux_abs"]
     profiles: list[np.ma.MaskedArray] = []
@@ -256,5 +254,4 @@ def main():
     
 if __name__ == "__main__":
     main()
-
 

@@ -7,7 +7,7 @@ import numpy as np
 import netCDF4 as nc
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_2d, plot_profiles_2d_3d
+from plot_tools import plot_profiles_1d, plot_profile_2d, plot_profile_2d_3d
 
 def main():
     ## Parse command-line input
@@ -201,7 +201,7 @@ def main():
                     ylabel = ylabel, cbarlabel = cbarlabel, cmin = cmin, cmax = cmax)
 
     ## Plot the upwelling shortwave surface flux (Two Stream Solver)
-    meshgrid: tuple = [XX / 1000., YY / 1000.]
+    meshgrid: tuple[np.ndarray] = [XX / 1000., YY / 1000.]
     profile: np.ndarray = np.transpose(ts_flux_sfc_up, axes = (1, 0))
     file_path: str = os.path.join(ts_dir_path, "ts_flux_sfc_up.png")
     title: str = "Two Stream Solver"
@@ -239,7 +239,7 @@ def main():
         cmap_3d: str = "winter_r"
         alpha: float = 0.01
 
-        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+        plot_profile_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
@@ -267,7 +267,7 @@ def main():
         cmap_3d: str = "summer_r"
         alpha: float = 0.01
 
-        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+        plot_profile_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
@@ -338,7 +338,7 @@ def main():
         cmap_3d: str = "winter_r"
         alpha: float = 0.01
 
-        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+        plot_profile_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,
@@ -366,7 +366,7 @@ def main():
         cmap_3d: str = "summer_r"
         alpha: float = 0.01
 
-        plot_profiles_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
+        plot_profile_2d_3d(meshgrid_2d, profile_2d, meshgrid_3d, profile_3d,
                             file_path, title = title, xlabel = xlabel,
                             ylabel = ylabel, zlabel = zlabel, cbarlabel_2d = cbarlabel_2d,
                             cbarlabel_3d = cbarlabel_3d, zdir = zdir, cmin_2d = cmin_2d,

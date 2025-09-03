@@ -7,7 +7,7 @@ import numpy as np
 import netCDF4 as nc
 
 # Local Library Imports
-from plot_profiles import plot_profiles_1d, plot_profile_2d
+from plot_tools import plot_profiles_1d, plot_profile_2d
 from consts import np_EPS
 
 def main():
