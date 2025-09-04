@@ -1,4 +1,4 @@
-if(USEMPI) 
+if(USEMPI)
   set(ENV{CC}  mpicc ) # C compiler for parallel build
   set(ENV{CXX} mpicxx) # C++ compiler for parallel build
   set(ENV{FC}  mpif90) # Fortran compiler for parallel build
@@ -18,12 +18,15 @@ set(USER_FC_FLAGS_DEBUG "-O0 -g -Wall -Wno-unknown-pragmas")
 set(NETCDF_INCLUDE_DIR "/opt/cray/pe/netcdf/4.9.0.9/gnu/12.3/include/")
 set(NETCDF_LIB_C       "/opt/cray/pe/netcdf/4.9.0.9/gnu/12.3/lib/libnetcdf.so")
 
-set(LIBS ${NETCDF_LIB_C}) # ${HDF5_LIB_2} ${HDF5_LIB_1} m z curl)
-set(INCLUDE_DIRS ${FFTW_INCLUDE_DIR} ${NETCDF_INCLUDE_DIR})
-
+set(LIBS ${NETCDF_LIB_C})
+set(INCLUDE_DIRS ${NETCDF_INCLUDE_DIR})
 
 add_definitions(-DRESTRICTKEYWORD=__restrict__)
 add_definitions(-DRTE_USE_CBOOL)
 if(USECUDA)
   set(CMAKE_CUDA_ARCHITECTURES 70)
+  set(CUDA_INCLUDE_DIR "/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/math_libs/12.9/include/")
+  set(INCLUDE_DIRS ${NETCDF_INCLUDE_DIR} ${CUDA_INCLUDE_DIR})
 endif()
+
+set(CMAKE_DISABLE_FIND_PACKAGE_Git TRUE)
