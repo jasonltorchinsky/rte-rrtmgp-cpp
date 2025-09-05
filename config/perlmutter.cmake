@@ -25,8 +25,14 @@ add_definitions(-DRESTRICTKEYWORD=__restrict__)
 add_definitions(-DRTE_USE_CBOOL)
 if(USECUDA)
   set(CMAKE_CUDA_ARCHITECTURES 70)
-  set(CUDA_INCLUDE_DIR "/opt/nvidia/hpc_sdk/Linux_x86_64/25.5/math_libs/12.9/include/")
-  set(INCLUDE_DIRS ${NETCDF_INCLUDE_DIR} ${CUDA_INCLUDE_DIR})
+  set(CUDA_INCLUDE_DIR "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/include")
+  set(INCLUDE_DIRS ${INCLUDE_DIRS} ${CUDA_INCLUDE_DIR})
+
+  ## find_package not used throuhgout this project, so we have to do it the hard way
+  add_library(curand INTERFACE IMPORTED)
+  set_target_properties(curand PROPERTIES
+    INTERFACE_INCLUDE_DIRECTORIES ${CUDA_INCLUDE_DIR}
+    INTERFACE_LINK_LIBRARIES "/opt/nvidia/hpc_sdk/Linux_x86_64/24.5/math_libs/12.4/lib64/libcurand.so")
 endif()
 
 set(CMAKE_DISABLE_FIND_PACKAGE_Git TRUE)
