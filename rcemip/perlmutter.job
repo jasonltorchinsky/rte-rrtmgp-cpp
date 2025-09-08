@@ -12,20 +12,34 @@
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
-# Set RT to True by default
-export RT=${RT:true}
+# Handle command line arguments
+TEMP=$(getopt -o vdm: --long verbose,debug,memory:,debugfile:,minheap:,maxheap:,rt \
+              -n 'my_job_script' -- "$@")
+if [ $? != 0 ] ; then echo "Terminating..." >&2 ; exit 1 ; fi
+eval set -- "$TEMP"
+
+## Default values
+RT=false
+
+while true; do
+  case "$1" in
+    --rt ) RT=true; shift ;;
+    -- ) shift; break ;;
+    * ) break ;;
+  esac
+done
+
+## Print the values of the options
+echo "RT: ${RT}"
 
 # Adjust the job name based on RT
-if [ "${RT}" ]; then
+if [ "${RT}" = true ]; then
   JOB_NAME="rcemip-rt"
 else
   JOB_NAME="rcemip"
 fi
 
 scontrol update JobId=${SLURM_JOB_ID} JobName=${JOB_NAME}
-
-echo "Running with the following exported variables:"
-echo "  rt: ${RT}"
 
 # Link RRTMGP files
 ln -sf ../rrtmgp-data/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
@@ -35,7 +49,7 @@ ln -sf ../rrtmgp-data/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
 ln -sf ../data/aerosol_optics.nc
 
 # Run RTE-RRTMGP-CPP
-if [ "${RT}" ]; then ## with ray tracer
+if [ "${RT}" = true ]; then ## with ray tracer
   python test_rcemip_input_rt.py
 # Flags:
 # --shortwave          DEFAULT[true]  : Enable computation of shortwave radiation.
