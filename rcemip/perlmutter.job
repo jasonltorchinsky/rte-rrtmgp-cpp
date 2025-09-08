@@ -84,3 +84,5 @@ else ## without ray tracer
 # --delta-aerosol      DEFAULT[false] : Delta-scaling of aerosol optical properties.
   ../build/test_rte_rrtmgp_gpu
 fi
+
+python ../viz/plot_input.py --input rte_rrtmgp_input.nc

@@ -141,4 +141,36 @@ nc_sfc_alb_dir[:,:,:] = sfc_alb_dir[:,:]
 nc_sfc_alb_dif[:,:,:] = sfc_alb_dif[:,:]
 nc_tsi[:,:] = total_solar_irradiance
 
+nc_ngrid_x = nc_file.createVariable("ngrid_x", float_type)
+nc_ngrid_y = nc_file.createVariable("ngrid_y", float_type)
+nc_ngrid_z = nc_file.createVariable("ngrid_z", float_type)
+
+nc_file.createDimension("xh", n_col_x+1)
+nc_file.createDimension("yh", n_col_y+1)
+nc_file.createDimension("zh", len(zh))
+
+nc_z = nc_file.createDimension("z", len(z))
+
+nc_x = nc_file.createVariable("x", float_type, "x")
+nc_y = nc_file.createVariable("y", float_type, "y")
+nc_z = nc_file.createVariable("z", float_type, "z")
+
+nc_x[:] = 100.*np.arange(0, n_col_x)
+nc_y[:] = 100.*np.arange(0, n_col_y)
+nc_z[:] = z[:]
+
+nc_xh = nc_file.createVariable("xh", float_type, "xh")
+nc_yh = nc_file.createVariable("yh", float_type, "yh")
+nc_zh = nc_file.createVariable("zh", float_type, "zh")
+nc_xh[:] = 100.*np.arange(0, n_col_x+1)
+nc_yh[:] = 100.*np.arange(0, n_col_y+1)
+nc_zh[:] = zh[:]
+
+nc_azi = nc_file.createVariable("azi", float_type, ("y", "x"))
+nc_azi[:,:] = 1.834
+
+nc_ngrid_x[:] = 48
+nc_ngrid_y[:] = 48
+nc_ngrid_z[:] = 32
+
 nc_file.close()
