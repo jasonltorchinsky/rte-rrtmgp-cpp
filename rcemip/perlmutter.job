@@ -9,26 +9,64 @@
 #SBATCH --constraint=gpu
 #SBATCH --qos=debug
 #SBATCH --account=m4815
-#SBATCH --job-name=rcemip
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
-# Flags:
-# --shortwave          DEFAULT[True]  : Enable computation of shortwave radiation.
-# --longwave           DEFAULT[False] : Enable computation of longwave radiation.
-# --fluxes             DEFAULT[True]  : Enable computation of fluxes.
-# --two-stream         DEFAULT[True]  : Run two-stream solver to obtain 1D fluxes.
-# --raytracing         DEFAULT[32]    : Ray tracer rays-per pixel. '--raytracing False' to turn off.
-# --independent-column DEFAULT[False] : Run ray tracer in independent column mode.
-# --cloud-optics       DEFAULT[False] : Enable cloud optics (both liquid and ice).
-# --liq-cloud-optics   DEFAULT[False] : Liquid only cloud optics.
-# --ice-cloud-optics   DEFAULT[False] : Ice only cloud optics.
-# --cloud-mie          DEFAULT[False] : Use Mie tables for cloud scattering in ray tracer.
-# --aerosol-optics     DEFAULT[False] : Enable aerosol optics.
-# --single-gpt         DEFAULT[False] : Output optical properties and fluxes for a single g-point. '--single-gpt 100': output 100th g-point.
-# --profiling          DEFAULT[False] : Perform additional profiling run.
-# --delta-cloud        DEFAULT[False] : Delta-scaling of cloud optical properties.
-# --delta-aerosol      DEFAULT[False] : Delta-scaling of aerosol optical properties.
-# --tica               DEFAULT[False] : Attenuate path when doing an overhead 1D calculation of tilted input.
+# Set RT to True by default
+export RT=${RT:true}
 
-../build/test_rte_rrtmgp_rt_gpu
+# Adjust the job name based on RT
+if [ "${RT}" ]; then
+  JOB_NAME="rcemip-rt"
+else
+  JOB_NAME="rcemip"
+fi
+
+scontrol update JobId=${SLURM_JOB_ID} JobName=${JOB_NAME}
+
+echo "Running with the following exported variables:"
+echo "  rt: ${RT}"
+
+# Link RRTMGP files
+ln -sf ../rrtmgp-data/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
+ln -sf ../rrtmgp-data/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
+ln -sf ../rrtmgp-data/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
+ln -sf ../rrtmgp-data/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
+ln -sf ../data/aerosol_optics.nc
+
+# Run RTE-RRTMGP-CPP
+if [ "${RT}" ]; then ## with ray tracer
+  python test_rcemip_input_rt.py
+# Flags:
+# --shortwave          DEFAULT[true]  : Enable computation of shortwave radiation.
+# --longwave           DEFAULT[false] : Enable computation of longwave radiation.
+# --fluxes             DEFAULT[true]  : Enable computation of fluxes.
+# --two-stream         DEFAULT[true]  : Run two-stream solver to obtain 1D fluxes.
+# --raytracing         DEFAULT[32]    : Ray tracer rays-per pixel. '--raytracing False' to turn off.
+# --independent-column DEFAULT[false] : Run ray tracer in independent column mode.
+# --cloud-optics       DEFAULT[false] : Enable cloud optics (both liquid and ice).
+# --liq-cloud-optics   DEFAULT[false] : Liquid only cloud optics.
+# --ice-cloud-optics   DEFAULT[false] : Ice only cloud optics.
+# --cloud-mie          DEFAULT[false] : Use Mie tables for cloud scattering in ray tracer.
+# --aerosol-optics     DEFAULT[false] : Enable aerosol optics.
+# --single-gpt         DEFAULT[false] : Output optical properties and fluxes for a single g-point. '--single-gpt 100': output 100th g-point.
+# --profiling          DEFAULT[false] : Perform additional profiling run.
+# --delta-cloud        DEFAULT[false] : Delta-scaling of cloud optical properties.
+# --delta-aerosol      DEFAULT[false] : Delta-scaling of aerosol optical properties.
+# --tica               DEFAULT[false] : Attenuate path when doing an overhead 1D calculation of tilted input.
+  ../build/test_rte_rrtmgp_rt_gpu
+else ## without ray tracer
+  python test_rcemip_input.py
+# Flags:
+# --shortwave          DEFAULT[true]  : Enable computation of shortwave radiation.
+# --longwave           DEFAULT[true]  : Enable computation of longwave radiation.
+# --fluxes             DEFAULT[true]  : Enable computation of fluxes.
+# --cloud-optics       DEFAULT[false] : Enable cloud optics (both liquid and ice).
+# --aerosol-optics     DEFAULT[false] : Enable aerosol optics.
+# --output-optical     DEFAULT[false] : Enable output of optical properties.
+# --output-bnd-fluxes  DEFAULT[false] : Enable output of band fluxes.
+# --timings            DEFAULT[false] : Repeat computation 10x for run times.
+# --delta-cloud        DEFAULT[true]  : Delta-scaling of cloud optical properties.
+# --delta-aerosol      DEFAULT[false] : Delta-scaling of aerosol optical properties.
+  ../build/test_rte_rrtmgp_gpu
+fi
