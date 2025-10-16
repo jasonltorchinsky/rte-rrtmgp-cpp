@@ -18,15 +18,18 @@ from consts import np_INF, np_LARGE
 def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
     profiles_grid: tuple[tuple[tuple[np.ndarray]]], file_path: str, **kwargs):
 
-    ### NOT IMPLEMENTED
+    ## NOT FINISHED
+
     ## Handle kwargs
     default_kwargs: dict = {"title" : None,
-                            "xlabel" : None,
-                            "ylabel" : None,
+                            "xlabels_grid" : None,
+                            "ylabels_grid" : None,
                             "profile_labels_grid" : None,
                             "title_grid" : None,
                             "xscale" : "linear",
                             "yscale" : "linear",
+                            "sharex" : True,
+                            "sharey" : True,
                             "coord_axis" : "x",
                             "viz" : "normal",
                             "draw_style" : "default"}
@@ -40,7 +43,7 @@ def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
     ## Set up the figure
     nrow: int = len(coord_grid)
     ncol: int = len(coord_grid[0])
-    fig, axs = plt.subplots(nrow, ncol, sharex = True, sharey = True, layout = "constrained")
+    fig, axs = plt.subplots(nrow, ncol, sharex = kwargs["sharex"], sharey = kwargs["sharey"], layout = "constrained")
 
     if nrow == 1:
         axs: np.ndarray = np.expand_dims(axs, 0)

@@ -29,35 +29,35 @@ def main():
         description = "Creates output from DP-SCREAM to input to RTE-RRTMGP-CPP.")
     
     parser.add_argument("--input_root",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = True,
-                        help = "Path to DP-SCREAM output.")
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = True,
+        help = "Path to DP-SCREAM output.")
 
     parser.add_argument("--method",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = False,
-                        default = ["nearest"],
-                        help = "Interpolation method for vertical regridding [nearest, rbf].")
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = False,
+        default = ["nearest"],
+        help = "Interpolation method for vertical regridding [nearest, rbf].")
     
     parser.add_argument("--szas",
-                        action = "store",
-                        nargs = 1,
-                        type = Optional[str],
-                        required = False,
-                        default = [None],
-                        help = "Solar zenith angles to create RTE-RRTMGP-CPP input for.")
+        action = "store",
+        nargs = 1,
+        type = Optional[str],
+        required = False,
+        default = [None],
+        help = "Solar zenith angles to create RTE-RRTMGP-CPP input for.")
 
     parser.add_argument("--output_root",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = False,
-                        default = ["rte_rrtmgp_input"],
-                        help = "Path to RTE-RRTMGP-CPP input file, with desired base name of the file.")
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = False,
+        default = ["rte_rrtmgp_input"],
+        help = "Path to RTE-RRTMGP-CPP input file, with desired base name of the file.")
     
     args: argparse.Namespace = parser.parse_args()
     
