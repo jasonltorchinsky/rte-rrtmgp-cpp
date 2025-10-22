@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --nodes=1
-#SBATCH --time=01:00:00
+#SBATCH --time=09:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
@@ -21,7 +21,7 @@ ln -sf ../data/aerosol_optics.nc
 
 # Translate DP-SCREAMXX output to RTE-RRTMGP-CPP input
 DP_SCREAMXX_DIR=/global/cfs/cdirs/m4815/ml3drt/dp_screamxx
-DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_200x200
+DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_300x300
 DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DIR}/${DP_SCREAMXX_RUN_NAME}/run
 SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nhours_x1.1974-08-30-00000
 SCREAM_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}

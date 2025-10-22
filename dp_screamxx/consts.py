@@ -1,17 +1,27 @@
 # Standard Library Imports
 
 # Third-Party Library Imports
+import netCDF4 as nc
 import numpy as np
+import xarray as xr
 
 # Local Library Imports
 
-# Numeric constants
-np_float: np.float64 = np.float64
-np_EPS: np.float64 = np.finfo(np_float).resolution
-np_INF: np.float64 = np.finfo(np_float).max
+# Types
+NP_INT = np.int64
+NP_REAL = np.float32
+NP_ARRAY = np.ndarray
+NP_DATETIME = np.dtype('datetime64[ns]')
+XR_DATASET = xr.core.dataset.Dataset
+NC_DATASET = nc.Dataset
+NC_VARIABLE = nc._netCDF4.Variable
 
-np_SMALL: np.float64 = np.sqrt(np_EPS)
-np_LARGE: np.float64 = np.sqrt(np_INF)
+# Numeric constants
+np_EPS: NP_REAL = np.finfo(NP_REAL).resolution # type: ignore
+np_INF: NP_REAL = np.finfo(NP_REAL).max
+
+np_SMALL: NP_REAL = np.sqrt(np_EPS)
+np_LARGE: NP_REAL = np.sqrt(np_INF)
 
 # Physical constants
 mu_d: float = 28.9467e-3 # Mean molar mass of dry air - https://www.engineeringtoolbox.com/molecular-mass-air-d_679.html [kg mol^(-1)]

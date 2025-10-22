@@ -1,5 +1,5 @@
 """
-Converts output from DP-SCREAM into input for RTE-RRTMGP-CPP.
+Horizontally coarsens output to RTE-RRTMGP-CPP.
 
 See the following reference for more information:
 M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
@@ -29,15 +29,16 @@ from rte_rrtmgp_cpp_fields import grid_dimensions, grid_descriptions, \
 def main():
     ## Parse command-line input
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        prog = "convert_dpscream_output",
-        description = "Creates output from DP-SCREAM to input to RTE-RRTMGP-CPP.")
+        prog = "coarsen_rte_rrtmgp_cpp_input",
+        description = "Horizontally coarsens input to RTE-RRTMGP-CPP.")
     
     parser.add_argument("--input_root",
         action = "store",
         nargs = 1,
         type = str,
-        required = True,
-        help = "Path to DP-SCREAM output.")
+        required = False,
+        default = ["rte_rrtmgp_input"],
+        help = "Path to RTE-RRTMGP-CPP input file, with desired base name of the file.")
 
     parser.add_argument("--method",
         action = "store",
@@ -46,14 +47,6 @@ def main():
         required = False,
         default = ["nearest"],
         help = "Interpolation method for vertical regridding [nearest, rbf].")
-    
-    parser.add_argument("--szas",
-        action = "store",
-        nargs = 1,
-        type = Optional[str],
-        required = False,
-        default = [None],
-        help = "Solar zenith angles to create RTE-RRTMGP-CPP input for.")
 
     parser.add_argument("--output_root",
         action = "store",
@@ -232,8 +225,6 @@ def main():
         ## Reconstruct the vertical grids (time-dependent)
         z_mid: NP_ARRAY[NP_REAL] = xr_input["z_mid"].isel(time = tt, ncol = sort_mask).values # Level midpoints [m]; (ncol, n_lay_z)
         z_int: NP_ARRAY[NP_REAL] = xr_input["z_int"].isel(time = tt, ncol = sort_mask).values # Level interfaces [m]; (ncol, n_lev_z)
-
-        breakpoint()
 
         z_mid: NP_ARRAY[NP_REAL] = z_mid.reshape(n_col_x, n_col_y, n_lay_z) # Layer midpoints [m]; (n_col_x, n_col_y, n_lay_z)
         z_int: NP_ARRAY[NP_REAL] = z_int.reshape(n_col_x, n_col_y, n_lev_z) # Layer interfaces [m]; (n_col_x, n_col_y, n_lev_z)
