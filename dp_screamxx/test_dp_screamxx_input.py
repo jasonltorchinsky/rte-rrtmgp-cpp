@@ -13,20 +13,26 @@ import os
 from typing import Optional
 
 # Third-Party Library Imports
+from mpi4py import MPI
 import numpy as np
 import netCDF4 as nc
-from scipy.interpolate import RBFInterpolator, griddata
+from scipy.interpolate import interpn
 import xarray as xr
 
 # Local Library Imports
-from consts import NP_INT, NP_REAL, NP_ARRAY, NC_VARIABLE, \
-    XR_DATASET, g
+from consts import NP_INT, NP_REAL, MPI_INT, MPI_REAL, MPI_COMM, NP_ARRAY, \
+    NC_VARIABLE, XR_DATASET, MPI_ROOT, g
 from rte_rrtmgp_cpp_fields import grid_dimensions, grid_descriptions, \
     grid_units, fields_dimensions, fields_descriptions, fields_units
 
 # Type aliases
 
 def main():
+    # Communicator info
+    comm: MPI_COMM = MPI.COMM_WORLD
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+    comm_size: NP_INT = NP_INT(comm.Get_size())
+
     ## Parse command-line input
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
         prog = "convert_dpscream_output",
@@ -45,7 +51,7 @@ def main():
         type = str,
         required = False,
         default = ["nearest"],
-        help = "Interpolation method for vertical regridding [nearest, rbf].")
+        help = "Interpolation method for vertical regridding [DISABLED].")
     
     parser.add_argument("--szas",
         action = "store",
@@ -66,17 +72,12 @@ def main():
     args: argparse.Namespace = parser.parse_args()
     
     input_file_root_path: str = os.path.normpath(args.input_root[0])
-    method: str = args.method[0]
-    assert(method in ["nearest", "rbf"])
     if args.szas[0] is None:
         szas: Optional[NP_ARRAY[NP_REAL]] = None
     else:
         szas: Optional[NP_ARRAY[NP_REAL]] = \
-            np.array(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
+            NP_ARRAY(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
     output_file_root_path: str = os.path.normpath(args.output_root[0])
-
-    ## Set file-independent parameters
-    epsilon: float = 1.0 # Shape parameter in case of RBF interpolation
 
     ### NetCDF fields for RTE-RRTMGP-CPP output
     fields: dict = {}
@@ -93,168 +94,154 @@ def main():
         "cosine_solar_zenith_angle"]
     rte_2dfield_keys: list[str] = ["t_sfc", "mu0"]
 
-    ## Open the DP-SCREAM output file
-    input_file_path: str = input_file_root_path + ".nc"
-    xr_input: XR_DATASET = xr.open_dataset(input_file_path, engine = "netcdf4")
+    # Root rank opens the DP-SCREAM output file
+    if l_rank == MPI_ROOT:
+        ## Open the DP-SCREAM output file
+        input_file_path: str = input_file_root_path + ".nc"
+        xr_input: XR_DATASET = xr.open_dataset(input_file_path, engine = "netcdf4")
 
-    ## Construct a sorting mask for reordering "ncol" into x- and y-columns
-    lon: NP_ARRAY[NP_REAL] = xr_input["lon"].values # Column-center - x-dimension [m]; (ncol)
-    lat: NP_ARRAY[NP_REAL] = xr_input["lat"].values # Column center - y-dimension [m]; (ncol)
+        ## Construct a sorting mask for reordering "ncol" into x- and y-columns
+        lon: NP_ARRAY[NP_REAL] = xr_input["lon"].values.astype(NP_REAL) # Column-center - x-dimension [m]; (ncol)
+        lat: NP_ARRAY[NP_REAL] = xr_input["lat"].values.astype(NP_REAL) # Column center - y-dimension [m]; (ncol)
 
-    sort_mask: NP_ARRAY[NP_INT] = np.lexsort((lon, lat)) # Mask that sorts arrays for restructuring into 1-D x- and y-grids
+        sort_mask: NP_ARRAY[NP_INT] = np.lexsort((lon, lat)).astype(NP_INT) # Mask that sorts arrays for restructuring into 1-D x- and y-grids
 
-    n_col_x: int = np.unique(lon).size # No. columns in x
-    n_col_y: int = np.unique(lat).size # No. columns in y
-    cols: NP_ARRAY[NP_REAL] = np.stack((lon[sort_mask], lat[sort_mask]), axis = 1).reshape(n_col_x, n_col_y, 2)
+        n_col_x: NP_INT = NP_INT(np.unique(lon).size) # No. columns in x
+        n_col_y: NP_INT = NP_INT(np.unique(lat).size) # No. columns in y
+        cols: NP_ARRAY[NP_REAL] = np.stack((lon[sort_mask], lat[sort_mask]), axis = 1).reshape(n_col_x, n_col_y, 2)
 
-    ## Construct the horizontal grids
-    ### NOTE: The names xh, yh seem to refer to the interfaces between columns,
-    ### but in the original rcemip experiment, they just tack on an extra value.
-    ### They don't seem to be directly used in the code, so we will use them
-    ### to be interfaces between columns.
-    ### NOTE: Assume that horizontal grids are regularly spaced.
-    x: NP_ARRAY[NP_REAL] = (cols[:,:,0])[0,:] # x-midpoints of each column [m]; (n_col_x)
-    dx: NP_REAL = x[1] - x[0]
-    xh: NP_ARRAY[NP_REAL] = np.append(x - (dx / 2.), x[-1] + (dx / 2.)) # x-interfaces of each column [m]; (n_col_x + 1)
+        ## Construct the horizontal grids
+        ### NOTE: The names xh, yh seem to refer to the interfaces between columns,
+        ### but in the original rcemip experiment, they just tack on an extra value.
+        ### They don't seem to be directly used in the code, so we will use them
+        ### to be interfaces between columns.
+        ### NOTE: Assume that horizontal grids are regularly spaced.
+        x: NP_ARRAY[NP_REAL] = (cols[:,:,0])[0,:] # x-midpoints of each column [m]; (n_col_x)
+        dx: NP_REAL = x[1] - x[0]
+        xh: NP_ARRAY[NP_REAL] = np.append(x - (dx / 2.), x[-1] + (dx / 2.)) # x-interfaces of each column [m]; (n_col_x + 1)
 
-    y: NP_ARRAY[NP_REAL] = (cols[:,:,1])[:,0] # x-midpoints of each column [m]; (n_col_y)
-    dy: NP_REAL = y[1] - y[0]
-    yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
+        y: NP_ARRAY[NP_REAL] = (cols[:,:,1])[:,0] # y-midpoints of each column [m]; (n_col_y)
+        dy: NP_REAL = y[1] - y[0]
+        yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
 
-    ## Dimension sizes - DP-SCREAM
-    ntime: int = xr_input.sizes["time"] # No. time-steps
-    ncol: int = xr_input.sizes["ncol"] # No. columns
-    nlev: int = xr_input.sizes["lev"] # No. levels (layers)
-    nilev: int = xr_input.sizes["ilev"] # No. level (layer) interfaces
+        ## Dimension sizes - DP-SCREAM
+        ntime: NP_INT = NP_INT(xr_input.sizes["time"]) # No. time-steps
+        ncol: Optional[NP_INT] = NP_INT(xr_input.sizes["ncol"]) # No. columns
+        nlev: NP_INT = NP_INT(xr_input.sizes["lev"]) # No. levels (layers)
+        nilev: NP_INT = NP_INT(xr_input.sizes["ilev"]) # No. level (layer) interfaces
 
-    ## Dimension sizes - RTE-RRTMGP-CPP+RT - Only ones that need to be renamed
-    n_lay_z: int = nlev # DP-SCREAM "levels" = RTE-RRTMGP-CPP+RT "layers"
-    n_lev_z: int = nilev # DP_SCREAM "level interfaces" = RTE-RRTMGP-CPP+RT "levels"
-    n_z: int = n_lay_z + n_lev_z
+        ## Dimension sizes - RTE-RRTMGP-CPP+RT - Only ones that need to be renamed
+        n_lay_z: NP_INT = nlev # DP-SCREAM "levels" = RTE-RRTMGP-CPP+RT "layers"
+        n_lev_z: NP_INT = nilev # DP_SCREAM "level interfaces" = RTE-RRTMGP-CPP+RT "levels"
+        n_z: NP_INT = n_lay_z + n_lev_z
 
-    ## Store spatial grid for outputting to RTE-RRTMGP-CPP input file
-    grid: dict = {}
+        ## Store spatial grid for outputting to RTE-RRTMGP-CPP input file
+        grid: dict = {}
 
-    ### NOTE: The number of points in the horizontal and vertical acceleration grids "should"
-    ### be between 1/10 and 1/20 of n_col_x, n_col_y, n_col_z
-    ### NOTE: These are the time-independent quantities
-    ngrid_x: int = np.ceil(n_col_x / 10)
-    ngrid_y: int = np.ceil(n_col_y / 10)
-    ngrid_z: int = np.ceil(n_lay_z / 10)
+        ### NOTE: The number of points in the horizontal and vertical acceleration grids "should"
+        ### be between 1/10 and 1/20 of n_col_x, n_col_y, n_col_z
+        ### NOTE: These are the time-independent quantities
+        ngrid_x: NP_INT = NP_INT(np.ceil(n_col_x / 10))
+        ngrid_y: NP_INT = NP_INT(np.ceil(n_col_y / 10))
+        ngrid_z: NP_INT = NP_INT(np.ceil(n_lay_z / 10))
 
-    grid["x"] = x
-    grid["xh"] = xh
+        grid["x"] = x
+        grid["xh"] = xh
 
-    grid["y"] = y
-    grid["yh"] = yh
+        grid["y"] = y
+        grid["yh"] = yh
 
-    grid["ngrid_x"] = ngrid_x
-    grid["ngrid_y"] = ngrid_y
-    grid["ngrid_z"] = ngrid_z
+        grid["ngrid_x"] = ngrid_x
+        grid["ngrid_y"] = ngrid_y
+        grid["ngrid_z"] = ngrid_z
 
-    ## Time-independent quantities
-    ## Special fields specified in the DP-SCREAM output
-    ## Obtain the number of shortwave and longwave bands.
-    swband: NP_ARRAY[NP_REAL] = xr_input["swband"].values # Shortwave bands [cm^(-1)]; (n_bnd_sw)
-    lwband: NP_ARRAY[NP_REAL] = xr_input["lwband"].values # Longwave bands [cm^(-1)]; (n_bnd_lw)
+        ## Time-independent quantities
+        ## Special fields specified in the DP-SCREAM output
+        ## Obtain the number of shortwave and longwave bands.
+        swband: NP_ARRAY[NP_REAL] = xr_input["swband"].values.astype(NP_REAL) # Shortwave bands [cm^(-1)]; (n_bnd_sw)
+        lwband: NP_ARRAY[NP_REAL] = xr_input["lwband"].values.astype(NP_REAL) # Longwave bands [cm^(-1)]; (n_bnd_lw)
 
-    n_bnd_sw: int = swband.size
-    n_bnd_lw: int = lwband.size
+        n_bnd_sw: NP_INT = NP_INT(swband.size)
+        n_bnd_lw: NP_INT = NP_INT(lwband.size)
 
-    ## Fields that are not specified in the DP-SCREAM output
-    ## Longwave boundary conditions
-    fields["emis_sfc"]: NP_ARRAY[NP_REAL] = \
-        np.ones((n_col_y, n_col_x, n_bnd_lw), dtype = NP_REAL) # Surface emissivity [N/A]
+        ## Fields that are not specified in the DP-SCREAM output
+        set_unspecified_fields(n_col_x, n_col_y, n_lay_z, n_bnd_sw, n_bnd_lw,
+            fields)
+    else:
+        ncol: Optional[NP_INT] = None
+        n_lay_z: Optional[NP_INT] = None
+        n_lev_z: Optional[NP_INT] = None
+        n_z: Optional[NP_INT] = None
 
-    ## Shortwave boundary conditions
-    fields["sfc_alb_dir"]: NP_ARRAY[NP_REAL] = \
-        np.ones((n_col_y, n_col_x, n_bnd_sw), dtype = NP_REAL) * 0.07 # Surface Albedo - Direct
-    fields["sfc_alb_dif"]: NP_ARRAY[NP_REAL] = \
-        np.ones((n_col_y, n_col_x, n_bnd_sw), dtype = NP_REAL) * 0.07 # Surface Albedo - Diffuse
+    ## Broadcast info to non-root ranks
+    comm.Bcast(ncol, root = MPI_ROOT)
+    comm.Bcast(n_lay_z, root = MPI_ROOT)
+    comm.Bcast(n_lev_z, root = MPI_ROOT)
+    comm.Bcast(n_z, root = MPI_ROOT)
 
-    fields["tsi"]: NP_ARRAY[NP_REAL] = \
-        np.ones((n_col_y, n_col_x), dtype = NP_REAL) * 551.58 # Total Solar Irradiance [W m^(-2)]
+    ## Set up counts, displs split for scatterv
+    g_ncols: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    for ii in range(0, comm_size):
+        g_ncols[ii] = ncol // comm_size + int(ii < (ncol % comm_size))
+    l_ncol: int = g_ncols[l_rank]
 
-    fields["azi"]: NP_ARRAY[NP_REAL] = \
-        np.ones((n_col_y, n_col_x), dtype = NP_REAL) * 0.0 # Azimuthal Angle [Radians]
+    counts_lay: NP_ARRAY[NP_INT] = g_ncols * n_lay_z
+    displs_lay: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    displs_lay[1:] += n_lay_z * np.cumsum(g_ncols)[:-1]
 
-    ## Set quantities not expected to be set in the DP-SCREAM output
-    ### Gas volume mixing ratios
-    fields["vmr_ccl4"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Carbon Tetrachloride [kg kg^(-1)]
-    fields["vmr_cfc11"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Trichlorofluoromethane (CFC-11) [kg kg^(-1)]
-    fields["vmr_cfc12"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Dichlorodifluoromethane (CFC-12) [kg kg^(-1)]
-    fields["vmr_cfc22"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Chlorodifluoromethane (HCFC-22) [kg kg^(-1)]
-    fields["vmr_hfc143a"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # 1,1,1-Trifluoroethane (HFC-143a) [kg kg^(-1)]
-    fields["vmr_hfc125"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Pentafluoroethane (HFC-125) [kg kg^(-1)]
-    fields["vmr_hfc32"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Difluoromethane (HFC-32) [kg kg^(-1)]
-    fields["vmr_hfc23"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Trifluoromethane (HFC-23) [kg kg^(-1)]
-    fields["vmr_hfc134a"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # 1,1,1,2-Tetrafluoroethane (HFC-134a) [kg kg^(-1)]
-    fields["vmr_cf4"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Carbon Tetrafluoride (CF₄) [kg kg^(-1)]
-    fields["vmr_no2"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Nitrogen Dioxide [kg kg^(-1)]
+    counts_lev: NP_ARRAY[NP_INT] = g_ncols * n_lev_z
+    displs_lev: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    displs_lev[1:] += n_lev_z * np.cumsum(g_ncols)[:-1]
 
-    ### Aerosol mixing ratios
-    fields["aermr01"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (0.03 - 0.5 µm)
-    fields["aermr02"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (0.5 - 5 µm)
-    fields["aermr03"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Sea salt aerosol (5 - 20 µm)
-    fields["aermr04"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.03 - 0.55 µm)
-    fields["aermr05"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.55 - 0.9 µm)
-    fields["aermr06"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Dust aerosol (0.9 - 20 µm)
-    fields["aermr07"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophilic Organic Matter Aerosol
-    fields["aermr08"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophobic Organic Matter Aerosol
-    fields["aermr09"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophilic Black Carbon Aerosol
-    fields["aermr10"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Hydrophobic Black Carbon Aerosol
-    fields["aermr11"]: NP_ARRAY[NP_REAL] = \
-        np.zeros((n_lay_z, n_col_y, n_col_x)) # Sulfate Aerosol
+    counts: NP_ARRAY[NP_INT] = g_ncols * n_z
+    displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    displs[1:] += n_z * np.cumsum(g_ncols)[:-1]
+
+    ## Set up local arrays to store scatterv info
+    l_z_mid: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lay_z], dtype = NP_REAL)
+    l_z_int: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lev_z], dtype = NP_REAL)
+    l_z: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_z], dtype = NP_REAL)
+    z_lay: NP_ARRAY[NP_REAL] = np.empty([n_lay_z], dtype = NP_REAL)
+    z_lev: NP_ARRAY[NP_REAL] = np.empty([n_lev_z], dtype = NP_REAL)
 
     ## For large file sizes, we must go through time-step by time-step
     for tt in range(0, ntime):
-        ## Reconstruct the vertical grids (time-dependent)
-        z_mid: NP_ARRAY[NP_REAL] = xr_input["z_mid"].isel(time = tt, ncol = sort_mask).values # Level midpoints [m]; (ncol, n_lay_z)
-        z_int: NP_ARRAY[NP_REAL] = xr_input["z_int"].isel(time = tt, ncol = sort_mask).values # Level interfaces [m]; (ncol, n_lev_z)
+        # Root Rank reads input file, constructs vertical grids and scattervs
+        if l_rank == MPI_ROOT:
+            ## Reconstruct the vertical grids (time-dependent)
+            z_mid: NP_ARRAY[NP_REAL] = xr_input["z_mid"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Level midpoints [m]; (ncol, n_lay_z)
+            z_int: NP_ARRAY[NP_REAL] = xr_input["z_int"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Level interfaces [m]; (ncol, n_lev_z)
 
-        breakpoint()
+            ### Interleave these into a single vertical grid
+            z: NP_ARRAY[NP_REAL] = np.empty([ncol, n_z], dtype = NP_REAL) # Level interfaces and midpoints [m]; (ncol, n_z)
+            z[:,1::2] = z_mid
+            z[:,0::2] = z_int
 
-        z_mid: NP_ARRAY[NP_REAL] = z_mid.reshape(n_col_x, n_col_y, n_lay_z) # Layer midpoints [m]; (n_col_x, n_col_y, n_lay_z)
-        z_int: NP_ARRAY[NP_REAL] = z_int.reshape(n_col_x, n_col_y, n_lev_z) # Layer interfaces [m]; (n_col_x, n_col_y, n_lev_z)
+            ### Create a regularly-spaced grid for interpolating variables to.
+            z_min: NP_REAL = NP_REAL(0.0)
+            z_max: NP_REAL = z.max()
 
-        ### Interleave these into a single vertical grid
-        z: NP_ARRAY[NP_REAL] = np.empty([n_col_x, n_col_y, n_z], dtype = NP_REAL)
-        z[:,:,1::2] = z_mid
-        z[:,:,0::2] = z_int
+            z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_min, z_max, n_lev_z, dtype = NP_REAL) # Regularly-spaced layer interfaces [m]; (n_lev_z)
+            z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced layer midpoints [m]; (n_lay_z)
 
-        ### Create a regularly-spaced grid for interpolating variables to.
-        z_min: NP_REAL = NP_REAL(0.0)
-        z_max: NP_REAL = z.max()
+            ## Store vertical grid
+            grid["z"] = z_lay
+            grid["zh"] = z_lev
+            grid["z_lay"] = z_lay
+            grid["z_lev"] = z_lev
 
-        z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_min, z_max, n_lev_z) # Regularly-spaced layer interfaces [m]; (n_lev_z)
-        z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced layer midpoints [m]; (n_lay_z)
+        ## Scatter and broadcast vertical grids
+        comm.Scatterv([z_mid, counts_lay, displs_lay, MPI_REAL], l_z_mid,
+            root = MPI_ROOT)
+        comm.Scatterv([z_int, counts_lay, displs_lay, MPI_REAL], l_z_int,
+            root = MPI_ROOT)
+        comm.Scatterv([z, counts_lay, displs_lay, MPI_REAL], l_z,
+            root = MPI_ROOT)
+        comm.Bcast(z_lay, root = MPI_ROOT)
+        comm.Bcast(z_lev, root = MPI_ROOT)
 
-        ## Store vertical grid
-        grid["z"] = z_lay
-        grid["zh"] = z_lev
-        grid["z_lay"] = z_lay
-        grid["z_lev"] = z_lev
+        print("{} : {}".format(l_rank, z_lay))
+        quit()
 
         ## Read the 3D fields from the file, remap them to regular z-levels, and store them
         for ii in range(len(dpscream_3dfield_keys)):
@@ -551,6 +538,78 @@ def eval_rbfinterpolator_z(interp: NP_ARRAY[NP_REAL],
                 interp[ii,jj](np.expand_dims(z_tgt, axis = 1))
 
     return values_tgt
+
+def set_unspecified_fields(n_col_x: NP_INT, n_col_y: NP_INT, n_lay_z: NP_INT,
+    n_bnd_sw: NP_INT, n_bnd_lw: NP_INT, fields: dict) -> None:
+    """
+    Set fields not specified by the DP-SCREAM output.
+    """
+
+    ## Longwave boundary conditions
+    fields["emis_sfc"]: NP_ARRAY[NP_REAL] = \
+        np.ones((n_col_y, n_col_x, n_bnd_lw), dtype = NP_REAL) # Surface emissivity [N/A]
+
+    ## Shortwave boundary conditions
+    fields["sfc_alb_dir"]: NP_ARRAY[NP_REAL] = \
+        np.ones((n_col_y, n_col_x, n_bnd_sw), dtype = NP_REAL) * 0.07 # Surface Albedo - Direct
+    fields["sfc_alb_dif"]: NP_ARRAY[NP_REAL] = \
+        np.ones((n_col_y, n_col_x, n_bnd_sw), dtype = NP_REAL) * 0.07 # Surface Albedo - Diffuse
+
+    fields["tsi"]: NP_ARRAY[NP_REAL] = \
+        np.ones((n_col_y, n_col_x), dtype = NP_REAL) * 551.58 # Total Solar Irradiance [W m^(-2)]
+
+    fields["azi"]: NP_ARRAY[NP_REAL] = \
+        np.ones((n_col_y, n_col_x), dtype = NP_REAL) * 0.0 # Azimuthal Angle [Radians]
+
+    ## Set quantities not expected to be set in the DP-SCREAM output
+    ### Gas volume mixing ratios
+    fields["vmr_ccl4"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Carbon Tetrachloride [kg kg^(-1)]
+    fields["vmr_cfc11"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Trichlorofluoromethane (CFC-11) [kg kg^(-1)]
+    fields["vmr_cfc12"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Dichlorodifluoromethane (CFC-12) [kg kg^(-1)]
+    fields["vmr_cfc22"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Chlorodifluoromethane (HCFC-22) [kg kg^(-1)]
+    fields["vmr_hfc143a"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # 1,1,1-Trifluoroethane (HFC-143a) [kg kg^(-1)]
+    fields["vmr_hfc125"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Pentafluoroethane (HFC-125) [kg kg^(-1)]
+    fields["vmr_hfc32"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Difluoromethane (HFC-32) [kg kg^(-1)]
+    fields["vmr_hfc23"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Trifluoromethane (HFC-23) [kg kg^(-1)]
+    fields["vmr_hfc134a"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # 1,1,1,2-Tetrafluoroethane (HFC-134a) [kg kg^(-1)]
+    fields["vmr_cf4"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Carbon Tetrafluoride (CF₄) [kg kg^(-1)]
+    fields["vmr_no2"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Nitrogen Dioxide [kg kg^(-1)]
+
+    ### Aerosol mixing ratios
+    fields["aermr01"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Sea salt aerosol (0.03 - 0.5 µm)
+    fields["aermr02"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Sea salt aerosol (0.5 - 5 µm)
+    fields["aermr03"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Sea salt aerosol (5 - 20 µm)
+    fields["aermr04"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Dust aerosol (0.03 - 0.55 µm)
+    fields["aermr05"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Dust aerosol (0.55 - 0.9 µm)
+    fields["aermr06"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Dust aerosol (0.9 - 20 µm)
+    fields["aermr07"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Hydrophilic Organic Matter Aerosol
+    fields["aermr08"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Hydrophobic Organic Matter Aerosol
+    fields["aermr09"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Hydrophilic Black Carbon Aerosol
+    fields["aermr10"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Hydrophobic Black Carbon Aerosol
+    fields["aermr11"]: NP_ARRAY[NP_REAL] = \
+        np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Sulfate Aerosol
+
 
 if __name__ == "__main__":
     main()

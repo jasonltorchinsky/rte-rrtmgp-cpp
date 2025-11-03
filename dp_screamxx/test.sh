@@ -19,7 +19,7 @@ mkdir -p ${RTE_RRTMGP_INPUT_DIR}
 mkdir -p ${RTE_RRTMGP_OUTPUT_DIR}
 mkdir -p ${RTE_RRTMGP_VIZ_DIR}
 
-python test_dp_screamxx_input.py --method rbf --input ${SCREAM_OUTPUT_FILE_PATH} --output_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE}
+mpirun -n 2 python test_dp_screamxx_input.py --method rbf --input ${SCREAM_OUTPUT_FILE_PATH} --output_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE}
 
 # Visualize input
 for FILE_PATH in ${RTE_RRTMGP_INPUT_DIR}/*;
