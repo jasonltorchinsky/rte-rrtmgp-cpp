@@ -13,17 +13,21 @@ assert(INT_PREC in [32, 64])
 if INT_PREC == 32:
     from mpi4py.MPI import INT as MPI_INT
     from numpy import int32 as NP_INT
+    NC_INT: str = "i4"
 elif INT_PREC == 64:
     from mpi4py.MPI import LONG as MPI_INT
     from numpy import int64 as NP_INT
+    NC_INT: str = "i8"
 
 assert(REAL_PREC in [32, 64])
 if REAL_PREC == 32:
     from mpi4py.MPI import FLOAT as MPI_REAL
     from numpy import float32 as NP_REAL
+    NC_REAL: str = "f4"
 elif REAL_PREC == 64:
     from mpi4py.MPI import DOUBLE as MPI_REAL
     from numpy import float64 as NP_REAL
+    NC_REAL: str = "f8"
 
 # Class aliases
 from mpi4py.MPI import Intracomm as MPI_COMM
