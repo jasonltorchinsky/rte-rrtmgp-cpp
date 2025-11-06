@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
+from utils.consts import NP_INF, NP_LARGE
 
 def plot_profile_2d_grid(meshgrid_grid: tuple, profile_grid: tuple, file_path: str, **kwargs):
     ## Handle kwargs
@@ -47,7 +47,7 @@ def plot_profile_2d_grid(meshgrid_grid: tuple, profile_grid: tuple, file_path: s
 
     if kwargs["cmin"] is None:
         if kwargs["cscale"] == "normal":
-            cmin: np.float64 = np_INF
+            cmin: np.float64 = NP_INF
             for ii in range(0, nrow):
                 for jj in range(0, ncol):
                     cmin: np.float64 = min(cmin, profile_grid[ii][jj].min())
@@ -56,7 +56,7 @@ def plot_profile_2d_grid(meshgrid_grid: tuple, profile_grid: tuple, file_path: s
 
     if kwargs["cmax"] is None:
         if kwargs["cscale"] == "normal":
-            cmax: np.float64 = -np_INF
+            cmax: np.float64 = -NP_INF
             for ii in range(0, nrow):
                 for jj in range(0, ncol):
                     cmax: np.float64 = max(cmax, profile_grid[ii][jj].max())
@@ -65,7 +65,7 @@ def plot_profile_2d_grid(meshgrid_grid: tuple, profile_grid: tuple, file_path: s
 
     if (kwargs["cmin"] is None) and (kwargs["cmax"] is None):
         if kwargs["cscale"] == "difference":
-            cmax: np.float64 = -np_INF
+            cmax: np.float64 = -NP_INF
             for ii in range(0, nrow):
                 for jj in range(0, ncol):
                     cmax: np.float64 = max(cmax, np.abs(profile_grid[ii][jj]).max())

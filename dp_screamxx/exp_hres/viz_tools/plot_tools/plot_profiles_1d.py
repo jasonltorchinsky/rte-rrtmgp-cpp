@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
+from utils.consts import NP_INF, NP_LARGE
 
 def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs):
     ## Handle kwargs
@@ -34,10 +34,10 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     assert(kwargs["viz"] in ["normal", "difference"])
 
     ## Hold variables for axis bounds
-    x_min: np.float64 = np_INF
-    x_max: np.float64 = -np_INF
-    y_min: np.float64 = np_INF
-    y_max: np.float64 = -np_INF
+    x_min: np.float64 = NP_INF
+    x_max: np.float64 = -NP_INF
+    y_min: np.float64 = NP_INF
+    y_max: np.float64 = -NP_INF
 
     ## Implement pre-loop arguments
     if kwargs["coord_axis"].lower() == "x":
@@ -85,9 +85,9 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     ## If we are looking at a difference, add a gridline to guide the eye
     if kwargs["viz"] == "difference":
         if kwargs["coord_axis"].lower() == "x":
-            ax.hlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+            ax.hlines(0.0, -NP_LARGE, NP_LARGE, colors = "gray", linewidth = 0.2)
         elif kwargs["coord_axis"].lower() == "y":
-            ax.vlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+            ax.vlines(0.0, -NP_LARGE, NP_LARGE, colors = "gray", linewidth = 0.2)
 
     ## Set x- and y-axis bounds
     ax.set_xlim(x_min, x_max)

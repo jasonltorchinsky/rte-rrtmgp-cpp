@@ -30,6 +30,10 @@ elif REAL_PREC == 64:
     NC_REAL: str = "f8"
 
 # Class aliases
+from matplotlib.axes import Axes as MPL_AXES
+from matplotlib.colorbar import Colorbar as MPL_COLORBAR
+from matplotlib.figure import Figure as MPL_FIGURE
+from matplotlib.contour import QuadContourSet as MPL_CONTOUR
 from mpi4py.MPI import Intracomm as MPI_COMM
 from netCDF4 import Dataset as NC_DATASET
 from netCDF4._netCDF4 import Variable as NC_VARIABLE

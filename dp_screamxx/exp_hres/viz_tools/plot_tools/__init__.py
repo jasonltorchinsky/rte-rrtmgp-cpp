@@ -1,8 +1,9 @@
-# Append the SRC directory to the PYTHONPATH for future imports
+# Append the 'exp_hres' directory to the PYTHONPATH for future imports
 import os, sys
-viz_dir = os.path.normpath(os.path.join(os.path.dirname(__file__), os.pardir))
-if viz_dir not in sys.path:
-    sys.path.append(viz_dir)
+src_dir: str = os.path.normpath( \
+    os.path.join(os.path.dirname(__file__), os.pardir, os.pardir))
+if src_dir not in sys.path:
+    sys.path.append(src_dir)
 
 # Standard Library Imports
 

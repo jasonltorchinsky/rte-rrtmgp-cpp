@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PathCollection
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
+from utils.consts import NP_REAL, NP_INF, NP_LARGE
 
 def plot_scatter_grid(xdata_grid: tuple[tuple[tuple[np.ndarray]]],
     ydata_grid: tuple[tuple[tuple[np.ndarray]]], file_path: str, **kwargs):
@@ -41,30 +41,30 @@ def plot_scatter_grid(xdata_grid: tuple[tuple[tuple[np.ndarray]]],
     ## Set axis bounds
     ### If xlim or ylim not set, determine automatically
     if kwargs["xlim"] is not None:
-        x_min: np_float = kwargs["xlim"][0]
-        x_max: np_float = kwargs["xlim"][1]
+        x_min: NP_REAL = kwargs["xlim"][0]
+        x_max: NP_REAL = kwargs["xlim"][1]
     else:
-        x_min: np_float = np_INF
-        x_max: np_float = -np_INF
+        x_min: NP_REAL = NP_INF
+        x_max: NP_REAL = -NP_INF
     
     if kwargs["ylim"] is not None:
-        y_min: np_float = kwargs["ylim"][0]
-        y_max: np_float = kwargs["ylim"][1]
+        y_min: NP_REAL = kwargs["ylim"][0]
+        y_max: NP_REAL = kwargs["ylim"][1]
     else:
-        y_min: np_float = np_INF
-        y_max: np_float = -np_INF
+        y_min: NP_REAL = NP_INF
+        y_max: NP_REAL = -NP_INF
 
     if ((kwargs["xlim"] is None) or (kwargs["ylim"] is None)):
         for ii in range(0, nrow):
             for jj in range(0, ncol):
                 for kk in range(0, len(xdata_grid[ii][jj])):
                     if (kwargs["xlim"] is None):
-                        x_min: np_float = min(x_min, xdata_grid[ii][jj][kk].min())
-                        x_max: np_float = max(x_max, xdata_grid[ii][jj][kk].max())
+                        x_min: NP_REAL = min(x_min, xdata_grid[ii][jj][kk].min())
+                        x_max: NP_REAL = max(x_max, xdata_grid[ii][jj][kk].max())
 
                     if (kwargs["ylim"] is None):
-                        y_min: np_float = min(y_min, ydata_grid[ii][jj][kk].min())
-                        y_max: np_float = max(y_max, ydata_grid[ii][jj][kk].max())
+                        y_min: NP_REAL = min(y_min, ydata_grid[ii][jj][kk].min())
+                        y_max: NP_REAL = max(y_max, ydata_grid[ii][jj][kk].max())
 
     ## Styles for profiles
     colors: list = ["#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77",

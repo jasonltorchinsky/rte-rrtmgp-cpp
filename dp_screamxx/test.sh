@@ -1,12 +1,12 @@
 # Translate DP-SCREAMXX output to RTE-RRTMGP-CPP input
 DP_SCREAMXX_DIR=/global/cfs/cdirs/m4815/ml3drt/dp_screamxx
-DP_SCREAMXX_RUN_NAME=scream_dpxx_RICO_5x5
+DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_20x20
 DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nhours_x1.2004-12-16-00000
+SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nhours_x1.1974-08-30-00000
 SCREAM_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}
 
 RTE_RRTMGP_DIR=/global/cfs/cdirs/m4815/ml3drt/rte_rrtmgp_cpp
-RTE_RRTMGP_RUN_NAME=test
+RTE_RRTMGP_RUN_NAME=base
 RTE_RRTMGP_RUN_DIR=${RTE_RRTMGP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_RUN_NAME}
 RTE_RRTMGP_INPUT_DIR=${RTE_RRTMGP_RUN_DIR}/input
 RTE_RRTMGP_OUTPUT_DIR=${RTE_RRTMGP_RUN_DIR}/output
@@ -19,15 +19,28 @@ mkdir -p ${RTE_RRTMGP_INPUT_DIR}
 mkdir -p ${RTE_RRTMGP_OUTPUT_DIR}
 mkdir -p ${RTE_RRTMGP_VIZ_DIR}
 
-mpirun -n 2 python test_dp_screamxx_input.py --method rbf --input ${SCREAM_OUTPUT_FILE_PATH} --output_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE}
+#python exp_hres/convert_dp_screamxx_output.py --input ${SCREAM_OUTPUT_FILE_PATH} --output_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE} --times "[480]" --szas "[45]"
+#python exp_hres/coarsen_rte_rrtmgp_input.py --input_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE}".480.045.in" --coarse_factors "[1, 2, 4, 8, 16]"
 
 # Visualize input
-for FILE_PATH in ${RTE_RRTMGP_INPUT_DIR}/*;
+#for FILE_PATH in ${RTE_RRTMGP_INPUT_DIR}/*;
+#do
+#  BASE_NAME=$(basename ${FILE_PATH} .in.nc)
+#  VIZ_INPUT_DIR=${RTE_RRTMGP_VIZ_DIR}/${BASE_NAME#${DP_SCREAMXX_RUN_NAME}.}
+#
+#  mkdir -p ${VIZ_INPUT_DIR}
+#
+#  python exp_hres/viz_tools/plot_input.py --input ${FILE_PATH} --outdir ${VIZ_INPUT_DIR}
+#done
+
+# Visualize output
+for FILE_PATH in ${RTE_RRTMGP_OUTPUT_DIR}/*;
 do
-  BASE_NAME=$(basename ${FILE_PATH} .in.nc)
+  BASE_NAME=$(basename ${FILE_PATH} .out.nc)
+  INPUT_FILE_PATH=${RTE_RRTMGP_INPUT_DIR}/${BASE_NAME}.in.nc
   VIZ_INPUT_DIR=${RTE_RRTMGP_VIZ_DIR}/${BASE_NAME#${DP_SCREAMXX_RUN_NAME}.}
 
   mkdir -p ${VIZ_INPUT_DIR}
 
-  python ../viz/plot_input.py --input ${FILE_PATH} --outdir ${VIZ_INPUT_DIR}
+  python exp_hres/viz_tools/plot_output.py --input ${INPUT_FILE_PATH} --output ${FILE_PATH} --outdir ${VIZ_INPUT_DIR}
 done

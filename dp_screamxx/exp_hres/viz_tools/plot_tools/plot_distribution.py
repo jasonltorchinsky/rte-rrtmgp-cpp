@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
+from utils.consts import NP_INF, NP_LARGE
 
 def plot_distribution(a: np.ndarray, file_path: str, nbins: int = 10, **kwargs) -> None:
     
@@ -55,7 +55,7 @@ def plot_distribution(a: np.ndarray, file_path: str, nbins: int = 10, **kwargs) 
                     transform = ax.transAxes)
     
     ## Plot the vertical line at the tolerance bound
-    _: LineCollection = ax.vlines(kwargs["tol"] * a.max(), ymin = 0.0, ymax = np.sqrt(np_INF),
+    _: LineCollection = ax.vlines(kwargs["tol"] * a.max(), ymin = 0.0, ymax = np.sqrt(NP_INF),
                                        colors = "black", linewidths = 0.5, zorder = 1)
 
     ## Set the y-scale

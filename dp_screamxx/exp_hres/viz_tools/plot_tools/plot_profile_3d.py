@@ -13,7 +13,6 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
 
 def plot_profile_3d(meshgrid: tuple, profile: np.ndarray, file_path: str, **kwargs):
     ### NOTE: We assume here that we are plotting nonnegative quanitities, where

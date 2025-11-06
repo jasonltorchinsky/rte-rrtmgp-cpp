@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from consts import np_INF, np_LARGE
+from utils.consts import NP_REAL, NP_INF, NP_LARGE
 
 def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
     profiles_grid: tuple[tuple[tuple[np.ndarray]]], file_path: str, **kwargs):
@@ -49,27 +49,27 @@ def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
         axs: np.ndarray = np.expand_dims(axs, 0)
 
     ## Set axis bounds
-    x_min: np_float = np_INF
-    x_max: np_float = -np_INF
-    y_min: np_float = np_INF
-    y_max: np_float = -np_INF
+    x_min: NP_REAL = NP_INF
+    x_max: NP_REAL = -NP_INF
+    y_min: NP_REAL = NP_INF
+    y_max: NP_REAL = -NP_INF
 
     for ii in range(0, nrow):
         for jj in range(0, ncol):
             if kwargs["coord_axis"].lower() == "x":
-                x_min: np_float = min(x_min, coord_grid[ii][jj].min())
-                x_max: np_float = max(x_max, coord_grid[ii][jj].max())
+                x_min: NP_REAL = min(x_min, coord_grid[ii][jj].min())
+                x_max: NP_REAL = max(x_max, coord_grid[ii][jj].max())
             elif kwargs["coord_axis"].lower() == "y":
-                y_min: np_float = min(y_min, coord_grid[ii][jj].min())
-                y_max: np_float = max(y_max, coord_grid[ii][jj].max())
+                y_min: NP_REAL = min(y_min, coord_grid[ii][jj].min())
+                y_max: NP_REAL = max(y_max, coord_grid[ii][jj].max())
 
             for profile in profiles_grid[ii][jj]:
                 if kwargs["coord_axis"].lower() == "x":
-                    y_min: np_float = min(y_min, profile.min())
-                    y_max: np_float = max(y_max, profile.max())
+                    y_min: NP_REAL = min(y_min, profile.min())
+                    y_max: NP_REAL = max(y_max, profile.max())
                 elif kwargs["coord_axis"].lower() == "y":
-                    x_min: np_float = min(x_min, profile.min())
-                    x_max: np_float = max(x_max, profile.max())
+                    x_min: NP_REAL = min(x_min, profile.min())
+                    x_max: NP_REAL = max(x_max, profile.max())
 
     ## Styles for profiles
     colors: list = ["#332288", "#117733", "#44AA99", "#88CCEE", "#DDCC77",
@@ -117,9 +117,9 @@ def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
             ## If we are looking at a difference, add a gridline to guide the eye
             if kwargs["viz"] == "difference":
                 if kwargs["coord_axis"].lower() == "x":
-                    axs[ii, jj].hlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+                    axs[ii, jj].hlines(0.0, -NP_LARGE, NP_LARGE, colors = "gray", linewidth = 0.2)
                 elif kwargs["coord_axis"].lower() == "y":
-                    axs[ii, jj].vlines(0.0, -np_LARGE, np_LARGE, colors = "gray", linewidth = 0.2)
+                    axs[ii, jj].vlines(0.0, -NP_LARGE, NP_LARGE, colors = "gray", linewidth = 0.2)
 
             ## Set x- and y-axis bounds
             axs[ii, jj].set_xlim(x_min, x_max)

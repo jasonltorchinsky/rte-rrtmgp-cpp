@@ -9,6 +9,7 @@ M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 import argparse
 import ast
 import os
+import sys
 
 from typing import Optional
 
@@ -20,14 +21,14 @@ from scipy.interpolate import interpn
 import xarray as xr
 
 # Local Library Imports
-from consts import NP_INT, NP_REAL, MPI_INT, MPI_REAL, NC_REAL, NC_INT, \
+from utils.consts import NP_INT, NP_REAL, MPI_INT, MPI_REAL, NC_REAL, NC_INT, \
     MPI_COMM, NP_ARRAY, NC_VARIABLE, XR_DATASET, MPI_ROOT, g
-from rte_rrtmgp_cpp_fields import grid_dimensions, grid_descriptions, \
+from utils.rte_rrtmgp_cpp_fields import grid_dimensions, grid_descriptions, \
     grid_units, fields_dimensions, fields_descriptions, fields_units
 
 # Type aliases
 
-def main():
+def main(argv):
     # Communicator info
     comm: MPI_COMM = MPI.COMM_WORLD
     l_rank: NP_INT = NP_INT(comm.Get_rank())
@@ -44,22 +45,22 @@ def main():
         type = str,
         required = True,
         help = "Path to DP-SCREAM output.")
-
-    parser.add_argument("--method",
-        action = "store",
-        nargs = 1,
-        type = str,
-        required = False,
-        default = ["nearest"],
-        help = "Interpolation method for vertical regridding [DISABLED].")
     
     parser.add_argument("--szas",
         action = "store",
         nargs = 1,
-        type = Optional[str],
+        type = str,
         required = False,
-        default = [None],
-        help = "Solar zenith angles to create RTE-RRTMGP-CPP input for.")
+        default = None,
+        help = "Solar zenith angles to create RTE-RRTMGP-CPP input for [degrees].")
+
+    parser.add_argument("--times",
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = False,
+        default = None,
+        help = "Times to create RTE-RRTMGP-CPP input for.")
 
     parser.add_argument("--output_root",
         action = "store",
@@ -72,11 +73,16 @@ def main():
     args: argparse.Namespace = parser.parse_args()
     
     input_file_root_path: str = os.path.normpath(args.input_root[0])
-    if args.szas[0] is None:
+    if args.szas is None:
         szas: Optional[NP_ARRAY[NP_REAL]] = None
     else:
         szas: Optional[NP_ARRAY[NP_REAL]] = \
-            NP_ARRAY(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
+            np.array(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
+    if args.times is None:
+        times: NP_ARRAY[NP_INT] = np.array([], dtype = NP_INT)
+    else:
+        times: NP_ARRAY[NP_INT] = \
+            np.array(ast.literal_eval(args.times[0]), dtype = NP_INT).flatten()
     output_file_root_path: str = os.path.normpath(args.output_root[0])
 
     ### NetCDF fields for RTE-RRTMGP-CPP output
@@ -125,15 +131,18 @@ def main():
         yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
 
         ## Dimension sizes - DP-SCREAM
-        ntime: NP_INT = NP_INT(xr_input.sizes["time"]) # No. time-steps
+        if times.size == 0:
+            ntime: Optional[NP_INT] = NP_INT(xr_input.sizes["time"]) # No. time-steps
+            times = np.arange(ntime, dtype = NP_INT)
+        else:
+            ntime: Optional[NP_INT] = NP_INT(times.size)
         ncol: Optional[NP_INT] = NP_INT(xr_input.sizes["ncol"]) # No. columns
         nlev: NP_INT = NP_INT(xr_input.sizes["lev"]) # No. levels (layers)
-        nilev: NP_INT = NP_INT(xr_input.sizes["ilev"]) # No. level (layer) interfaces
+        inlev: NP_INT = NP_INT(xr_input.sizes["ilev"]) # No. level interfaces (levels)
 
         ## Dimension sizes - RTE-RRTMGP-CPP+RT - Only ones that need to be renamed
-        n_lay_z: NP_INT = nlev # DP-SCREAM "levels" = RTE-RRTMGP-CPP+RT "layers"
-        n_lev_z: NP_INT = nilev # DP_SCREAM "level interfaces" = RTE-RRTMGP-CPP+RT "levels"
-        n_z: NP_INT = n_lay_z + n_lev_z
+        n_lay_z: Optional[NP_INT] = nlev # DP-SCREAM "levels" = RTE-RRTMGP-CPP+RT "layers"
+        n_lev_z: Optional[NP_INT] = inlev # DP-SCREAM "ilevels" = RTE-RRTMGP-CPP+RT "levels"
 
         ## Store spatial grid for outputting to RTE-RRTMGP-CPP input file
         grid: dict = {}
@@ -169,15 +178,17 @@ def main():
             fields)
     else:
         ncol: Optional[NP_INT] = None
+        ntime: Optional[NP_INT] = None
         n_lay_z: Optional[NP_INT] = None
         n_lev_z: Optional[NP_INT] = None
-        n_z: Optional[NP_INT] = None
+        times: Optional[NP_ARRAY[NP_INT]] = None
 
     ## Broadcast info to non-root ranks
-    comm.Bcast(ncol, root = MPI_ROOT)
-    comm.Bcast(n_lay_z, root = MPI_ROOT)
-    comm.Bcast(n_lev_z, root = MPI_ROOT)
-    comm.Bcast(n_z, root = MPI_ROOT)
+    ncol = comm.bcast(ncol, root = MPI_ROOT)
+    ntime = comm.bcast(ntime, root = MPI_ROOT)
+    n_lay_z = comm.bcast(n_lay_z, root = MPI_ROOT)
+    n_lev_z = comm.bcast(n_lev_z, root = MPI_ROOT)
+    times = comm.bcast(times, root = MPI_ROOT)
 
     ## Set up counts, displs split for scatterv
     g_ncols: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
@@ -193,38 +204,27 @@ def main():
     displs_lev: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
     displs_lev[1:] += n_lev_z * np.cumsum(g_ncols)[:-1]
 
-    counts: NP_ARRAY[NP_INT] = g_ncols * n_z
-    displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
-    displs[1:] += n_z * np.cumsum(g_ncols)[:-1]
-
     ## Set up local arrays to store scatterv info
+    z_mid: Optional[NP_ARRAY[NP_REAL]] = None
     l_z_mid: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lay_z], dtype = NP_REAL)
-    l_z_int: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lev_z], dtype = NP_REAL)
-    l_z: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_z], dtype = NP_REAL)
     z_lay: NP_ARRAY[NP_REAL] = np.empty([n_lay_z], dtype = NP_REAL)
     z_lev: NP_ARRAY[NP_REAL] = np.empty([n_lev_z], dtype = NP_REAL)
 
     ## For large file sizes, we must go through time-step by time-step
-    for tt in range(0, ntime):
+    t_idx: NP_INT
+    for t_idx in range(ntime - 1, -1, -1):
+        tt: NP_INT = times[t_idx]
         # Root Rank reads input file, constructs vertical grids and scattervs
         if l_rank == MPI_ROOT:
             ## Reconstruct the vertical grids (time-dependent)
-            z_mid: NP_ARRAY[NP_REAL] = xr_input["z_mid"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Level midpoints [m]; (ncol, n_lay_z)
-            z_int: NP_ARRAY[NP_REAL] = xr_input["z_int"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Level interfaces [m]; (ncol, n_lev_z)
-
-            ### Interleave these into a single vertical grid
-            z: NP_ARRAY[NP_REAL] = np.empty([ncol, n_z], dtype = NP_REAL) # Level interfaces and midpoints [m]; (ncol, n_z)
-            z[:,1::2] = z_mid
-            z[:,0::2] = z_int
+            z_mid: Optional[NP_ARRAY[NP_REAL]] = xr_input["z_mid"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Level midpoints [m]; (ncol, n_lay_z)
 
             ### Create a regularly-spaced grid for interpolating variables to.
-            #### Match the top uniform interface to the top irregular midpoint
-            #### So that uniform level and layer grids are within the irregular ones
-            z_min: NP_REAL = np.min(np.max(z_int, axis = 0))
+            z_min: NP_REAL = np.min(np.max(z_mid, axis = 0))
             z_max: NP_REAL = np.max(np.min(z_mid, axis = 0))
 
-            z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_max, z_min, n_lev_z, dtype = NP_REAL) # Regularly-spaced layer interfaces [m]; (n_lev_z)
-            z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced layer midpoints [m]; (n_lay_z)
+            z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_min, z_max, n_lev_z, dtype = NP_REAL) # Regularly-spaced levels [m]; (n_lev_z)
+            z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced layers [m]; (n_lay_z)
 
             ## Store vertical grid
             grid["z"] = z_lay
@@ -235,9 +235,6 @@ def main():
         ## Scatterv and broadcast vertical grids
         comm.Scatterv([z_mid, counts_lay, displs_lay, MPI_REAL], l_z_mid,
             root = MPI_ROOT)
-        comm.Scatterv([z_int, counts_lev, displs_lev, MPI_REAL], l_z_int,
-            root = MPI_ROOT)
-        comm.Scatterv([z, counts, displs, MPI_REAL], l_z, root = MPI_ROOT)
         comm.Bcast(z_lay, root = MPI_ROOT)
         comm.Bcast(z_lev, root = MPI_ROOT)
 
@@ -248,46 +245,22 @@ def main():
             field_min: Optional[NP_REAL] = None
             field_max: Optional[NP_REAL] = None
             # Root Rank reads input file, constructs full field and scattervs
+            dpscream_field_key: str = dpscream_3dfield_keys[ii]
+            rte_field_key: str = rte_3dfield_keys[ii]
             if l_rank == MPI_ROOT:
-                dpscream_field_key: str = dpscream_3dfield_keys[ii]
-                rte_field_key: str = rte_3dfield_keys[ii]
-                ## Fields either have layer midpoint and interface values with an 
-                ## additional string in their key, or just layer midpoint values that are
-                ## just the field key
+                ## NOTE: Only using level interface (i.e., layer) values
                 if dpscream_field_key in xr_input.keys(): # Only have values at midpoints
-                    field_mid: NP_ARRAY[NP_REAL] = xr_input[dpscream_field_key].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
-                    field_int: Optional[NP_ARRAY[NP_REAL]] = None # Field at layer interfaces; (time, ncol, n_lay_z)
-
-                    z_field: NP_ARRAY[NP_REAL] = z_mid
+                    field: NP_ARRAY[NP_REAL] = xr_input[dpscream_field_key].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
+                    
                 else: # Should have values and midpoints and interfaces
                     dpscream_field_key_mid: str = dpscream_field_key + "_mid"
-                    ## Exceptions
-                    if dpscream_field_key in ["T"]:
-                        dpscream_field_key_int: str = dpscream_field_key + "_int_rad"
-                    else:
-                        dpscream_field_key_int: str = dpscream_field_key + "_int"
 
                     ## We should always have fields values at layer midpoints
                     ## Unless we don't, then this needs to be fixed
                     assert(dpscream_field_key_mid in xr_input.keys())
-                    field_mid: NP_ARRAY[NP_REAL] = xr_input[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
+                    field: NP_ARRAY[NP_REAL] = xr_input[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
 
-                    if dpscream_field_key_int in xr_input.keys(): # Actually have values at midpoints and interfaces
-                        field_int: Optional[NP_ARRAY[NP_REAL]] = xr_input[dpscream_field_key_int].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer interfaces; (time, ncol, n_lay_z)
-                        z_field: np.ndarray = z
-                    else: # Actually only have values at midpoints
-                        field_int: Optional[NP_ARRAY[NP_REAL]] = None # Field at layer interfaces; (ncol, n_lay_z)
-                        z_field: np.ndarray = z_mid
-
-                ## If we have field values at layer midpoints and interfaces, interleave them
-                if field_int is not None:
-                    field = np.empty([ncol, n_z], dtype = NP_REAL)
-                    field[:,1::2] = field_mid
-                    field[:,0::2] = field_int
-                    field_flag = "full"
-                else:
-                    field = field_mid
-                    field_flag = "mid"
+                z_field: NP_ARRAY[NP_REAL] = z_mid
 
                 ## Exceptions - Do in serial for now
                 if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
@@ -301,48 +274,42 @@ def main():
                 ## Get field min and max
                 ## Exceptions
                 if rte_field_key in ["rel"]: # Between 2.5 μm and 21.5 μm
-                    field_min: NP_REAL = NP_REAL(2.5)
-                    field_max: NP_REAL = NP_REAL(21.5)
+                    field_min = NP_REAL(2.5)
+                    field_max = NP_REAL(21.5)
                 elif rte_field_key in ["dei"]: # Between 10. μm and 180. μm
-                    field_min: NP_REAL = NP_REAL(10.)
-                    field_max: NP_REAL = NP_REAL(180.)
+                    field_min = NP_REAL(10.)
+                    field_max = NP_REAL(180.)
                 else:
-                    field_min: NP_REAL = field.min()
-                    field_max: NP_REAL = field.max()
+                    field_min = field.min()
+                    field_max = field.max()
 
             # scatterv the field
-            comm.bcast(field_flag, root = MPI_ROOT)
-            comm.Bcast(field_min, root = MPI_ROOT)
-            comm.Bcast(field_max, root = MPI_ROOT)
-            if field_flag == "full":
-                l_field: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_z], dtype = NP_REAL)
-                comm.Scatterv([field, counts, displs, MPI_REAL], l_field,
-                    root = MPI_ROOT)
-            elif field_flag == "mid":
-                l_field: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lay_z], dtype = NP_REAL)
-                comm.Scatterv([field, counts_lay, displs_lay, MPI_REAL], l_field,
-                    root = MPI_ROOT)
+            field_min = comm.bcast(field_min, root = MPI_ROOT)
+            field_max = comm.bcast(field_max, root = MPI_ROOT)
+            
+            l_field: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lay_z], dtype = NP_REAL)
+            comm.Scatterv([field, counts_lay, displs_lay, MPI_REAL], l_field,
+                root = MPI_ROOT)
 
             ## Interpolate the values to regular vertical layers
             l_field_lay: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lay_z], dtype = NP_REAL)
             l_field_lev: NP_ARRAY[NP_REAL] = np.empty([l_ncol, n_lev_z], dtype = NP_REAL)
-            if field_flag == "full":
+            for ii in range(0, l_ncol):
+                l_field_lay[ii,...] = interpn([l_z_mid[ii]], l_field[ii,...],
+                    z_lay)
+            
+            ## Some fields need to be interpolated to regular vertical levels, too
+            if dpscream_field_key in ["p", "T"]:
                 for ii in range(0, l_ncol):
-                    l_field_lay[ii,...] = interpn([l_z[ii]], l_field[ii,...],
-                        z_lay)
-                    l_field_lev[ii,...] = interpn([l_z[ii]], l_field[ii,...],
+                    l_field_lev[ii,...] = interpn([l_z_mid[ii]], l_field[ii,...],
                         z_lev)
-            elif field_flag == "mid":
-                for ii in range(0, l_ncol):
-                    l_field_lay[ii,...] = interpn([l_z_mid[ii]], l_field[ii,...],
-                        z_lay)
 
             ## Limit the interpolated (and extrapolated) field values
             ## Exceptions:
             l_field_lay[l_field_lay < field_min] = field_min
             l_field_lay[l_field_lay > field_max] = field_max
 
-            if field_flag == "full":
+            if dpscream_field_key in ["p", "T"]:
                 l_field_lev[l_field_lev < field_min] = field_min
                 l_field_lev[l_field_lev > field_max] = field_max
 
@@ -359,7 +326,7 @@ def main():
                 field_lay = np.reshape(field_lay, (n_col_x, n_col_y, n_lay_z)) # (n_col_x, n_col_y, n_lay_z)
                 field_lay = np.transpose(field_lay, axes = (2, 1, 0)) # (n_lay_z, n_col_y, n_col_x)
 
-            if field_flag == "full":
+            if dpscream_field_key in ["p", "T"]:
                 comm.Gatherv(l_field_lev, [field_lev, counts_lev, displs_lev, MPI_REAL],
                     root = MPI_ROOT)
                 if l_rank == MPI_ROOT:
@@ -376,7 +343,7 @@ def main():
                     rte_field_key_lay: str = rte_field_key + "_lay"
                     fields[rte_field_key_lay] = field_lay
 
-                    if field_flag == "full":
+                    if dpscream_field_key in ["p", "T"]:
                         rte_field_key_lev: str = rte_field_key + "_lev"
                         fields[rte_field_key_lev] = field_lev
 
@@ -416,7 +383,9 @@ def main():
             if szas is not None:
                 for sza in szas:
                     sza_rad: NP_REAL = np.deg2rad(sza)
-                    fields["mu0"]: NP_REAL = np.zeros((ntime, n_col_y, n_col_x)) + np.cos(sza_rad) # Cosine of SZA
+                    fields["mu0"]: NP_ARRAY[NP_REAL] = \
+                        np.zeros((ntime, n_col_y, n_col_x), dtype = NP_REAL) \
+                            + np.cos(sza_rad) # Cosine of SZA
 
                     time_str: str = "{:03d}".format(tt)
                     sza_str: str = "{:03.0f}".format(sza)
@@ -590,7 +559,5 @@ def set_unspecified_fields(n_col_x: NP_INT, n_col_y: NP_INT, n_lay_z: NP_INT,
     fields["aermr11"]: NP_ARRAY[NP_REAL] = \
         np.zeros((n_lay_z, n_col_y, n_col_x), dtype = NP_REAL) # Sulfate Aerosol
 
-
 if __name__ == "__main__":
-    main()
-
+    main(sys.argv)
