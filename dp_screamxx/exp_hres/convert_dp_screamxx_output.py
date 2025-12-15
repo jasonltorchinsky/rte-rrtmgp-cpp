@@ -151,7 +151,7 @@ def main(argv):
         grid: dict = {}
 
         ### NOTE: The number of points in the horizontal and vertical acceleration grids "should"
-        ### be between 1/10 and 1/20 of n_col_x, n_col_y, n_col_z
+        ### be between 1/10 and 1/20 of n_col_x, n_col_y, n_lay_z
         ### NOTE: These are the time-independent quantities
         ngrid_x: NP_INT = NP_INT(np.ceil(n_col_x / 10))
         ngrid_y: NP_INT = NP_INT(np.ceil(n_col_y / 10))

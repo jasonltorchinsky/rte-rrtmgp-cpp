@@ -4,6 +4,12 @@
 
 # Local Library Imports
 
+rte_3dfield_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
+    "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 
+    "vmr_o2", "vmr_o3"]
+
+rte_2dfield_keys: list[str] = ["t_sfc", "mu0"]
+
 grid_dimensions: dict = {
     "ngrid_x" : (),
     "ngrid_y" : (),
