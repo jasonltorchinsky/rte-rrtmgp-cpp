@@ -7,8 +7,8 @@ import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 
 # Local Library Imports
-from utils.conts import NP_REAL, NP_ARRAY, MPL_AXES, MPL_COLORBAR, MPL_FIGURE, \
-    MPL_CONTOUR
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, MPL_AXES, MPL_COLORBAR, \
+    MPL_FIGURE, MPL_CONTOUR
 
 
 def plot_profile_2d(meshgrid: list[NP_ARRAY[NP_REAL]], profile: NP_ARRAY[NP_REAL],
@@ -58,14 +58,14 @@ def plot_profile_2d(meshgrid: list[NP_ARRAY[NP_REAL]], profile: NP_ARRAY[NP_REAL
             cmin: NP_REAL = -1. * cmax
 
     if kwargs["cscale"] in ["log"]:
-        norm: Optional[colors.Normalize] = colors.LogNorm(vmin = cmin, vmax = cmax)
+        norm: str | colors.Normalize = colors.LogNorm(vmin = cmin, vmax = cmax)
         cbar_ticks: NP_ARRAY[NP_REAL] = np.logspace( \
             np.log10(cmin), np.log10(cmax), ncbarticks, dtype = NP_REAL)
         cbar_levels: NP_ARRAY[NP_REAL] = np.logspace( \
             np.log10(cmin), np.log10(cmax), ncbarlevels, dtype = NP_REAL)
         cbar_tick_labels: list[str] = ["{:1.3e}".format(tick) for tick in cbar_ticks]
     else:
-        norm: Optional[colors.Normalize] = None
+        norm: str | colors.Normalize = "linear"
         cbar_ticks: NP_ARRAY[NP_REAL] = np.linspace( \
             cmin, cmax, ncbarticks, dtype = NP_REAL)
         cbar_levels: NP_ARRAY[NP_REAL] = np.linspace( \
@@ -75,17 +75,20 @@ def plot_profile_2d(meshgrid: list[NP_ARRAY[NP_REAL]], profile: NP_ARRAY[NP_REAL
     ## Plot the profile
     if kwargs["plot_style"] == "colormesh":
         ctf: MPL_CONTOUR = ax.pcolormesh(meshgrid[0], meshgrid[1], profile,
-            cmap = kwargs["cmap"], levels = cbar_levels, norm = norm, zorder = 0)
+            cmap = kwargs["cmap"], norm = norm, vmin = cmin, vmax = cmax, zorder = 0)
+        ctf2: Optional[MPL_CONTOUR] = None
     else: # default to "contour"
         ctf: MPL_CONTOUR = ax.contourf(meshgrid[0], meshgrid[1], profile,
             cmap = kwargs["cmap"], levels = cbar_levels, norm = norm, zorder = 0)
-        ctf2: MPL_CONTOUR = ax.contour(ctf, levels = cbar_ticks, colors = "black",
-            linestyles = "--", linewidths = 0.5, norm = norm, zorder = 1)
+        ctf2: Optional[MPL_CONTOUR] = ax.contour(ctf, levels = cbar_ticks,
+            colors = "black", linestyles = "--", linewidths = 0.5,
+            norm = norm, zorder = 1)
 
     ## Set the colorbar
     cbar: MPL_COLORBAR = fig.colorbar(ctf, ax = ax)
     cbar.ax.set_yticks(cbar_ticks, cbar_tick_labels)
-    cbar.add_lines(ctf2)
+    if ctf2 is not None:
+        cbar.add_lines(ctf2)
     if kwargs["cbarlabel"] is not None:
         cbar.ax.set_ylabel(kwargs["cbarlabel"])
 

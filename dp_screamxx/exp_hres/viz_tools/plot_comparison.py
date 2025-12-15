@@ -1,210 +1,188 @@
+import os, sys
+exp_hres_dir: str = os.path.normpath( \
+    os.path.join(os.path.dirname(__file__), os.pardir))
+if exp_hres_dir not in sys.path:
+    sys.path.append(exp_hres_dir)
+    
 # Standard Library Imports
 import argparse
 import os
+import re
 
 # Third-Party Library Imports
 import numpy as np
-import netCDF4 as nc
+import xarray as xr
 
 # Local Library Imports
-from plot_tools import plot_profiles_1d, plot_profile_2d
-from consts import np_EPS
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
+from plot_tools import plot_profiles_1d
 
 def main():
     ## Parse command-line input
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
-        prog = "plot_output",
-        description = "Plots comparisons of the two stream and ray tracer solvers of of RTE-RRTMGP-CPP.")
+        prog = "plot_comparison",
+        description = ("Plots comparisons of the two-stream and ray-tracer "
+            + "solvers of RTE-RRTMGP-CPP.")
+    )
     
-    parser.add_argument("--input",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = True,
-                        help = "Path to RTE-RRTMGP-CPP input file.")
-    
-    parser.add_argument("--output",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = True,
-                        help = "Path to RTE-RRTMGP-CPP output file.")
-    
-    parser.add_argument("--optics",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = False,
-                        default = ["aerosol_optics.nc"],
-                        help = "Path to aerosol optics file.")
+    parser.add_argument("--rte_indir",
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = True,
+        help = "Path to RTE-RRTMGP-CPP input directory."
+    )
 
-    parser.add_argument("--outdir",
-                        action = "store",
-                        nargs = 1,
-                        type = str,
-                        required = False,
-                        default = ["comparison"],
-                        help = "Path to output generated plots.")
+    parser.add_argument("--rte_outdir",
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = True,
+        help = "Path to RTE-RRTMGP-CPP output directory."
+    )
+
+    parser.add_argument("--plot_outdir",
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = False,
+        default = ["comparison"],
+        help = "Path to plot output directory."
+    )
     
     args: argparse.Namespace = parser.parse_args()
 
-    input_file_path: str = os.path.normpath(args.input[0])
-    output_file_path: str = os.path.normpath(args.output[0])
-    optics_file_path: str = os.path.normpath(args.optics[0])
-    out_dir_path: str = os.path.normpath(args.outdir[0])
+    rte_indir_path: str = os.path.normpath(args.rte_indir[0])
+    rte_outdir_path: str = os.path.normpath(args.rte_outdir[0])
+    plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
 
-    ## Load the input, output, and optics data
-    nc_input: nc._netCDF4.Dataset = nc.Dataset(input_file_path)
-    nc_output: nc._netCDF4.Dataset = nc.Dataset(output_file_path)
-    nc_optics: nc._netCDF4.Dataset = nc.Dataset(optics_file_path)
-
-    ## Create the output directories
-    out_dir_path: str = os.path.join(os.getcwd(), out_dir_path)
-
-    if not os.path.exists(out_dir_path):
-        os.mkdir(out_dir_path)
-
-    ## Extract the spatial variables
-    x: np.ma.MaskedArray = nc_input.variables["x"][:] # [m]
-    y: np.ma.MaskedArray = nc_input.variables["y"][:] # [m]
-
-    XX: np.ndarray
-    YY: np.ndarray
-    XX, YY = np.meshgrid(x, y, indexing = "ij")
-
-    z_lay: np.ma.MaskedArray = nc_input.variables["z_lay"][:] # [m]
-    z_lev: np.ma.MaskedArray = nc_input.variables["z_lev"][:] # [m]
-
-    nx: int = np.size(x)
-    ny: int = np.size(y)
-
-    nlay: int = np.size(z_lay)
-    nlev: int = np.size(z_lev)
-    nz: int = nlay + nlev
-
-    z: np.ndarray = np.empty(nz, dtype = z_lev.dtype) # [m]
-    z[0::2] = z_lev
-    z[1::2] = z_lay
-
-    ## Extract the wavenumber information
-    wavenumber1_lw: np.ma.MaskedArray = nc_optics.variables["wavenumber1_lw"][:] # (band_lw), [cm^(-1)]
-    wavenumber2_lw: np.ma.MaskedArray = nc_optics.variables["wavenumber2_lw"][:] # (band_lw), [cm^(-1)]
-
-    wavenumber1_sw: np.ma.MaskedArray = nc_optics.variables["wavenumber1_sw"][:] # (band_sw), [cm^(-1)]
-    wavenumber2_sw: np.ma.MaskedArray = nc_optics.variables["wavenumber2_sw"][:] # (band_sw), [cm^(-1)]
-
-    band_lw: int = np.size(wavenumber1_lw)
-    band_sw: int = np.size(wavenumber1_sw)
+    rmsre_convergence_kwargs: dict = {
+        #"sfc_up" : {"file_name" : "sfc_up_rmsre.png",
+        #    "title" : r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        #"sfc_dn" : {"file_name" : "sfc_dn_rmsre.png",
+        #    "title" : r"Downwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        #"tod_up" : {"file_name" : "tod_up_rmsre.png",
+        #    "title" : r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"},
+        "flux_abs" : {"file_name" : "flux_abs_rmsre.png",
+            "title" : r"Absorbed Shortwave Flux [$W m^{-3}$]",
+            "zmax" : 16000} # [m]
+    }
     
-    ### Bin edges - ASSUME: wavenumber1_Xw looks like lower bin bounds, e.g., [0, 1, 2, 3, 4, 5]
-    ### and wavenumber2_Xw looks like upper bin bounds, e.g., [1, 2, 3, 4, 5, 6]
-    wavenumber_lw: np.ndarray = np.empty(band_lw + 1, dtype = wavenumber1_lw.dtype) # [cm^(-1)]
-    wavenumber_lw[0:-1] = wavenumber1_lw
-    wavenumber_lw[-1] = wavenumber2_lw[-1]
+    for key, kwargs in rmsre_convergence_kwargs.items():
+        plot_rmsre_convergence(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
 
-    wavenumber_sw: np.ndarray = np.empty(band_sw + 1, dtype = wavenumber1_sw.dtype) # [cm^(-1)]
-    wavenumber_sw[0:-1] = wavenumber1_sw
-    wavenumber_sw[-1] = wavenumber2_sw[-1]
+def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
+    plot_outdir_path: str, key: str, kwargs: dict):
 
-    # COMPARE: ABSORBED SHORTWAVE FLUX [W m^(-3)]
-    ## Calculate the absorbed shortwave fluxes profiles (TwoStream Solver)
-    ts_flux_up: np.ma.MaskedArray = nc_output.variables["sw_flux_up"][:] # (lev, y, x); [W m^(-2)]
-    ts_flux_dn: np.ma.MaskedArray = nc_output.variables["sw_flux_dn"][:] # (lev, y, x); [W m^(-2)]
+    ### THIS NEEDS TO BE EDITTED TO ACCOUNT FOR MULTIPLE HORIZONTAL RESOLUTIONS ###
+    file_ext: re.Pattern = re.compile(".in.nc")
+    file_names: list[str] = sorted([file_ext.sub("", file_name) for file_name in os.listdir(rte_indir_path)])
 
-    ts_flux_abs: np.ma.MaskedArray = ((ts_flux_dn[1:] + ts_flux_up[:-1]) - (ts_flux_dn[:-1] + ts_flux_up[1:])) / np.expand_dims(z_lev[1:] - z_lev[:-1], [1, 2]) # (lay, y, x); [W m^(-3)]
-    ### Filter out values that are super small
-    ts_flux_abs[np.abs(ts_flux_abs) <= np_EPS] = 0.
+    # Group file names by resolution
+    res_ext: re.Pattern = re.compile(".lr_..")
+    file_groups: dict = {}
+    for file_name in file_names:
+        res_match: Optional[re.Match] = res_ext.search(file_name)
 
-    ## Get the absorbed shortwave fluxes profiles (Monte Carlo Ray Tracer)
-    rt_flux_abs_dir: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dir"][:] # (lay, y, x); [W m^(-3)]
-    rt_flux_abs_dif: np.ma.MaskedArray = nc_output.variables["rt_flux_abs_dif"][:] # (lay, y, x); [W m^(-3)]
+        res_str: str
+        if res_match is None:
+            res_str = "base"
+        else:
+            res_str = res_match.group()
 
-    rt_flux_abs: np.ma.MaskedArray = rt_flux_abs_dir + rt_flux_abs_dif # (lay, y, x); [W m^(-3)]
-    ### Filter out values that are super small
-    rt_flux_abs[np.abs(rt_flux_abs) <= np_EPS] = 0.
+        if res_str in file_groups.keys():
+            file_groups[res_str] += [file_name]
+        else:
+            file_groups[res_str] = [file_name]
 
-    ## Plot the relative difference of absorbed shortwave fluxes in each layer
-    if (np.max(np.abs(rt_flux_abs)) > 0.):
-        flux_abs_diff: np.ma.MaskedArray = (ts_flux_abs - rt_flux_abs) / np.max(np.abs(rt_flux_abs)) # (lay, x, y)
-        flux_abs_diff_z: np.ndarray = np.nanmean(flux_abs_diff, axis = (1, 2)) # (lay)
-        title: str = r"Relative Difference: $\left( TS - MC \right) / max\left( |MC| \right)$"
-        xlabel: str = r"Absorbed Shortwave Flux"
-    else:
-        flux_abs_diff: np.ma.MaskedArray = (ts_flux_abs - rt_flux_abs) # (lay, x, y); [W m^(-3)]
-        flux_abs_diff_z: np.ndarray = np.nanmean(flux_abs_diff, axis = (1, 2)) # (lay); [W m^(-3)]
-        title: str = r"Absolute Difference: $\left( TS - MC \right)$"
-        xlabel: str = r"Absorbed Shortwave Flux $[W m^{-3}]$"
+    szas_list: list[NP_ARRAY[NP_REAL]] = []
+    rmsres_list: list[NP_ARRAY[NP_REAL]] = []
 
-    coord: np.ndarray = z_lay / 1000. # (lay); [km]
-    profiles: list = [flux_abs_diff_z]
-    file_path: str = os.path.join(out_dir_path, "flux_abs.png")
-    ylabel: str = r"z $[km]$"
-    coord_axis: str = "y"
-    viz: str = "difference"
+    profile_labels: list[str] = []
 
-    plot_profiles_1d(coord, profiles, file_path, title = title, xlabel = xlabel,
-                     ylabel = ylabel, coord_axis = coord_axis, viz = viz)
+    for res_str, file_group in file_groups.items():
+        group_size: int = len(file_group)
+        szas: NP_ARRAY[NP_REAL] = np.zeros(group_size, dtype = NP_REAL) - 1.
+        rmsres: NP_ARRAY[NP_REAL] = np.zeros(group_size, dtype = NP_REAL) - 1.
 
-    # COMPARE: UPWELLING SHORTWAVE SURFACE FLUXES [W m^(-2)]
-    ts_flux_sfc_up: np.ma.MaskedArray = ts_flux_up[0, ...] # (y, x); [W m^(-2)]
-    rt_flux_sfc_up: np.ma.MaskedArray = nc_output.variables["rt_flux_sfc_up"][:] # (y, x); [W m^(-2)]
+        # Get horizontal resolution for profile label
+        infile_name: str = file_group[0] + ".in.nc"
+        infile_path: str = os.path.join(rte_indir_path, infile_name)
+        xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
+                    engine = "netcdf4", decode_timedelta = False)
 
-    ## Filter out values that are super small
-    ts_flux_sfc_up[np.abs(ts_flux_sfc_up) <= np_EPS] = 0.
-    rt_flux_sfc_up[np.abs(rt_flux_sfc_up) <= np_EPS] = 0.
+        xh: NP_ARRAY[NP_REAL] = xr_rte_in["xh"].values.astype(NP_REAL) # Column interfaces - x-dimension [m]; (nx + 1)
+        dx: NP_REAL = xh[1] - xh[0] # Horizontal resolution [m]; ASSUME SAME IN x- AND y-
+        profile_label: str
+        if dx < NP_REAL(1000.0):
+            profile_label = r"{:0.0f} $m$".format(dx)
+        else:
+            profile_label = r"{:0.2f} $km$".format(dx / 1000.)
+        profile_labels += [profile_label]
 
-    ## Plot the relative difference of upwelling shortwave surface flux
-    if (np.max(np.abs(rt_flux_sfc_up)) > 0.):
-        flux_sfc_up_diff: np.ma.MaskedArray = (ts_flux_sfc_up - rt_flux_sfc_up) / np.max(np.abs(rt_flux_sfc_up)) # (x, y)
-        title: str = r"Relative Difference: $\left( TS - MC \right) / max\left( |MC| \right)$"
-        cbarlabel: str = r"Upwelling Shortwave Surface Flux"
-    else:
-        flux_sfc_up_diff: np.ma.MaskedArray = (ts_flux_sfc_up - rt_flux_sfc_up) # (x, y); [W m^(-2)]
-        title: str = r"Absolute Difference: $\left( TS - MC \right)$"
-        cbarlabel: str = r"Upwelling Shortwave Surface Flux $[W m^{-3}]$"
+        for ii in range(0, group_size):
+            file_name: str = file_group[ii]
+            infile_name: str = file_name + ".in.nc"
+            outfile_name: str = file_name + ".out.nc"
 
-    meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = np.transpose(flux_sfc_up_diff, axes = (1, 0))
-    file_path: str = os.path.join(out_dir_path, "flux_sfc_up.png")
-    xlabel: str = r"x [$km$]"
-    ylabel: str = r"y [$km$]"
-    cmap: str = "bwr"
-    cscale: str = "difference"
+            infile_path: str = os.path.join(rte_indir_path, infile_name)
+            outfile_path: str = os.path.join(rte_outdir_path, outfile_name)
 
-    plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel, cmap = cmap,
-                    cscale = cscale)
+            if (os.path.isfile(infile_path) and os.path.isfile(outfile_path)):
+                xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
+                    engine = "netcdf4", decode_timedelta = False)
+                xr_rte_out: XR_DATASET = xr.open_dataset(outfile_path,
+                    engine = "netcdf4", decode_timedelta = False)
 
-    # COMPARE: UPWELLING SHORTWAVE TOP-OF-DOMAIN FLUXES [W m^(-2)]
-    ts_flux_tod_up: np.ma.MaskedArray = ts_flux_up[-1, ...] # (y, x); [W m^(-2)]
-    rt_flux_tod_up: np.ma.MaskedArray = nc_output.variables["rt_flux_tod_up"][:] # (y, x); [W m^(-2)]
+                if key == "flux_abs":
+                    z_lev: NP_ARRAY[NP_REAL] = xr_rte_in["z_lev"].values.astype(NP_REAL) # Level altitude - z-dimension [m]; (n_lay_z)
+                    zmax_idx: NP_INT = NP_INT(np.sum(z_lev <= kwargs["zmax"]))
 
-    ## Filter out values that are super small
-    ts_flux_tod_up[np.abs(ts_flux_tod_up) <= np_EPS] = 0.
-    rt_flux_tod_up[np.abs(rt_flux_tod_up) <= np_EPS] = 0.
+                    # Two-Stream
+                    ts_flux_dn: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_dn"].values.astype(NP_REAL) # (z_lev, y, x); [W m^(-2)]
+                    ts_flux_up: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].values.astype(NP_REAL) # (z_lev, y, x); [W m^(-2)]
+                    ts_field: NP_ARRAY[NP_REAL] = ((ts_flux_dn[1:] + ts_flux_up[:-1]) - (ts_flux_dn[:-1] + ts_flux_up[1:])) / np.expand_dims(z_lev[1:] - z_lev[:-1], [1, 2]) # (z_lay, y, x); [W m^(-3)]
 
-    ## Plot the relative difference of upwelling shortwave top-of-domain flux
-    if (np.max(np.abs(rt_flux_tod_up)) > 0.):
-        flux_tod_up_diff: np.ma.MaskedArray = (ts_flux_tod_up - rt_flux_tod_up) / np.max(np.abs(rt_flux_tod_up)) # (x, y)
-        title: str = r"Relative Difference: $\left( TS - MC \right) / max\left( |MC| \right)$"
-        cbarlabel: str = r"Upwelling Shortwave Top-of-Domain Flux"
-    else:
-        flux_tod_up_diff: np.ma.MaskedArray = (ts_flux_tod_up - rt_flux_tod_up) # (x, y); [W m^(-2)]
-        title: str = r"Absolute Difference: $\left( TS - MC \right)$"
-        cbarlabel: str = r"Upwelling Shortwave Top-of-Domain Flux $[W m^{-3}]$"
+                    # Ray-Tracer
+                    rt_flux_abs_dif: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_abs_dif"].values.astype(NP_REAL) # (z_lay, y, x); [W m^(-3)]
+                    rt_flux_abs_dir: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_abs_dir"].values.astype(NP_REAL) # (z_lay, y, x); [W m^(-3)]
+                    rt_field: NP_ARRAY[NP_REAL] = rt_flux_abs_dif + rt_flux_abs_dir
 
-    meshgrid: tuple = [XX / 1000., YY / 1000.]
-    profile: np.ndarray = np.transpose(flux_tod_up_diff, axes = (1, 0))
-    file_path: str = os.path.join(out_dir_path, "flux_tod_up.png")
-    xlabel: str = r"x [$km$]"
-    ylabel: str = r"y [$km$]"
-    cmap: str = "bwr"
-    cscale: str = "difference"
+                    breakpoint()
 
-    plot_profile_2d(meshgrid, profile, file_path, title = title, xlabel = xlabel,
-                    ylabel = ylabel, cbarlabel = cbarlabel, cmap = cmap,
-                    cscale = cscale)
+                    ts_field = ts_field[:zmax_idx,...]
+                    rt_field = rt_field[:zmax_idx,...]
 
+                elif key == "sfc_up":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].isel(lev = 0).values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_up"].values.astype(NP_REAL) # (ny, nx)
+                elif key == "sfc_dn":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_dn"].isel(lev = 0).values.astype(NP_REAL) # (ny, nx)
+                    rt_flux_sfc_dir: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_dir"].values.astype(NP_REAL) # (ny, nx)
+                    rt_flux_sfc_dif: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_dif"].values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = rt_flux_sfc_dir + rt_flux_sfc_dif
+                elif key == "tod_up":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].isel(lev = -1).values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_tod_up"].values.astype(NP_REAL) # (ny, nx)
+
+                szas[ii] = np.rad2deg(np.nanmean(np.arccos(xr_rte_in["mu0"].values.astype(NP_REAL)))) ## ASSUME: Uniform SZA
+                rmsres[ii] = np.sqrt(np.nanmean(np.pow(rt_field - ts_field, 2) / np.nanmean(np.pow(rt_field, 2))))
+
+        szas_list += [szas[szas >= 0.]]
+        rmsres_list += [rmsres[szas >= 0.]]
+
+    coord: NP_ARRAY[NP_REAL] = szas_list[0]
+    profiles: list[NP_ARRAY[NP_REAL]] = rmsres_list
+    file_path: str = os.path.join(plot_outdir_path, kwargs["file_name"])
+    title: str = kwargs["title"]
+    xlabel: str = "Solar Zenith Angle"
+    ylabel: str = "Root-Mean-Square Relative Error"
+    yscale: str = "log"
+    coord_axis: str = "x"
+
+    plot_profiles_1d(coord, profiles, file_path, title = title,
+        profile_labels = profile_labels, xlabel = xlabel, ylabel = ylabel,
+        yscale = yscale, coord_axis = coord_axis)
 
 if __name__ == "__main__":
     main()

@@ -87,13 +87,13 @@ def main(argv):
 
     ### NetCDF fields for RTE-RRTMGP-CPP output
     fields: dict = {}
-    dpscream_3dfield_keys: list = ["p", "T", "RelativeHumidity", "qc", "qi",
+    dpscream_3dfield_keys: list[str] = ["p", "T", "RelativeHumidity", "qc", "qi",
         "eff_radius_qc", "eff_radius_qi", "ch4_volume_mix_ratio",
         "co_volume_mix_ratio", "co2_volume_mix_ratio",
         "h2o_volume_mix_ratio", "n2_volume_mix_ratio",
         "n2o_volume_mix_ratio", "o2_volume_mix_ratio",
         "o3_volume_mix_ratio"]
-    rte_3dfield_keys: list = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
+    rte_3dfield_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
         "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 
         "vmr_o2", "vmr_o3"]
     dpscream_2dfield_keys: list[str] = ["surf_radiative_T",
@@ -131,11 +131,14 @@ def main(argv):
         yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
 
         ## Dimension sizes - DP-SCREAM
+        ntime_input: Optional[NP_INT] = NP_INT(xr_input.sizes["time"]) # No. time-steps in input
         if times.size == 0:
-            ntime: Optional[NP_INT] = NP_INT(xr_input.sizes["time"]) # No. time-steps
+            ntime: Optional[NP_INT] = ntime_input
             times = np.arange(ntime, dtype = NP_INT)
         else:
             ntime: Optional[NP_INT] = NP_INT(times.size)
+        times: Optional[NP_ARRAY[NP_INT]] = times % ntime_input
+
         ncol: Optional[NP_INT] = NP_INT(xr_input.sizes["ncol"]) # No. columns
         nlev: NP_INT = NP_INT(xr_input.sizes["lev"]) # No. levels (layers)
         inlev: NP_INT = NP_INT(xr_input.sizes["ilev"]) # No. level interfaces (levels)
@@ -182,7 +185,7 @@ def main(argv):
         n_lay_z: Optional[NP_INT] = None
         n_lev_z: Optional[NP_INT] = None
         times: Optional[NP_ARRAY[NP_INT]] = None
-
+    
     ## Broadcast info to non-root ranks
     ncol = comm.bcast(ncol, root = MPI_ROOT)
     ntime = comm.bcast(ntime, root = MPI_ROOT)
@@ -240,7 +243,6 @@ def main(argv):
 
         ## Read the 3D fields from the file, remap them to regular z-levels, and store them
         for ii in range(len(dpscream_3dfield_keys)):
-            field_flag: Optional[str] = None # Tells ranks if field is mid or mid and int (full)
             field: Optional[NP_ARRAY[NP_REAL]] = None
             field_min: Optional[NP_REAL] = None
             field_max: Optional[NP_REAL] = None
@@ -259,8 +261,6 @@ def main(argv):
                     ## Unless we don't, then this needs to be fixed
                     assert(dpscream_field_key_mid in xr_input.keys())
                     field: NP_ARRAY[NP_REAL] = xr_input[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
-
-                z_field: NP_ARRAY[NP_REAL] = z_mid
 
                 ## Exceptions - Do in serial for now
                 if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
@@ -384,12 +384,12 @@ def main(argv):
                 for sza in szas:
                     sza_rad: NP_REAL = np.deg2rad(sza)
                     fields["mu0"]: NP_ARRAY[NP_REAL] = \
-                        np.zeros((ntime, n_col_y, n_col_x), dtype = NP_REAL) \
+                        np.zeros((n_col_y, n_col_x), dtype = NP_REAL) \
                             + np.cos(sza_rad) # Cosine of SZA
 
                     time_str: str = "{:03d}".format(tt)
                     sza_str: str = "{:03.0f}".format(sza)
-                    output_file_path: str = output_file_root_path + "." + time_str + "." + sza_str + ".in.nc"
+                    output_file_path: str = output_file_root_path + "." + time_str + ".sza_" + sza_str + ".in.nc"
 
                     nc_file: NC_DATASET = nc.Dataset(output_file_path, mode = "w",
                         datamodel = "NETCDF4", clobber = True)
