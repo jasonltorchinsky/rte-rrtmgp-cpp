@@ -8,19 +8,26 @@ M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 # Standard Library Imports
 import argparse
 import os
+import re
 import sys
 
 from typing import Optional
 
 # Third-Party Library Imports
 from mpi4py import MPI
+import netCDF4 as nc
 import numpy as np
+from scipy.interpolate import griddata
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, NC_REAL, NC_DATASET, NC_VARIABLE, \
+    MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
+    g
 from utils.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
-from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
+from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys, \
+    grid_dimensions, grid_descriptions, grid_units, \
+    fields_dimensions, fields_descriptions, fields_units
 
 # Script variables
 prog_name: str = "convert_dpscream_output"
@@ -30,7 +37,6 @@ def main(argv):
     # MPI Communicator info
     comm: MPI_COMM = MPI.COMM_WORLD
     l_rank: NP_INT = NP_INT(comm.Get_rank())
-    comm_size: NP_INT = NP_INT(comm.Get_size())
 
     ## Parse command-line input
     parser: argparse.ArgumentParser = argparse.ArgumentParser(
@@ -55,12 +61,17 @@ def main(argv):
 
     dpscream_file_path: str = os.path.normpath(args.dpscream_file_path[0])
     rte_rrtmgp_cpp_dir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_dir_path[0])
+    file_ext: re.Pattern = re.compile("\\.nc")
+    rte_rrtmgp_cpp_file_name_root: str = file_ext.sub("", os.path.basename(dpscream_file_path))
+    rte_rrtmgp_cpp_file_path_root: str = os.path.join(rte_rrtmgp_cpp_dir_path, rte_rrtmgp_cpp_file_name_root)
 
     coarse_factors: NP_ARRAY[NP_INT] = np.array([2, 4], dtype = NP_INT)
+    szas: NP_ARRAY[NP_REAL] = np.array([0., 85.], dtype = NP_REAL)
 
     # Root rank gets original horizontal grid
-    ntime: Optional[NP_INT] = None
+    sort_mask: Optional[NP_ARRAY[NP_INT]]
     grids: Optional[dict]
+    ntime: Optional[NP_INT] = None
     if l_rank == MPI_ROOT:
         xr_dpscream: XR_DATASET = xr.open_dataset(dpscream_file_path,
             engine = "netcdf4")
@@ -68,14 +79,16 @@ def main(argv):
         # Get number of time-steps
         ntime = NP_INT(xr_dpscream.sizes["time"])
 
-        sort_mask: NP_ARRAY[NP_INT] = get_sort_mask(xr_dpscream)
+        sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(xr_dpscream)
         grids = {}
         grids["01"] = get_grid_01(xr_dpscream, sort_mask)
 
+        coarse_factor: NP_INT
         for coarse_factor in coarse_factors:
-            grid_str: str = "{:02}".format(coarse_factor)
-            grids[grid_str] = coarsen_grid(grids["01"], coarse_factor)
+            coarse_factor_str: str = "{:02}".format(coarse_factor)
+            grids[coarse_factor_str] = coarsen_grid(grids["01"], coarse_factor)
     else:
+        sort_mask = None
         grids = None
 
     ntime = comm.bcast(ntime, root = MPI_ROOT)
@@ -84,31 +97,43 @@ def main(argv):
     # NOTE: For now, go through all time-steps
     tt: int
     for tt in range(0, ntime):
-        # MPI_ROOT Scattervs the fields
+        fields: Optional[dict]
         if l_rank == MPI_ROOT:
+            fields = {"01" : {}}
+            coarse_factor: NP_INT
+            for coarse_factor in coarse_factors:
+                coarse_factor_str: str = "{:02}".format(coarse_factor)
+                fields[coarse_factor_str] = {}
 
+        ## Set unspecified fields
+        unspecified_fields: dict = set_unspecified_fields(grids, comm)
+        coarse_factor_str: str
+        for coarse_factor_str in fields.keys():
+            fields[coarse_factor_str] = {**fields[coarse_factor_str], **unspecified_fields[coarse_factor_str]}
 
-    if l_rank == MPI_ROOT:
-        print(l_rank, grids["02"]["x"])
-    comm.barrier()
+        ## Interpolate 3D fields
+        ii: int
+        for ii in range(0, len(dpscream_3dfield_keys)):
+            dpscream_field_key: str = dpscream_3dfield_keys[ii]
+            rte_field_key: str = rte_3dfield_keys[ii]
+            field: dict = interp_3dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, grids, l_grids, tt, comm)
+            coarse_factor_str: str
+            for coarse_factor_str in field.keys():
+                fields[coarse_factor_str] = {**fields[coarse_factor_str], **field[coarse_factor_str]}
 
-    ii: int
-    for ii in range(0, comm_size):
-        if ii == l_rank:
-            print(ii, l_grids["02"]["x"])
-        comm.barrier()
+        ## Interpolate 2D fields
+        ii: int
+        for ii in range(0, len(dpscream_2dfield_keys)):
+            dpscream_field_key: str = dpscream_2dfield_keys[ii]
+            rte_field_key: str = rte_2dfield_keys[ii]
+            field: dict = interp_2dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, grids, l_grids, tt, comm)
+            coarse_factor_str: str
+            for coarse_factor_str in field.keys():
+                fields[coarse_factor_str] = {**fields[coarse_factor_str], **field[coarse_factor_str]}
 
-
-    ### Open the DP-SCREAM output file
-    ### Get the high-resolution horizontal grid
-    ### Get the low-resolution horizontal grid(s)
-    ### Get the uniform vertical grid
-    ### Combine into the new grids
-    ### For each time-step
-        ### For each new grid
-            ### Interpolate values to the new grid
-            ### For each SZA
-                ### Output RTE-RRTMGP-CPP+RT input file
+        save_rte_rrtmgp_cpp_input(grids, fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
 
 def get_sort_mask(xr_dpscream: XR_DATASET) -> NP_ARRAY[NP_INT]:
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns
@@ -120,8 +145,6 @@ def get_sort_mask(xr_dpscream: XR_DATASET) -> NP_ARRAY[NP_INT]:
     return sort_mask
 
 def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
-    # HORIZONTAL GRID
-
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns
     lon: NP_ARRAY[NP_REAL] = xr_dpscream["lon"].values.astype(NP_REAL) # Column-center - x-dimension [m]; (ncol)
     lat: NP_ARRAY[NP_REAL] = xr_dpscream["lat"].values.astype(NP_REAL) # Column center - y-dimension [m]; (ncol)
@@ -151,8 +174,8 @@ def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     nlay: NP_INT = NP_INT(xr_dpscream.sizes["lev"]) # No. DP-SCREAM levels (RTE layers)
     nlev: NP_INT = NP_INT(xr_dpscream.sizes["ilev"]) # No. DP-SCREAM level interfaces (RTE levels)
 
-    z_min: NP_REAL = NP_REAL(xr_dpscream["z_mid"].min()) # Lowest RTE level altitude on regular grid; [m]
-    z_max: NP_REAL = NP_REAL(xr_dpscream["z_mid"].max()) # Highest RTE level altitude on regular grid; [m]
+    z_min: NP_REAL = NP_REAL(xr_dpscream["z_mid"].isel(lev=[-1]).max()) # Lowest RTE level altitude on regular grid; [m]
+    z_max: NP_REAL = NP_REAL(xr_dpscream["z_mid"].isel(lev=[0]).min()) # Highest RTE level altitude on regular grid; [m]
 
     z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_min, z_max, nlev, dtype = NP_REAL) # Regularly-spaced RTE levels [m]; (nlev)
     z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced RTE layers [m]; (nlay)
@@ -160,6 +183,11 @@ def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     ### NOTE: The number of points in the vertical acceleration grid "should"
     ### be between 1/10 and 1/20 of nlay
     ngrid_z: NP_INT = NP_INT(np.ceil(nlay / 10))
+
+    ## Wavelength info
+    n_bnd_sw: NP_INT = NP_INT(xr_dpscream.sizes["swband"])
+    n_bnd_lw: NP_INT = NP_INT(xr_dpscream.sizes["lwband"])
+
 
     ## Spatial RTE-RRTMGP-CPP grid
     grid: dict = {}
@@ -182,6 +210,9 @@ def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     grid["ngrid_x"] = ngrid_x
     grid["ngrid_y"] = ngrid_y
     grid["ngrid_z"] = ngrid_z
+
+    grid["n_bnd_sw"] = n_bnd_sw
+    grid["n_bnd_lw"] = n_bnd_lw
 
     return grid
 
@@ -223,6 +254,9 @@ def coarsen_grid(grid: dict, coarse_factor: NP_INT) -> dict:
     grid_coarse["ngrid_x"] = ngrid_x_coarse
     grid_coarse["ngrid_y"] = ngrid_y_coarse
     grid_coarse["ngrid_z"] = grid["ngrid_z"]
+
+    grid_coarse["n_bnd_sw"] = grid["n_bnd_sw"]
+    grid_coarse["n_bnd_lw"] = grid["n_bnd_lw"]
 
     return grid_coarse
 
@@ -317,9 +351,427 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
         l_grids[coarse_str]["ngrid_y"] = ngrid_y
         l_grids[coarse_str]["ngrid_z"] = ngrid_z
 
-    return l_grids
-        
+        # Store communication values in each loal grid
+        l_grids[coarse_str]["l_counts_x"] = l_counts
+        l_grids[coarse_str]["l_displs_x"] = l_displs
 
+    return l_grids
+
+def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], grids: dict, 
+    l_grids: dict, tt: int, comm: MPI_COMM, interp_method: str = "nearest") -> NP_ARRAY[NP_REAL]:
+    field_out: dict = {}
+
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    z_src: Optional[NP_ARRAY[NP_REAL]]
+    field_src: Optional[NP_ARRAY[NP_REAL]]
+    field_min: Optional[NP_REAL]
+    field_max: Optional[NP_REAL]
+    # Root Rank reads input file, constructs full field and Scatterv
+    if l_rank == MPI_ROOT:
+        ## NOTE: Only using DP-SCREAM level interface (RTE-RRTMGP-CPP+RT layer) values
+        if dpscream_field_key in xr_dpscream.keys(): # Only have values at midpoints
+            field_src: NP_ARRAY[NP_REAL] = \
+                xr_dpscream[dpscream_field_key].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
+            z_src = xr_dpscream["z_mid"].isel(time = tt, ncol = sort_mask, lev = slice(-1, None, -1)).values.astype(NP_REAL) # Layer midpoints [m]; (ncol, n_lay_z)
+                    
+        else: # Should have values and midpoints and interfaces
+            dpscream_field_key_mid: str = dpscream_field_key + "_mid"
+
+            ## We should always have fields values at layer midpoints
+            ## Unless we don't, then this needs to be fixed
+            assert(dpscream_field_key_mid in xr_dpscream.keys())
+            field_src: NP_ARRAY[NP_REAL] = \
+                xr_dpscream[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
+            z_src = xr_dpscream["z_mid"].isel(time = tt, ncol = sort_mask, lev = slice(-1, None, -1)).values.astype(NP_REAL) # Layer midpoints [m]; (ncol, n_lay_z)
+
+        ## Exceptions - Do in serial for now
+        if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
+            field_src = 2. * field_src
+        elif rte_field_key in ["lwp", "iwp"]: # Derived from multiple quantities
+            p_int: NP_ARRAY[NP_REAL] = \
+                xr_dpscream["p_int"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Pressure at layer interfaces [Pa]; (ncol, n_lev_z)
+            dp: NP_ARRAY[NP_REAL] = p_int[:,1:] - p_int[:,:-1] # Layer pressure thickness [Pa]; (ncol, n_lay_z)
+
+            field_src = field_src * dp / g
+
+        ## Get field min and max
+        ## Exceptions
+        if rte_field_key in ["rel"]: # Between 2.5 μm and 21.5 μm
+            field_min = NP_REAL(2.5)
+            field_max = NP_REAL(21.5)
+        elif rte_field_key in ["dei"]: # Between 10. μm and 180. μm
+            field_min = NP_REAL(10.)
+            field_max = NP_REAL(180.)
+        else:
+            field_min = field_src.min()
+            field_max = field_src.max()
+
+        nx: NP_INT = grids["01"]["nx"]
+        ny: NP_INT = grids["01"]["ny"]
+        nz: NP_INT = NP_INT(field_src.shape[1])
+
+        z_src = z_src.reshape(nx, ny, nz)
+        field_src = field_src.reshape(nx, ny, nz)
+    else:
+        z_src = None
+        field_src = None
+        field_min = None
+        field_max = None
+
+    # Scatterv the original field
+    l_nx_src: NP_INT = l_grids["01"]["nx"]
+    l_ny_src: NP_INT = l_grids["01"]["ny"]
+    l_nlay_src: NP_INT = l_grids["01"]["lay"]
+
+    l_counts_src: list[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src * l_nlay_src
+    l_displs_src: list[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src * l_nlay_src
+
+    l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nlay_src], dtype = NP_REAL) # NOTE: ASSUME only using layer midpoint values for field
+
+    field_min = comm.bcast(field_min, root = MPI_ROOT)
+    field_max = comm.bcast(field_max, root = MPI_ROOT)
+    comm.Scatterv([field_src, l_counts_src, l_displs_src, MPI_REAL], l_field_src, root = MPI_ROOT)
+
+    # Get source grid - points to interpolate from
+    l_x_src: NP_ARRAY[NP_REAL] = l_grids["01"]["x"]
+    l_y_src: NP_ARRAY[NP_REAL] = l_grids["01"]["y"]
+    l_z_src: NP_ARRAY[NP_REAL] = comm.bcast(z_src, root = MPI_ROOT)
+    l_nz: NP_INT = l_z_src.shape[2]
+
+    l_XX_src: NP_ARRAY[NP_REAL]
+    l_YY_src: NP_ARRAY[NP_REAL]
+    l_XX_src, l_YY_src = np.meshgrid(l_x_src, l_y_src, indexing = "ij")
+    l_XX_src = np.tile(np.expand_dims(l_XX_src, axis = 2), (1, 1, l_nz))
+    l_YY_src = np.tile(np.expand_dims(l_YY_src, axis = 2), (1, 1, l_nz))
+
+    l_pts_src: NP_ARRAY[NP_REAL] = \
+        np.stack([l_XX_src.flatten(), l_YY_src.flatten(), l_z_src.flatten()],
+            axis = 1)
+
+    # Coarsen the field as necessary
+    for coarse_str in l_grids.keys():
+        field_out[coarse_str]: dict = {}
+        # Get target layer grid - points to interpolate to
+        l_ny_tgt: NP_INT = l_grids[coarse_str]["ny"]
+        l_nlay_tgt: NP_INT = l_grids[coarse_str]["lay"]
+
+        l_counts_lay_tgt: list[NP_INT] = l_grids[coarse_str]["l_counts_x"] * l_ny_tgt * l_nlay_tgt
+        l_displs_lay_tgt: list[NP_INT] = l_grids[coarse_str]["l_displs_x"] * l_ny_tgt * l_nlay_tgt
+
+        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["x"]
+        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["y"]
+        l_z_lay_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["z_lay"]
+
+        l_XX_lay_tgt, l_YY_lay_tgt, l_ZZ_lay_tgt = \
+            np.meshgrid(l_x_tgt, l_y_tgt, l_z_lay_tgt, indexing = "ij")
+        l_pts_lay_tgt: NP_ARRAY[NP_REAL] = \
+            np.stack([l_XX_lay_tgt.flatten(), l_YY_lay_tgt.flatten(), l_ZZ_lay_tgt.flatten()], 
+                axis = 1)
+
+        ## Interpolate the values to regular vertical layers, and limit them
+        l_field_lay_tgt: NP_ARRAY[NP_REAL] = \
+            griddata(l_pts_src, l_field_src.flatten(), l_pts_lay_tgt,
+                method = interp_method)
+        l_field_lay_tgt[l_field_lay_tgt < field_min] = field_min
+        l_field_lay_tgt[l_field_lay_tgt > field_max] = field_max
+
+        # Reconstruct the full field
+        field_lay_tgt: Optional[NP_ARRAY[NP_REAL]] = None
+        if l_rank == MPI_ROOT:
+            nx_tgt: NP_INT = grids[coarse_str]["nx"]
+            ny_tgt: NP_INT = grids[coarse_str]["ny"]
+            nlay_tgt: NP_INT = grids[coarse_str]["lay"]
+
+            field_lay_tgt = np.empty([nx_tgt, ny_tgt, nlay_tgt], dtype = NP_REAL)
+
+        comm.Gatherv(l_field_lay_tgt,
+            [field_lay_tgt, l_counts_lay_tgt, l_displs_lay_tgt, MPI_REAL],
+            root = MPI_ROOT)
+
+        if l_rank == MPI_ROOT:
+            field_lay_tgt = np.reshape(field_lay_tgt, (nx_tgt, ny_tgt, nlay_tgt)) # (nx, ny, nlay)
+            field_lay_tgt = np.transpose(field_lay_tgt, axes = (2, 1, 0)) # (nlay, ny, nx)
+
+        ## Some fields need to be interpolated to regular vertical levels, too
+        if dpscream_field_key in ["p", "T"]:
+            # Get target level grid - points to interpolate to
+            l_nlev_tgt: NP_INT = l_grids[coarse_str]["lev"]
+            l_z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["z_lev"]
+            l_counts_lev_tgt: list[NP_INT] = l_grids[coarse_str]["l_counts_x"] * l_ny_tgt * l_nlev_tgt
+            l_displs_lev_tgt: list[NP_INT] = l_grids[coarse_str]["l_displs_x"] * l_ny_tgt * l_nlev_tgt
+
+            l_XX_lev_tgt, l_YY_lev_tgt, l_ZZ_lev_tgt = \
+                np.meshgrid(l_x_tgt, l_y_tgt, l_z_lev_tgt, indexing = "ij")
+            l_pts_lev_tgt: NP_ARRAY[NP_REAL] = \
+                np.stack([l_XX_lev_tgt.flatten(), l_YY_lev_tgt.flatten(), l_ZZ_lev_tgt.flatten()], 
+                    axis = 1)
+            
+            ## Interpolate the values to regular vertical levels, and limit them
+            l_field_lev_tgt: NP_ARRAY[NP_REAL] = \
+                griddata(l_pts_src, l_field_src.flatten(), l_pts_lev_tgt,
+                    method = interp_method)
+            l_field_lev_tgt[l_field_lev_tgt < field_min] = field_min
+            l_field_lev_tgt[l_field_lev_tgt > field_max] = field_max
+        
+            # Reconstruct the full field
+            field_lev_tgt: Optional[NP_ARRAY[NP_REAL]] = None
+            if l_rank == MPI_ROOT:
+                nlev_tgt: NP_INT = grids[coarse_str]["lev"]
+                field_lev_tgt = np.empty([nx_tgt, ny_tgt, nlev_tgt], dtype = NP_REAL)
+            
+            comm.Gatherv(l_field_lev_tgt,
+                [field_lev_tgt, l_counts_lev_tgt, l_displs_lev_tgt, MPI_REAL],
+                root = MPI_ROOT)
+
+            if l_rank == MPI_ROOT:
+                field_lev_tgt = np.reshape(field_lev_tgt, (nx_tgt, ny_tgt, nlev_tgt)) # (nx, ny, nlev)
+                field_lev_tgt = np.transpose(field_lev_tgt, axes = (2, 1, 0)) # (nlev, ny, nx)
+
+        if l_rank == MPI_ROOT:
+            ## Exceptions
+            if rte_field_key in ["rh", "q", "lwp", "iwp", "rel", "dei",
+                "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o",
+                "vmr_o2", "vmr_o3"]:
+                field_out[coarse_str][rte_field_key] = field_lay_tgt
+            else:
+                rte_field_key_lay: str = rte_field_key + "_lay"
+                field_out[coarse_str][rte_field_key_lay] = field_lay_tgt
+
+                if dpscream_field_key in ["p", "T"]:
+                    rte_field_key_lev: str = rte_field_key + "_lev"
+                    field_out[coarse_str][rte_field_key_lev] = field_lev_tgt
+
+    return field_out
+
+def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], grids: dict, 
+    l_grids: dict, tt: int, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
+    field_out: dict = {}
+
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    field_src: Optional[NP_ARRAY[NP_REAL]]
+    field_min: Optional[NP_REAL]
+    field_max: Optional[NP_REAL]
+    # Root Rank reads input file, constructs full field and Scatterv
+    if l_rank == MPI_ROOT:
+        assert(dpscream_field_key in xr_dpscream.keys())
+        field_src: NP_ARRAY[NP_REAL] = \
+            xr_dpscream[dpscream_field_key].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field; (ncol)
+            
+        ## Exceptions - Do in serial for now
+        if rte_field_key in ["t_sfc", "mu0"]: # In case fill values are unreasonable
+            if rte_field_key in ["t_sfc"]: # Between 0 K and 2300 K (max natural temperature on Earth)
+                field_min: NP_REAL = NP_REAL(0.0)
+                field_max: NP_REAL = NP_REAL(2300.0)
+            elif rte_field_key in ["mu0"]: # Between -1.0 and 1.0
+                field_min: NP_REAL = NP_REAL(-1.0)
+                field_max: NP_REAL = NP_REAL(1.0)
+            
+            field_src[field_src > field_max] = field_max
+            field_src[field_src < field_min] = field_min
+
+        nx: NP_INT = grids["01"]["nx"]
+        ny: NP_INT = grids["01"]["ny"]
+
+        field_src = field_src.reshape(nx, ny)
+    else:
+        field_src = None
+        field_min = None
+        field_max = None
+
+    # Scatterv the original field
+    l_nx_src: NP_INT = l_grids["01"]["nx"]
+    l_ny_src: NP_INT = l_grids["01"]["ny"]
+
+    l_counts_src: list[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src
+    l_displs_src: list[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src
+
+    l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src], dtype = NP_REAL)
+
+    field_min = comm.bcast(field_min, root = MPI_ROOT)
+    field_max = comm.bcast(field_max, root = MPI_ROOT)
+    comm.Scatterv([field_src, l_counts_src, l_displs_src, MPI_REAL], l_field_src, root = MPI_ROOT)
+
+    # Get source grid - points to interpolate from
+    l_x_src: NP_ARRAY[NP_REAL] = l_grids["01"]["x"]
+    l_y_src: NP_ARRAY[NP_REAL] = l_grids["01"]["y"]
+
+    l_XX_src: NP_ARRAY[NP_REAL]
+    l_YY_src: NP_ARRAY[NP_REAL]
+    l_XX_src, l_YY_src = np.meshgrid(l_x_src, l_y_src, indexing = "ij")
+
+    l_pts_src: NP_ARRAY[NP_REAL] = \
+        np.stack([l_XX_src.flatten(), l_YY_src.flatten()], axis = 1)
+
+    # Coarsen the field as necessary
+    for coarse_str in l_grids.keys():
+        field_out[coarse_str]: dict = {}
+        # Get target layer grid - points to interpolate to
+        l_ny_tgt: NP_INT = l_grids[coarse_str]["ny"]
+
+        l_counts_tgt: list[NP_INT] = l_grids[coarse_str]["l_counts_x"] * l_ny_tgt
+        l_displs_tgt: list[NP_INT] = l_grids[coarse_str]["l_displs_x"] * l_ny_tgt
+
+        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["x"]
+        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["y"]
+
+        l_XX_tgt, l_YY_tgt = np.meshgrid(l_x_tgt, l_y_tgt, indexing = "ij")
+        l_pts_tgt: NP_ARRAY[NP_REAL] = \
+            np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], axis = 1)
+
+        ## Interpolate the values to regular vertical layers, and limit them
+        l_field_tgt: NP_ARRAY[NP_REAL] = \
+            griddata(l_pts_src, l_field_src.flatten(), l_pts_tgt,
+                method = interp_method)
+        l_field_tgt[l_field_tgt < field_min] = field_min
+        l_field_tgt[l_field_tgt > field_max] = field_max
+
+        # Reconstruct the full field
+        field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
+        if l_rank == MPI_ROOT:
+            nx_tgt: NP_INT = grids[coarse_str]["nx"]
+            ny_tgt: NP_INT = grids[coarse_str]["ny"]
+
+            field_tgt = np.empty([nx_tgt, ny_tgt], dtype = NP_REAL)
+
+        comm.Gatherv(l_field_tgt, [field_tgt, l_counts_tgt, l_displs_tgt, MPI_REAL],
+            root = MPI_ROOT)
+
+        if l_rank == MPI_ROOT:
+            field_tgt = np.reshape(field_tgt, (nx_tgt, ny_tgt)) # (nx, ny)
+            field_tgt = np.transpose(field_tgt, axes = (1, 0)) # (ny, nx)
+
+        if l_rank == MPI_ROOT:
+            field_out[coarse_str][rte_field_key] = field_tgt
+
+    return field_out
+
+def set_unspecified_fields(grids: dict, comm: MPI_COMM) -> dict:
+    """
+    Set fields not specified by the DP-SCREAM output.
+    """
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    fields_out: dict = {}
+
+    if l_rank == MPI_ROOT:
+        coarse_factor_str: str
+        for coarse_factor_str in grids.keys():
+            fields_out[coarse_factor_str]: dict = {}
+
+            nx: NP_INT = grids[coarse_factor_str]["nx"]
+            ny: NP_INT = grids[coarse_factor_str]["ny"]
+            nlay: NP_INT = grids[coarse_factor_str]["lay"]
+            n_bnd_sw: NP_INT = grids[coarse_factor_str]["n_bnd_sw"]
+            n_bnd_lw: NP_INT = grids[coarse_factor_str]["n_bnd_lw"]
+
+            ## Longwave boundary conditions
+            fields_out[coarse_factor_str]["emis_sfc"]: NP_ARRAY[NP_REAL] = \
+                np.ones((ny, nx, n_bnd_lw), dtype = NP_REAL)
+            
+            fields_out[coarse_factor_str]["sfc_alb_dir"]: NP_ARRAY[NP_REAL] = \
+                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07 
+            fields_out[coarse_factor_str]["sfc_alb_dif"]: NP_ARRAY[NP_REAL] = \
+                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
+
+            fields_out[coarse_factor_str]["tsi"]: NP_ARRAY[NP_REAL] = \
+                np.ones((ny, nx), dtype = NP_REAL) * 551.58
+
+            fields_out[coarse_factor_str]["azi"]: NP_ARRAY[NP_REAL] = \
+                np.ones((ny, nx), dtype = NP_REAL) * 0.0 
+
+            ## Set quantities not expected to be set in the DP-SCREAM output
+            unexpected_keys: list[str] = ["vmr_ccl4", "vmr_cfc11", "vmr_cfc12",
+                "vmr_cfc22", "vmr_hfc143a", "vmr_hfc125", "vmr_hfc32", "vmr_hfc23",
+                "vmr_hfc134a", "vmr_cf4", "vmr_no2", "aermr01", "aermr02",
+                "aermr03", "aermr04", "aermr05", "aermr06", "aermr07", "aermr08",
+                "aermr09", "aermr10", "aermr11"]
+            
+            for key in unexpected_keys:
+                fields_out[coarse_factor_str][key]: NP_ARRAY[NP_REAL] = \
+                    np.zeros((nlay, ny, nx), dtype = NP_REAL)
+                
+    return fields_out
+
+def save_rte_rrtmgp_cpp_input(grids: dict, fields: dict, tt: NP_INT,
+    file_path_root: str, comm: MPI_COMM, szas: Optional[NP_ARRAY[NP_REAL]] = None):
+
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    if l_rank == MPI_ROOT:
+        time_str: str = ".{:03d}".format(tt)
+
+        coarse_factor_str: str
+        for coarse_factor_str in grids.keys():
+            lr_str: str = ".lr_" + coarse_factor_str
+            nx: NP_INT = grids[coarse_factor_str]["nx"]
+            ny: NP_INT = grids[coarse_factor_str]["ny"]
+            if szas is not None:
+                sza: NP_REAL
+                for sza in szas:
+                    sza_str: str = ".{:03.0f}".format(sza)
+
+                    sza_rad: NP_REAL = np.deg2rad(sza)
+                    fields[coarse_factor_str]["mu0"]: NP_ARRAY[NP_REAL] = \
+                        np.zeros([ny, nx], dtype = NP_REAL) + np.cos(sza_rad)
+                    
+                    file_path: str = file_path_root + time_str + sza_str + lr_str + ".in.nc"
+                    
+                    write_rte_input(grids, fields, coarse_factor_str, file_path)
+            else:
+                file_path: str = file_path_root + time_str + lr_str + ".in.nc"
+
+                write_rte_input(grids, fields, coarse_factor_str, file_path)
+                    
+def write_rte_input(grids: dict, fields: dict, coarse_factor_str: str,
+    file_path: str):
+
+    l_grid: dict = grids[coarse_factor_str]
+    l_fields: dict = fields[coarse_factor_str]
+
+    nc_file: NC_DATASET = nc.Dataset(file_path, mode = "w",
+        datamodel = "NETCDF4", clobber = True)
+
+    nc_file.createDimension("x", l_grid["nx"])
+    nc_file.createDimension("y", l_grid["ny"])
+    nc_file.createDimension("lay", l_grid["lay"])
+    nc_file.createDimension("lev", l_grid["lev"])
+    nc_file.createDimension("z", l_grid["lay"])
+    nc_file.createDimension("xh", l_grid["nx"] + 1)
+    nc_file.createDimension("yh", l_grid["ny"] + 1)
+    nc_file.createDimension("zh", l_grid["lev"])
+    nc_file.createDimension("band_sw", l_grid["n_bnd_sw"])
+    nc_file.createDimension("band_lw", l_grid["n_bnd_lw"])
+
+    ## Spatial grid
+    for rte_grid_key in grid_dimensions.keys():
+        field: NP_ARRAY[NP_REAL] = l_grid[rte_grid_key]
+        field_dimensions: str | tuple[Optional[str]] = grid_dimensions[rte_grid_key]
+        field_description: str = grid_descriptions[rte_grid_key]
+        field_units: str = grid_units[rte_grid_key]
+
+        nc_field: NC_VARIABLE = nc_file.createVariable(rte_grid_key, NC_REAL, field_dimensions)
+        nc_field.description: str = field_description
+        nc_field.units: str = field_units
+        nc_field[...]: NP_ARRAY[NP_REAL] = field
+
+    ## Fields
+    for rte_field_key in fields_dimensions:
+        field: NP_ARRAY[NP_REAL] = l_fields[rte_field_key][:]
+
+        field_dimensions: tuple[str] = fields_dimensions[rte_field_key]
+        field_description: str = fields_descriptions[rte_field_key]
+        field_units: str = fields_units[rte_field_key]
+
+        nc_field: NC_VARIABLE = nc_file.createVariable(rte_field_key, NC_REAL, field_dimensions)
+        nc_field.description: str = field_description
+        nc_field.units: str = field_units
+        nc_field[...]: NP_ARRAY[NP_REAL] = field
+
+    nc_file.close()
 
 if __name__ == "__main__":
     main(sys.argv)

@@ -128,7 +128,7 @@ def main(argv):
 
         y: NP_ARRAY[NP_REAL] = (cols[:,:,1])[:,0] # y-midpoints of each column [m]; (n_col_y)
         dy: NP_REAL = y[1] - y[0]
-        yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), x[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
+        yh: NP_ARRAY[NP_REAL] = np.append(y - (dy / 2.), y[-1] + (dy / 2.)) # y-interfaces of each column [m]; (n_col_y + 1)
 
         ## Dimension sizes - DP-SCREAM
         ntime_input: Optional[NP_INT] = NP_INT(xr_input.sizes["time"]) # No. time-steps in input
