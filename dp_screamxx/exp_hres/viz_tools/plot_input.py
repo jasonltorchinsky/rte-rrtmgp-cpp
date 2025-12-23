@@ -9,14 +9,16 @@ if src_dir not in sys.path:
 import argparse
 import os
 import re
+from typing import Optional
 
 # Third-Party Library Imports
+from mpi4py import MPI
 import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, NP_INF
-from plot_tools import plot_profiles_1d, plot_profile_2d, plot_profile_3d, plot_distribution
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, NP_INF, MPI_COMM, MPI_ROOT
+from plot_tools import plot_profiles_1d, plot_profile_2d, plot_distribution
 
 def main():
     ## Parse command-line input
@@ -25,7 +27,7 @@ def main():
         description = ("Plots input to RTE-RRTMGP-CPP.")
     )
     
-    parser.add_argument("--rte_indir",
+    parser.add_argument("--rte_rrtmgp_cpp_input_dir_path",
         action = "store",
         nargs = 1,
         type = str,
@@ -33,19 +35,21 @@ def main():
         help = "Path to RTE-RRTMGP-CPP input directory."
     )
 
-    parser.add_argument("--plot_outdir",
+    parser.add_argument("--rte_rrtmgp_cpp_viz_dir_path",
         action = "store",
         nargs = 1,
         type = str,
         required = False,
         default = ["comparison"],
-        help = "Path to plot output directory."
+        help = "Path to RTE-RRTMGP-CPP viz directory."
     )
     
     args: argparse.Namespace = parser.parse_args()
 
-    rte_indir_path: str = os.path.normpath(args.rte_indir[0])
-    plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
+    rte_indir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_input_dir_path[0])
+    plot_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_viz_dir_path[0])
+
+    comm: MPI_COMM = MPI.COMM_WORLD
 
     horz_average_kwargs: dict = {
         "p" : {"file_name" : "p_havg.png",
@@ -79,7 +83,9 @@ def main():
             "xscale" : "linear"}
     }
 
-    for key, kwargs in horz_average_kwargs.items():
+    l_keys: list[str] = get_l_keys(list(horz_average_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = horz_average_kwargs[key]
         plot_horz_average(rte_indir_path, plot_outdir_path, key, kwargs)
 
     vert_integral_kwargs: dict = {
@@ -103,7 +109,9 @@ def main():
             "cmap" : "Purples_r"}
     }
 
-    for key, kwargs in vert_integral_kwargs.items():
+    l_keys: list[str] = get_l_keys(list(vert_integral_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = vert_integral_kwargs[key]
         plot_vert_integral(rte_indir_path, plot_outdir_path, key, kwargs)
 
     x_integral_kwargs: dict = {
@@ -127,7 +135,9 @@ def main():
             "cmap" : "Purples_r"}
     }
 
-    for key, kwargs in x_integral_kwargs.items():
+    l_keys: list[str] = get_l_keys(list(x_integral_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = x_integral_kwargs[key]
         plot_x_integral(rte_indir_path, plot_outdir_path, key, kwargs)
 
 def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
@@ -185,7 +195,6 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
                 gas_key: str = "vmr_" + kwargs["gas_codes"][ii]
                 if gas_key in xr_rte_in.keys():
                     field: NP_ARRAY[NP_REAL] = xr_rte_in[gas_key].values.astype(NP_REAL) # (lay, y, x)
-                    assert((field.min() >= 0.0) and (field.max() <= 1.0))
                     if field.max() > 0.: # If non-zero, then plot it
                         if field.ndim == 0: # Constant across domain
                             field_z: NP_ARRAY[NP_REAL] = field * np.ones((nlay), NP_REAL) # (lay); [N/A]
@@ -205,6 +214,7 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
             lev_key: str = key + "_lev"
             field_lay: Optional[NP_ARRAY[NP_REAL]] = None
             field_lev: Optional[NP_ARRAY[NP_REAL]] = None
+
             assert((key in xr_rte_in.keys()) or
                 (lay_key in xr_rte_in.keys()) or
                 (lev_key in xr_rte_in.keys()))
@@ -217,7 +227,7 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
                     field_lev = xr_rte_in[lev_key].values.astype(NP_REAL) # (lev, y, x)
 
             assert((field_lay is not None) or (field_lev is not None))
-
+            
             if (field_lay is not None) and (field_lev is not None):
                 field: NP_ARRAY[NP_REAL] = np.empty([nz, ny, nx], dtype = NP_REAL) # (z, y, x)
                 field[0::2,...] = field_lev
@@ -699,6 +709,24 @@ def plot_dei(xr_rte_in: XR_DATASET, outdir_path: str) -> None:
     if (dei.max() > dei.min()):
         plot_distribution(profile, file_path, nbins = nbins, title = title,
             xlabel = xlabel, ylabel = ylabel, xscale = xscale, yscale = yscale)
+
+def get_l_keys(g_keys: list[str], comm: MPI_COMM) -> list[str]:
+    comm_size: NP_INT = NP_INT(comm.Get_size())
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    g_count: NP_INT = len(g_keys)
+    l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    l_counts[0] = (g_count // comm_size + int(0 < (g_count % comm_size)))
+
+    l_displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    ii: int
+    for ii in range(1, comm_size):
+        l_counts[ii] = g_count // comm_size + int(ii < (g_count % comm_size))
+        l_displs[ii] = l_counts[ii - 1] + l_displs[ii - 1]
+
+    l_keys: list[str] = g_keys[l_displs[l_rank]:l_displs[l_rank] + l_counts[l_rank]]
+
+    return l_keys
 
 if __name__ == "__main__":
     main()

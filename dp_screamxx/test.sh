@@ -20,15 +20,23 @@ mkdir -p ${RTE_RRTMGP_OUTPUT_DIR}
 mkdir -p ${RTE_RRTMGP_VIZ_DIR}
 
 # Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[0]"
+SZAS_PYTHON="[0, 85]"
+COARSE_FACTORS_PYTHON="[2, 4]"
+TIMES_PYTHON="[100]"
+T0_PYTHON=-10
+TF_PYTHON=-1
 
-TIMES_PYTHON="[-20, -10, -2]"
-
-python exp_hres/convert_dp_screamxx_output_new.py --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_INPUT_DIR} #--times "${TIMES_PYTHON}" --szas "${SZAS_PYTHON}"
+#mpirun -np 8 python exp_hres/convert_dp_screamxx_output_new.py \
+#    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_INPUT_DIR} \
+#    --coarse_factors "${COARSE_FACTORS_PYTHON}" \
+#    --szas "${SZAS_PYTHON}" \
+#    --t0 ${T0_PYTHON}
+#    #--times "${TIMES_PYTHON}"
 
 #python exp_hres/convert_dp_screamxx_output.py --input ${SCREAM_OUTPUT_FILE_PATH} --output_root ${RTE_RRTMGP_INPUT_FILE_PATH_BASE} --times "${TIMES_PYTHON}" --szas "${SZAS_PYTHON}"
 #python exp_hres/coarsen_rte_rrtmgp_input.py --input_dir ${RTE_RRTMGP_INPUT_DIR} --coarse_factors "[2, 4, 8]"
 
-#python exp_hres/viz_tools/plot_input.py --rte_indir ${RTE_RRTMGP_INPUT_DIR} --plot_outdir ${RTE_RRTMGP_VIZ_DIR}
+mpirun -np 8 python exp_hres/viz_tools/plot_input.py --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
 #python exp_hres/viz_tools/plot_output.py --rte_indir ${RTE_RRTMGP_INPUT_DIR} --rte_outdir ${RTE_RRTMGP_OUTPUT_DIR} --plot_outdir ${RTE_RRTMGP_VIZ_DIR}
 #python exp_hres/viz_tools/plot_comparison.py --rte_indir ${RTE_RRTMGP_INPUT_DIR} --rte_outdir ${RTE_RRTMGP_OUTPUT_DIR} --plot_outdir ${RTE_RRTMGP_VIZ_DIR}

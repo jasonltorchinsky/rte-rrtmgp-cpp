@@ -8,13 +8,15 @@ if exp_hres_dir not in sys.path:
 import argparse
 import os
 import re
+from typing import Optional
 
 # Third-Party Library Imports
+from mpi4py import MPI
 import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, MPI_COMM, MPI_ROOT
 from plot_tools import plot_profiles_1d
 
 def main():
@@ -56,25 +58,28 @@ def main():
     rte_outdir_path: str = os.path.normpath(args.rte_outdir[0])
     plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
 
+    comm: MPI_COMM = MPI.COMM_WORLD
+
     rmsre_convergence_kwargs: dict = {
-        #"sfc_up" : {"file_name" : "sfc_up_rmsre.png",
-        #    "title" : r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"},
-        #"sfc_dn" : {"file_name" : "sfc_dn_rmsre.png",
-        #    "title" : r"Downwelling Shortwave Surface Flux [$W m^{-2}$]"},
-        #"tod_up" : {"file_name" : "tod_up_rmsre.png",
-        #    "title" : r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"},
+        "sfc_up" : {"file_name" : "sfc_up_rmsre.png",
+            "title" : r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        "sfc_dn" : {"file_name" : "sfc_dn_rmsre.png",
+            "title" : r"Downwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        "tod_up" : {"file_name" : "tod_up_rmsre.png",
+            "title" : r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"},
         "flux_abs" : {"file_name" : "flux_abs_rmsre.png",
             "title" : r"Absorbed Shortwave Flux [$W m^{-3}$]",
             "zmax" : 16000} # [m]
     }
     
-    for key, kwargs in rmsre_convergence_kwargs.items():
+    l_keys: list[str] = get_l_keys(list(rmsre_convergence_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = rmsre_convergence_kwargs[key]
         plot_rmsre_convergence(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
 
 def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
     plot_outdir_path: str, key: str, kwargs: dict):
-
-    ### THIS NEEDS TO BE EDITTED TO ACCOUNT FOR MULTIPLE HORIZONTAL RESOLUTIONS ###
+    
     file_ext: re.Pattern = re.compile(".in.nc")
     file_names: list[str] = sorted([file_ext.sub("", file_name) for file_name in os.listdir(rte_indir_path)])
 
@@ -148,8 +153,6 @@ def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
                     rt_flux_abs_dir: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_abs_dir"].values.astype(NP_REAL) # (z_lay, y, x); [W m^(-3)]
                     rt_field: NP_ARRAY[NP_REAL] = rt_flux_abs_dif + rt_flux_abs_dir
 
-                    breakpoint()
-
                     ts_field = ts_field[:zmax_idx,...]
                     rt_field = rt_field[:zmax_idx,...]
 
@@ -183,6 +186,24 @@ def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
     plot_profiles_1d(coord, profiles, file_path, title = title,
         profile_labels = profile_labels, xlabel = xlabel, ylabel = ylabel,
         yscale = yscale, coord_axis = coord_axis)
+    
+def get_l_keys(g_keys: list[str], comm: MPI_COMM) -> list[str]:
+    comm_size: NP_INT = NP_INT(comm.Get_size())
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    g_count: NP_INT = len(g_keys)
+    l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    l_counts[0] = (g_count // comm_size + int(0 < (g_count % comm_size)))
+
+    l_displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    ii: int
+    for ii in range(1, comm_size):
+        l_counts[ii] = g_count // comm_size + int(ii < (g_count % comm_size))
+        l_displs[ii] = l_counts[ii - 1] + l_displs[ii - 1]
+
+    l_keys: list[str] = g_keys[l_displs[l_rank]:l_displs[l_rank] + l_counts[l_rank]]
+
+    return l_keys
 
 if __name__ == "__main__":
     main()

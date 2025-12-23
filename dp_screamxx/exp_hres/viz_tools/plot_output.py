@@ -11,11 +11,12 @@ import os
 import re
 
 # Third-Party Library Imports
+from mpi4py import MPI
 import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_INF, NP_ARRAY, XR_DATASET
+from utils.consts import NP_INT, NP_REAL, NP_INF, NP_ARRAY, XR_DATASET, MPI_COMM, MPI_ROOT
 from plot_tools import plot_profiles_1d, plot_profile_2d, plot_distribution
 
 def main():
@@ -57,6 +58,8 @@ def main():
     rte_outdir_path: str = os.path.normpath(args.rte_outdir[0])
     plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
 
+    comm: MPI_COMM = MPI.COMM_WORLD
+
     horz_profile_kwargs: dict = {
         "sfc_up" : {"file_name" : "sfc_up.png",
             "cbarlabel" : r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"},
@@ -71,9 +74,11 @@ def main():
         "tod_up_rd" : {"file_name" : "tod_up_rd.png",
             "title" : r"Upwelling Shortwave Top-of-Domain Flux"}
     }
-    
-    #for key, kwargs in horz_profile_kwargs.items():
-    #    plot_horz_profile(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
+
+    l_keys: list[str] = get_l_keys(list(horz_profile_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = horz_profile_kwargs[key]
+        plot_horz_profile(rte_indir_path, plot_outdir_path, key, kwargs)
 
     horz_avg_kwargs: dict = {
         "flux_abs" : {"file_name" : "flux_abs.png",
@@ -84,8 +89,11 @@ def main():
             "xscale" : "linear"}
     }
     
-    #for key, kwargs in horz_avg_kwargs.items():
-    #    plot_horz_average(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
+
+    l_keys: list[str] = get_l_keys(list(horz_avg_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = horz_avg_kwargs[key]
+        plot_horz_average(rte_indir_path, plot_outdir_path, key, kwargs)
 
     distribution_profile_kwargs: dict = {
         "sfc_up" : {"file_name" : "sfc_up_dist.png",
@@ -98,8 +106,10 @@ def main():
             "xlabel" : r"Absorbed Shortwave Flux [$W m^{-3}$]"}
     }
     
-    for key, kwargs in distribution_profile_kwargs.items():
-        plot_distribution_profile(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
+    l_keys: list[str] = get_l_keys(list(distribution_profile_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = distribution_profile_kwargs[key]
+        plot_distribution_profile(rte_indir_path, plot_outdir_path, key, kwargs)
 
 def plot_horz_profile(rte_indir_path: str, rte_outdir_path: str,
     plot_outdir_path: str, key: str, kwargs: dict) -> None:
@@ -451,6 +461,24 @@ def plot_distribution_profile(rte_indir_path: str, rte_outdir_path: str,
         plot_distribution(data, file_path, nbins = nbins, xmin = xmin,
             xmax = xmax, ymax = ymax, title = title, xlabel = xlabel, ylabel = ylabel,
             density = density)
+        
+def get_l_keys(g_keys: list[str], comm: MPI_COMM) -> list[str]:
+    comm_size: NP_INT = NP_INT(comm.Get_size())
+    l_rank: NP_INT = NP_INT(comm.Get_rank())
+
+    g_count: NP_INT = len(g_keys)
+    l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    l_counts[0] = (g_count // comm_size + int(0 < (g_count % comm_size)))
+
+    l_displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
+    ii: int
+    for ii in range(1, comm_size):
+        l_counts[ii] = g_count // comm_size + int(ii < (g_count % comm_size))
+        l_displs[ii] = l_counts[ii - 1] + l_displs[ii - 1]
+
+    l_keys: list[str] = g_keys[l_displs[l_rank]:l_displs[l_rank] + l_counts[l_rank]]
+
+    return l_keys
 
 if __name__ == "__main__":
     main()
