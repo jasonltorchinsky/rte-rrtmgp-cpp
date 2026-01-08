@@ -27,7 +27,7 @@ def main():
             + "solvers of RTE-RRTMGP-CPP.")
     )
     
-    parser.add_argument("--rte_indir",
+    parser.add_argument("--rte_rrtmgp_cpp_input_dir_path",
         action = "store",
         nargs = 1,
         type = str,
@@ -35,7 +35,7 @@ def main():
         help = "Path to RTE-RRTMGP-CPP input directory."
     )
 
-    parser.add_argument("--rte_outdir",
+    parser.add_argument("--rte_rrtmgp_cpp_output_dir_path",
         action = "store",
         nargs = 1,
         type = str,
@@ -43,20 +43,20 @@ def main():
         help = "Path to RTE-RRTMGP-CPP output directory."
     )
 
-    parser.add_argument("--plot_outdir",
+    parser.add_argument("--rte_rrtmgp_cpp_viz_dir_path",
         action = "store",
         nargs = 1,
         type = str,
         required = False,
         default = ["comparison"],
-        help = "Path to plot output directory."
+        help = "Path to RTE-RRTMGP-CPP viz directory."
     )
     
     args: argparse.Namespace = parser.parse_args()
 
-    rte_indir_path: str = os.path.normpath(args.rte_indir[0])
-    rte_outdir_path: str = os.path.normpath(args.rte_outdir[0])
-    plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
+    rte_indir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_input_dir_path[0])
+    rte_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_output_dir_path[0])
+    plot_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_viz_dir_path[0])
 
     comm: MPI_COMM = MPI.COMM_WORLD
 
@@ -78,7 +78,9 @@ def main():
     l_keys: list[str] = get_l_keys(list(horz_profile_kwargs.keys()), comm)
     for key in l_keys:
         kwargs: dict = horz_profile_kwargs[key]
-        plot_horz_profile(rte_indir_path, plot_outdir_path, key, kwargs)
+        plot_horz_profile(rte_indir_path, rte_outdir_path, plot_outdir_path, 
+            key, kwargs)
+    comm.barrier()
 
     horz_avg_kwargs: dict = {
         "flux_abs" : {"file_name" : "flux_abs.png",
@@ -88,12 +90,13 @@ def main():
             "xlabel" : r"Horizontally-Averaged Relative Error of Absorbed Shortwave Flux",
             "xscale" : "linear"}
     }
-    
 
     l_keys: list[str] = get_l_keys(list(horz_avg_kwargs.keys()), comm)
     for key in l_keys:
         kwargs: dict = horz_avg_kwargs[key]
-        plot_horz_average(rte_indir_path, plot_outdir_path, key, kwargs)
+        plot_horz_average(rte_indir_path, rte_outdir_path, plot_outdir_path,
+            key, kwargs)
+    comm.barrier()
 
     distribution_profile_kwargs: dict = {
         "sfc_up" : {"file_name" : "sfc_up_dist.png",
@@ -109,7 +112,9 @@ def main():
     l_keys: list[str] = get_l_keys(list(distribution_profile_kwargs.keys()), comm)
     for key in l_keys:
         kwargs: dict = distribution_profile_kwargs[key]
-        plot_distribution_profile(rte_indir_path, plot_outdir_path, key, kwargs)
+        plot_distribution_profile(rte_indir_path, rte_outdir_path,
+            plot_outdir_path, key, kwargs)
+    comm.barrier()
 
 def plot_horz_profile(rte_indir_path: str, rte_outdir_path: str,
     plot_outdir_path: str, key: str, kwargs: dict) -> None:
@@ -151,8 +156,7 @@ def plot_horz_profile(rte_indir_path: str, rte_outdir_path: str,
             rtdir_path: str = os.path.join(outfile_plot_outdir_path, rtdir_name)
 
             for dir_path in [outfile_plot_outdir_path, tsdir_path, rtdir_path]:
-                if not os.path.exists(dir_path):
-                    os.mkdir(dir_path)
+                os.makedirs(dir_path, exist_ok = True)
 
             plot_outdir_paths: list[str] = [tsdir_path, rtdir_path, outfile_plot_outdir_path]
 
@@ -278,8 +282,7 @@ def plot_horz_average(rte_indir_path: str, rte_outdir_path: str,
             outfile_plot_outdir_path: str = os.path.join(plot_outdir_path, file_name)
 
             for dir_path in [outfile_plot_outdir_path]:
-                if not os.path.exists(dir_path):
-                    os.mkdir(dir_path)
+                os.makedirs(dir_path, exist_ok = True)
 
             xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
                 engine = "netcdf4", decode_timedelta = False)
@@ -387,8 +390,7 @@ def plot_distribution_profile(rte_indir_path: str, rte_outdir_path: str,
             rtdir_path: str = os.path.join(outfile_plot_outdir_path, rtdir_name)
 
             for dir_path in [outfile_plot_outdir_path, tsdir_path, rtdir_path]:
-                if not os.path.exists(dir_path):
-                    os.mkdir(dir_path)
+                os.makedirs(dir_path, exist_ok = True)
 
             plot_outdir_paths: list[str] = [tsdir_path, rtdir_path, outfile_plot_outdir_path]
 

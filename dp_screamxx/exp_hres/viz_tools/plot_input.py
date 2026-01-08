@@ -140,6 +140,23 @@ def main():
         kwargs: dict = x_integral_kwargs[key]
         plot_x_integral(rte_indir_path, plot_outdir_path, key, kwargs)
 
+    sfc_profile_kwargs: dict = {
+        "t_sfc" : {"file_name" : "t_sfc.png",
+            "cbarlabel" : r"Surface Temperature $[K]$",
+            "cmap" : "plasma"},
+        "tsi" : {"file_name" : "tsi.png",
+            "cbarlabel" : r"Total Solar Irradiance $[W\,m^{-2}]$",
+            "cmap" : "Reds_r"},
+        "mu0" : {"file_name" : "mu_0.png",
+            "cbarlabel" : r"Cosine Solar Zenith Angle",
+            "cmap" : "bwr"}
+    }
+
+    l_keys: list[str] = get_l_keys(list(sfc_profile_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = sfc_profile_kwargs[key]
+        plot_sfc_profile(rte_indir_path, plot_outdir_path, key, kwargs)
+
 def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
     key: str, kwargs: dict) -> None:
 
@@ -164,8 +181,7 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
         infile_name: str = infile_names[infile_idx]
         infile_path: str = os.path.join(rte_indir_path, infile_name)
         outfile_plot_outdir_path: str = os.path.join(plot_outdir_path, file_ext.sub("", infile_name))
-        if not os.path.isdir(outfile_plot_outdir_path):
-            os.mkdir(outfile_plot_outdir_path)
+        os.makedirs(outfile_plot_outdir_path, exist_ok = True)
 
         xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
             engine = "netcdf4", decode_timedelta = False)
@@ -293,8 +309,7 @@ def plot_vert_integral(rte_indir_path: str, plot_outdir_path: str,
         infile_name: str = infile_names[infile_idx]
         infile_path: str = os.path.join(rte_indir_path, infile_name)
         outfile_plot_outdir_path: str = os.path.join(plot_outdir_path, file_ext.sub("", infile_name))
-        if not os.path.isdir(outfile_plot_outdir_path):
-            os.mkdir(outfile_plot_outdir_path)
+        os.makedirs(outfile_plot_outdir_path, exist_ok = True)
 
         xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
             engine = "netcdf4", decode_timedelta = False)
@@ -360,7 +375,7 @@ def plot_vert_integral(rte_indir_path: str, plot_outdir_path: str,
         profile: NP_ARRAY[NP_REAL] = val["profile"]
         file_path: str = val["file_path"]
 
-        if (profile.max() > profile.min()):
+        if (profile.max() >= profile.min()):
             plot_profile_2d(meshgrid, profile, file_path, 
                 xlabel = xlabel, ylabel = ylabel, cbarlabel = cbarlabel,
                 cmin = cmin, cmax = cmax, cmap = cmap, cscale = cscale,
@@ -395,8 +410,7 @@ def plot_x_integral(rte_indir_path: str, plot_outdir_path: str,
         infile_name: str = infile_names[infile_idx]
         infile_path: str = os.path.join(rte_indir_path, infile_name)
         outfile_plot_outdir_path: str = os.path.join(plot_outdir_path, file_ext.sub("", infile_name))
-        if not os.path.isdir(outfile_plot_outdir_path):
-            os.mkdir(outfile_plot_outdir_path)
+        os.makedirs(outfile_plot_outdir_path, exist_ok = True)
 
         xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
             engine = "netcdf4", decode_timedelta = False)
@@ -477,7 +491,75 @@ def plot_x_integral(rte_indir_path: str, plot_outdir_path: str,
         profile: NP_ARRAY[NP_REAL] = val["profile"]
         file_path: str = val["file_path"]
 
-        if (profile.max() > profile.min()):
+        if (profile.max() >= profile.min()):
+            plot_profile_2d(meshgrid, profile, file_path, 
+                xlabel = xlabel, ylabel = ylabel, cbarlabel = cbarlabel,
+                cmin = cmin, cmax = cmax, cmap = cmap, cscale = cscale,
+                plot_style = plot_style)
+
+def plot_sfc_profile(rte_indir_path: str, plot_outdir_path: str,
+    key: str, kwargs: dict) -> None:
+
+    infile_names: list[str] = sorted(os.listdir(rte_indir_path))
+
+    # Ignore files that only differ by SZA
+    file_ext: re.Pattern = re.compile(".in.nc")
+    sza_str: re.Pattern = re.compile(".sza_...")
+    infile_names_trimmed: list[str] = [sza_str.sub("", file_ext.sub("", file_name)) for file_name in infile_names]
+    unique_infile_name_idxs: NP_ARRAY[NP_INT] = np.unique(infile_names_trimmed, return_index = True)[1].astype(NP_INT)
+    nuniqueinfiles: int = unique_infile_name_idxs.size
+
+    # Set key-dependent and constant kwargs
+    xlabel: str = r"x [$km$]"
+    ylabel: str = r"y [$km$]"
+    cbarlabel: str = kwargs["cbarlabel"]
+    cmap: str = kwargs["cmap"]
+    cscale: str = "normal"
+    plot_style: str = "colormesh"
+
+    # Get profiles from each outfile to get uniform colorbar bounds
+    cmax: NP_REAL = -NP_INF
+    cmin: NP_REAL = NP_INF
+    plot_kwargs: dict = {}
+    for ii in range(0, nuniqueinfiles):
+        infile_idx: NP_INT = unique_infile_name_idxs[ii]
+        infile_name: str = infile_names[infile_idx]
+        infile_path: str = os.path.join(rte_indir_path, infile_name)
+        outfile_plot_outdir_path: str = os.path.join(plot_outdir_path, file_ext.sub("", infile_name))
+        os.makedirs(outfile_plot_outdir_path, exist_ok = True)
+
+        xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
+            engine = "netcdf4", decode_timedelta = False)
+
+        # Obtain horizontal and vertical grid information
+        xh: NP_ARRAY[NP_REAL] = xr_rte_in["x"].values.astype(NP_REAL) # Column-interfaces - x-dimension [m]; (nx + 1)
+        yh: NP_ARRAY[NP_REAL] = xr_rte_in["y"].values.astype(NP_REAL) # Column-interfaces - y-dimension [m]; (ny + 1)
+
+        XX_sfc: NP_ARRAY[NP_REAL] # (nx + 1, ny + 1); [m]
+        YY_sfc: NP_ARRAY[NP_REAL] # (nx + 1, ny + 1); [m]
+        XX_sfc, YY_sfc = np.meshgrid(xh, yh, indexing = "ij")
+
+        field_xy: NP_ARRAY[NP_REAL] = xr_rte_in[key].values.astype(NP_REAL) # (y, x)
+        field_xy = np.transpose(field_xy, axes = (1, 0)) # (x, y)
+        profile: NP_ARRAY[NP_REAL] = field_xy
+
+        ## Plot vertically-averaged pressure profile
+        meshgrid: list[NP_ARRAY[NP_REAL]] = [XX_sfc / 1000., YY_sfc / 1000.] # [km], [km]
+        file_path: str = os.path.join(outfile_plot_outdir_path, kwargs["file_name"])
+        cmin: NP_REAL = min(cmin, field_xy.min())
+        cmax: NP_REAL = max(cmax, field_xy.max())
+
+        plot_kwargs[file_path] = {"meshgrid" : meshgrid,
+            "profile" : profile,
+            "file_path" : file_path,
+        }
+
+    for _, val in plot_kwargs.items():
+        meshgrid: list[NP_ARRAY[NP_REAL]] = val["meshgrid"]
+        profile: NP_ARRAY[NP_REAL] = val["profile"]
+        file_path: str = val["file_path"]
+
+        if (profile.max() >= profile.min()):
             plot_profile_2d(meshgrid, profile, file_path, 
                 xlabel = xlabel, ylabel = ylabel, cbarlabel = cbarlabel,
                 cmin = cmin, cmax = cmax, cmap = cmap, cscale = cscale,

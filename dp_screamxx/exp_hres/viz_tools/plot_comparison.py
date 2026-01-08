@@ -27,7 +27,7 @@ def main():
             + "solvers of RTE-RRTMGP-CPP.")
     )
     
-    parser.add_argument("--rte_indir",
+    parser.add_argument("--rte_rrtmgp_cpp_input_dir_path",
         action = "store",
         nargs = 1,
         type = str,
@@ -35,7 +35,7 @@ def main():
         help = "Path to RTE-RRTMGP-CPP input directory."
     )
 
-    parser.add_argument("--rte_outdir",
+    parser.add_argument("--rte_rrtmgp_cpp_output_dir_path",
         action = "store",
         nargs = 1,
         type = str,
@@ -43,20 +43,20 @@ def main():
         help = "Path to RTE-RRTMGP-CPP output directory."
     )
 
-    parser.add_argument("--plot_outdir",
+    parser.add_argument("--rte_rrtmgp_cpp_viz_dir_path",
         action = "store",
         nargs = 1,
         type = str,
         required = False,
         default = ["comparison"],
-        help = "Path to plot output directory."
+        help = "Path to RTE-RRTMGP-CPP viz directory."
     )
     
     args: argparse.Namespace = parser.parse_args()
 
-    rte_indir_path: str = os.path.normpath(args.rte_indir[0])
-    rte_outdir_path: str = os.path.normpath(args.rte_outdir[0])
-    plot_outdir_path: str = os.path.normpath(args.plot_outdir[0])
+    rte_indir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_input_dir_path[0])
+    rte_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_output_dir_path[0])
+    plot_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_viz_dir_path[0])
 
     comm: MPI_COMM = MPI.COMM_WORLD
 

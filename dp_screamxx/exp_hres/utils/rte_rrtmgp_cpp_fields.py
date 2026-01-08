@@ -4,6 +4,8 @@
 
 # Local Library Imports
 
+from .consts import NC_INT, NC_REAL
+
 rte_3dfield_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
     "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 
     "vmr_o2", "vmr_o3"]
@@ -11,17 +13,17 @@ rte_3dfield_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei",
 rte_2dfield_keys: list[str] = ["t_sfc", "mu0"]
 
 grid_dimensions: dict = {
-    "ngrid_x" : (),
-    "ngrid_y" : (),
-    "ngrid_z" : (),
+    "ngrid_x" : "scalar",
+    "ngrid_y" : "scalar",
+    "ngrid_z" : "scalar",
     "x" : "x",
     "y" : "y",
     "z" : "z",
     "xh" : "xh",
     "yh" : "yh",
     "zh" : "zh",
-    "z_lay" : ("lay"),
-    "z_lev" : ("lev"),
+    "z_lay" : "lay",
+    "z_lev" : "lev",
 }
 
 grid_descriptions: dict = {
@@ -36,6 +38,8 @@ grid_descriptions: dict = {
     "zh" : "Layer Interfaces",
     "z_lay" : "Layer Midpoints",
     "z_lev" : "Layer Interfaces",
+    "n_bnd_sw" : "Number of Shortwave Bands",
+    "n_bnd_lw" : "Number of Longwave Bands"
 }
 
 grid_units: dict = {
@@ -50,6 +54,22 @@ grid_units: dict = {
     "zh" : "m",
     "z_lay" : "m",
     "z_lev" : "m",
+    "n_bnd_sw" : "",
+    "n_bnd_lw" : ""
+}
+
+grid_dtypes: dict = {
+    "ngrid_x" : NC_INT,
+    "ngrid_y" : NC_INT,
+    "ngrid_z" : NC_INT,
+    "x" : NC_REAL,
+    "y" : NC_REAL,
+    "z" : NC_REAL,
+    "xh" : NC_REAL,
+    "yh" : NC_REAL,
+    "zh" : NC_REAL,
+    "z_lay" : NC_REAL,
+    "z_lev" : NC_REAL,
 }
 
 fields_dimensions: dict = {
@@ -197,4 +217,53 @@ fields_units: dict = {
     "iwp" : "kg m^(-2)",
     "rel" : "μm",
     "dei" : "μm",
+}
+
+field_dtypes: dict = {
+    "p_lay" : NC_REAL,
+    "p_lev" : NC_REAL,
+    "t_lay" : NC_REAL,
+    "t_lev" : NC_REAL,
+    "rh" : NC_REAL,
+    "vmr_co2"     : NC_REAL,
+    "vmr_ch4"     : NC_REAL,
+    "vmr_n2o"     : NC_REAL,
+    "vmr_o3"      : NC_REAL,
+    "vmr_h2o"     : NC_REAL,
+    "vmr_n2"      : NC_REAL,
+    "vmr_o2"      : NC_REAL,
+    "vmr_co"      : NC_REAL,
+    "vmr_ccl4"    : NC_REAL,
+    "vmr_cfc11"   : NC_REAL,
+    "vmr_cfc12"   : NC_REAL,
+    "vmr_cfc22"   : NC_REAL,
+    "vmr_hfc143a" : NC_REAL,
+    "vmr_hfc125"  : NC_REAL,
+    "vmr_hfc23"   : NC_REAL,
+    "vmr_hfc32"   : NC_REAL,
+    "vmr_hfc134a" : NC_REAL,
+    "vmr_cf4"     : NC_REAL,
+    "vmr_no2"     : NC_REAL,
+    "aermr01" : NC_REAL,
+    "aermr02" : NC_REAL,
+    "aermr03" : NC_REAL,
+    "aermr04" : NC_REAL,
+    "aermr05" : NC_REAL,
+    "aermr06" : NC_REAL,
+    "aermr07" : NC_REAL,
+    "aermr08" : NC_REAL,
+    "aermr09" : NC_REAL,
+    "aermr10" : NC_REAL,
+    "aermr11" : NC_REAL,
+    "emis_sfc" : NC_REAL,
+    "t_sfc" : NC_REAL,
+    "sfc_alb_dir" : NC_REAL,
+    "sfc_alb_dif" : NC_REAL,
+    "tsi" : NC_REAL,
+    "mu0" : NC_REAL,
+    "azi" : NC_REAL,
+    "lwp" : NC_REAL,
+    "iwp" : NC_REAL,
+    "rel" : NC_REAL,
+    "dei" : NC_REAL,
 }
