@@ -84,7 +84,7 @@ def main():
     }
 
     l_keys: list[str] = get_l_keys(list(horz_average_kwargs.keys()), comm)
-    for key in l_keys:
+    for key in ["vmr"]:#l_keys:
         kwargs: dict = horz_average_kwargs[key]
         plot_horz_average(rte_indir_path, plot_outdir_path, key, kwargs)
 
@@ -110,9 +110,9 @@ def main():
     }
 
     l_keys: list[str] = get_l_keys(list(vert_integral_kwargs.keys()), comm)
-    for key in l_keys:
-        kwargs: dict = vert_integral_kwargs[key]
-        plot_vert_integral(rte_indir_path, plot_outdir_path, key, kwargs)
+    #for key in l_keys:
+    #    kwargs: dict = vert_integral_kwargs[key]
+    #    plot_vert_integral(rte_indir_path, plot_outdir_path, key, kwargs)
 
     x_integral_kwargs: dict = {
         "p" : {"file_name" : "p_xint.png",
@@ -136,9 +136,9 @@ def main():
     }
 
     l_keys: list[str] = get_l_keys(list(x_integral_kwargs.keys()), comm)
-    for key in l_keys:
-        kwargs: dict = x_integral_kwargs[key]
-        plot_x_integral(rte_indir_path, plot_outdir_path, key, kwargs)
+    #for key in l_keys:
+    #    kwargs: dict = x_integral_kwargs[key]
+    #    plot_x_integral(rte_indir_path, plot_outdir_path, key, kwargs)
 
     sfc_profile_kwargs: dict = {
         "t_sfc" : {"file_name" : "t_sfc.png",
@@ -211,6 +211,7 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
                 gas_key: str = "vmr_" + kwargs["gas_codes"][ii]
                 if gas_key in xr_rte_in.keys():
                     field: NP_ARRAY[NP_REAL] = xr_rte_in[gas_key].values.astype(NP_REAL) # (lay, y, x)
+                    breakpoint()
                     if field.max() > 0.: # If non-zero, then plot it
                         if field.ndim == 0: # Constant across domain
                             field_z: NP_ARRAY[NP_REAL] = field * np.ones((nlay), NP_REAL) # (lay); [N/A]

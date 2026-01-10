@@ -16,19 +16,17 @@ from typing import Optional
 
 # Third-Party Library Imports
 from mpi4py import MPI
-import netCDF4 as nc
 import numpy as np
 from scipy.interpolate import griddata
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, NC_DATASET, NC_VARIABLE, \
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
     g
 from utils.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
 from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys, \
-    grid_dimensions, grid_descriptions, grid_units, grid_dtypes, \
-    fields_dimensions, fields_descriptions, fields_units, field_dtypes
+    grid_descriptions, grid_units, fields_dimensions, fields_descriptions, fields_units
 
 # Script variables
 prog_name: str = "convert_dpscream_output"
@@ -139,7 +137,7 @@ def main(argv):
     else:
         times = None
 
-    interp_method: str = "nearest"
+    interp_method: str = "linear"
 
     file_ext: re.Pattern = re.compile("\\.nc")
     rte_rrtmgp_cpp_file_name_root: str = file_ext.sub("", os.path.basename(dpscream_file_path))
@@ -148,7 +146,7 @@ def main(argv):
     # Root rank gets original horizontal grid
     xr_dpscream: Optional[XR_DATASET]
     sort_mask: Optional[NP_ARRAY[NP_INT]]
-    grids: Optional[dict]
+    coords: Optional[dict]
     if l_rank == MPI_ROOT:
         xr_dpscream = xr.open_dataset(dpscream_file_path, engine = "netcdf4")
 
@@ -171,21 +169,21 @@ def main(argv):
             times = np.arange(t0, tf + 1, dtype = NP_INT)
 
         sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(xr_dpscream)
-        grids = {}
-        grids["01"] = get_grid_01(xr_dpscream, sort_mask)
+        coords = {}
+        coords["01"] = get_coords_01(xr_dpscream, sort_mask)
 
         coarse_factor: NP_INT
         for coarse_factor in coarse_factors:
             coarse_factor_str: str = "{:02}".format(coarse_factor)
-            grids[coarse_factor_str] = coarsen_grid(grids["01"], coarse_factor)
+            coords[coarse_factor_str] = coarsen_coords(coords["01"], coarse_factor)
     else:
         xr_dpscream = None
         sort_mask = None
-        grids = None
+        coords = None
         times = None
 
     times = comm.bcast(times, root = MPI_ROOT)
-    l_grids: dict = bcast_grids(grids, comm)
+    l_grids: dict = bcast_coords(coords, comm)
 
     # NOTE: For now, go through all time-steps
     tt: NP_INT
@@ -201,7 +199,7 @@ def main(argv):
             fields = None
 
         ## Set unspecified fields
-        unspecified_fields: dict = set_unspecified_fields(grids, comm)
+        unspecified_fields: dict = set_unspecified_fields(coords, comm)
         if l_rank == MPI_ROOT:
             coarse_factor_str: str
             for coarse_factor_str in fields.keys():
@@ -212,32 +210,42 @@ def main(argv):
         for ii in range(0, len(dpscream_3dfield_keys)):
             dpscream_field_key: str = dpscream_3dfield_keys[ii]
             rte_field_key: str = rte_3dfield_keys[ii]
-            #if l_rank == MPI_ROOT:
-            #    print(rte_field_key, flush = True)
-            field: dict = interp_3dfield(xr_dpscream, dpscream_field_key, rte_field_key,
-                sort_mask, grids, l_grids, tt, comm, interp_method = interp_method)
-            
+            field_val_dict: dict = interp_3dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, coords, l_grids, tt, comm, interp_method = interp_method)
+
             if l_rank == MPI_ROOT:
                 coarse_factor_str: str
-                for coarse_factor_str in field.keys():
-                    fields[coarse_factor_str] = {**fields[coarse_factor_str], **field[coarse_factor_str]}
+                for coarse_factor_str in field_val_dict.keys():
+                    fields_val: dict = field_val_dict[coarse_factor_str]
+                    for field_key in fields_val.keys():
+                        field: list = (
+                            fields_dimensions[field_key],
+                            fields_val[field_key],
+                            dict(description = fields_descriptions[field_key], units = fields_units[field_key])
+                        )
+                        fields[coarse_factor_str][field_key] = field
 
         ## Interpolate 2D fields
         ii: int
         for ii in range(0, len(dpscream_2dfield_keys)):
             dpscream_field_key: str = dpscream_2dfield_keys[ii]
             rte_field_key: str = rte_2dfield_keys[ii]
-            #if l_rank == MPI_ROOT:
-            #    print(rte_field_key, flush = True)
-            field: dict = interp_2dfield(xr_dpscream, dpscream_field_key, rte_field_key,
-                sort_mask, grids, l_grids, tt, comm, interp_method = interp_method)
+            field_val_dict: dict = interp_2dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, coords, l_grids, tt, comm, interp_method = interp_method)
 
             if l_rank == MPI_ROOT:
                 coarse_factor_str: str
-                for coarse_factor_str in field.keys():
-                    fields[coarse_factor_str] = {**fields[coarse_factor_str], **field[coarse_factor_str]}
+                for coarse_factor_str in field_val_dict.keys():
+                    fields_val: dict = field_val_dict[coarse_factor_str]
+                    for field_key in fields_val.keys():
+                        field: list = (
+                            fields_dimensions[field_key],
+                            fields_val[field_key],
+                            dict(description = fields_descriptions[field_key], units = fields_units[field_key])
+                        )
+                        fields[coarse_factor_str][field_key] = field
 
-        save_rte_rrtmgp_cpp_input(grids, fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
+        save_rte_rrtmgp_cpp_input(coords, fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
 
 def get_sort_mask(xr_dpscream: XR_DATASET) -> NP_ARRAY[NP_INT]:
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns
@@ -248,7 +256,7 @@ def get_sort_mask(xr_dpscream: XR_DATASET) -> NP_ARRAY[NP_INT]:
 
     return sort_mask
 
-def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
+def get_coords_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns
     lon: NP_ARRAY[NP_REAL] = xr_dpscream["lon"].values.astype(NP_REAL) # Column-center - x-dimension [m]; (ncol)
     lat: NP_ARRAY[NP_REAL] = xr_dpscream["lat"].values.astype(NP_REAL) # Column center - y-dimension [m]; (ncol)
@@ -292,78 +300,57 @@ def get_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     n_bnd_sw: NP_INT = NP_INT(xr_dpscream.sizes["swband"])
     n_bnd_lw: NP_INT = NP_INT(xr_dpscream.sizes["lwband"])
 
-    ## Spatial RTE-RRTMGP-CPP grid
-    grid: dict = {}
+    ## Spatial RTE-RRTMGP-CPP coords
+    coords: dict = dict(
+        x = ("x", x, dict(description = grid_descriptions["x"], units = grid_units["x"])),
+        xh = ("xh", xh, dict(description = grid_descriptions["xh"], units = grid_units["xh"])),
+        y = ("y", y, dict(description = grid_descriptions["y"], units = grid_units["y"])),
+        yh = ("yh", yh, dict(description = grid_descriptions["yh"], units = grid_units["yh"])),
+        z = ("z", z_lay, dict(description = grid_descriptions["z"], units = grid_units["z"])),
+        zh = ("zh", z_lev, dict(description = grid_descriptions["zh"], units = grid_units["zh"])),
+        z_lay = ("z_lay", z_lay, dict(description = grid_descriptions["z_lay"], units = grid_units["z_lay"])),
+        z_lev = ("z_lev", z_lev, dict(description = grid_descriptions["z_lev"], units = grid_units["z_lev"])),
+        ngrid_x = ((), ngrid_x, dict(description = grid_descriptions["ngrid_x"], units = grid_units["ngrid_x"])),
+        ngrid_y = ((), ngrid_y, dict(description = grid_descriptions["ngrid_y"], units = grid_units["ngrid_y"])),
+        ngrid_z = ((), ngrid_z, dict(description = grid_descriptions["ngrid_z"], units = grid_units["ngrid_z"])),
+        n_bnd_sw = ((), n_bnd_sw, dict(description = grid_descriptions["n_bnd_sw"], units = grid_units["n_bnd_sw"])),
+        n_bnd_lw = ((), n_bnd_lw, dict(description = grid_descriptions["n_bnd_lw"], units = grid_units["n_bnd_lw"])),
+    )
 
-    grid["nx"] = nx
-    grid["x"] = x
-    grid["xh"] = xh
+    return coords
 
-    grid["ny"] = ny
-    grid["y"] = y
-    grid["yh"] = yh
-
-    grid["lay"] = nlay
-    grid["lev"] = nlev
-    grid["z"] = z_lay
-    grid["zh"] = z_lev
-    grid["z_lay"] = z_lay
-    grid["z_lev"] = z_lev
-
-    grid["ngrid_x"] = ngrid_x
-    grid["ngrid_y"] = ngrid_y
-    grid["ngrid_z"] = ngrid_z
-
-    grid["n_bnd_sw"] = n_bnd_sw
-    grid["n_bnd_lw"] = n_bnd_lw
-
-    return grid
-
-def coarsen_grid(grid: dict, coarse_factor: NP_INT) -> dict:
-    nx_coarse: NP_INT = grid["nx"] // coarse_factor
+def coarsen_coords(coords: dict, coarse_factor: NP_INT) -> dict:
+    nx_fine: NP_INT = NP_INT(coords["x"][1].size)
+    nx_coarse: NP_INT = nx_fine // coarse_factor
     ngrid_x_coarse: NP_INT = NP_INT(np.ceil(nx_coarse / 10))
-    xh_min: NP_REAL = grid["xh"].min()
-    xh_max: NP_REAL = grid["xh"].max()
+    xh_min: NP_REAL = coords["xh"][1].min()
+    xh_max: NP_REAL = coords["xh"][1].max()
     xh_coarse: NP_ARRAY[NP_REAL] = np.linspace(xh_min, xh_max, nx_coarse + 1,
         dtype = NP_REAL)
     x_coarse: NP_ARRAY[NP_REAL] = (xh_coarse[:-1] + xh_coarse[1:]) / 2.
 
-    ny_coarse: NP_INT = grid["ny"] // coarse_factor
+    ny_fine: NP_INT = NP_INT(coords["y"][1].size)
+    ny_coarse: NP_INT = ny_fine // coarse_factor
     ngrid_y_coarse: NP_INT = NP_INT(np.ceil(ny_coarse / 10))
-    yh_min: NP_REAL = grid["yh"].min()
-    yh_max: NP_REAL = grid["yh"].max()
+    yh_min: NP_REAL = coords["yh"][1].min()
+    yh_max: NP_REAL = coords["yh"][1].max()
     yh_coarse: NP_ARRAY[NP_REAL] = np.linspace(yh_min, yh_max, ny_coarse + 1,
         dtype = NP_REAL)
     y_coarse: NP_ARRAY[NP_REAL] = (yh_coarse[:-1] + yh_coarse[1:]) / 2.
 
-    ## Spatial RTE-RRTMGP-CPP grid
-    grid_coarse: dict = {}
+    ## Spatial RTE-RRTMGP-CPP coords
+    coords_coarse: dict = dict(
+        x = ("x", x_coarse, dict(description = grid_descriptions["x"], units = grid_units["x"])),
+        xh = ("xh", xh_coarse, dict(description = grid_descriptions["xh"], units = grid_units["xh"])),
+        y = ("y", y_coarse, dict(description = grid_descriptions["y"], units = grid_units["y"])),
+        yh = ("yh", yh_coarse, dict(description = grid_descriptions["yh"], units = grid_units["yh"])),
+        ngrid_x = ((), ngrid_x_coarse, dict(description = grid_descriptions["ngrid_x"], units = grid_units["ngrid_x"])),
+        ngrid_y = ((), ngrid_y_coarse, dict(description = grid_descriptions["ngrid_y"], units = grid_units["ngrid_y"])),
+    )
 
-    grid_coarse["nx"] = nx_coarse
-    grid_coarse["x"] = x_coarse
-    grid_coarse["xh"] = xh_coarse
+    return {**coords, **coords_coarse}
 
-    grid_coarse["ny"] = ny_coarse
-    grid_coarse["y"] = y_coarse
-    grid_coarse["yh"] = yh_coarse
-
-    grid_coarse["lay"] = grid["lay"]
-    grid_coarse["lev"] = grid["lev"]
-    grid_coarse["z"] = grid["z"]
-    grid_coarse["zh"] = grid["zh"]
-    grid_coarse["z_lay"] = grid["z_lay"]
-    grid_coarse["z_lev"] = grid["z_lev"]
-
-    grid_coarse["ngrid_x"] = ngrid_x_coarse
-    grid_coarse["ngrid_y"] = ngrid_y_coarse
-    grid_coarse["ngrid_z"] = grid["ngrid_z"]
-
-    grid_coarse["n_bnd_sw"] = grid["n_bnd_sw"]
-    grid_coarse["n_bnd_lw"] = grid["n_bnd_lw"]
-
-    return grid_coarse
-
-def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
+def bcast_coords(coords: Optional[dict], comm: MPI_COMM) -> dict:
     l_rank: NP_INT = NP_INT(comm.Get_rank())
     comm_size: NP_INT = NP_INT(comm.Get_size())
 
@@ -374,21 +361,21 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
     z_lev: Optional[NP_ARRAY[NP_REAL]] = None
     ngrid_z: Optional[NP_INT] = None
     if l_rank == MPI_ROOT:
-        lay = grids["01"]["lay"]
-        lev = grids["01"]["lev"]
-        z_lay = np.copy(grids["01"]["z_lay"])
-        z_lev = np.copy(grids["01"]["z_lev"])
-        ngrid_z = grids["01"]["ngrid_z"]
+        lay = NP_INT(coords["01"]["z_lay"][1].size)
+        lev = NP_INT(coords["01"]["z_lev"][1].size)
+        z_lay = np.copy(coords["01"]["z_lay"][1])
+        z_lev = np.copy(coords["01"]["z_lev"][1])
+        ngrid_z = coords["01"]["ngrid_z"][1]
     lay = comm.bcast(lay, root = MPI_ROOT)
     lev = comm.bcast(lev, root = MPI_ROOT)
     z_lay = comm.bcast(z_lay, root = MPI_ROOT)
     z_lev = comm.bcast(z_lev, root = MPI_ROOT)
     ngrid_z = comm.bcast(ngrid_z, root = MPI_ROOT)
 
-    # Broadcast coarse_strs to setup l_grids
+    # Broadcast coarse_strs to setup l_coords
     coarse_strs: Optional[list[str]] = None
     if l_rank == MPI_ROOT:
-        coarse_strs = list(grids.keys())
+        coarse_strs = list(coords.keys())
     coarse_strs = comm.bcast(coarse_strs, root = MPI_ROOT)
 
     l_grids: dict = {}
@@ -399,7 +386,7 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
         # Scatterv the x-grid
         g_nx: Optional[NP_INT] = None
         if l_rank == MPI_ROOT:
-            g_nx = grids[coarse_str]["nx"]
+            g_nx = NP_INT(coords[coarse_str]["x"][1].size)
         g_nx = comm.bcast(g_nx, root = MPI_ROOT)
         
         l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
@@ -416,22 +403,21 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
         g_x: NP_ARRAY[NP_REAL] = np.empty(g_nx, dtype = NP_REAL)
         l_x: NP_ARRAY[NP_REAL] = np.empty(l_counts[l_rank], dtype = NP_REAL)
         if l_rank == MPI_ROOT:
-            g_x = np.copy(grids[coarse_str]["x"])
+            g_x = np.copy(coords[coarse_str]["x"][1])
             dx = g_x[1] - g_x[0]
         else:
             dx = None
 
         comm.Scatterv([g_x, l_counts, l_displs, MPI_REAL], l_x, root = MPI_ROOT)
         dx = comm.bcast(dx, root = MPI_ROOT)
+        l_nx: NP_INT
         l_xh: NP_ARRAY[NP_REAL]
         if l_x.size > 0:
+            l_nx = NP_INT(l_x.size)
             l_xh = np.append(l_x - dx / 2., l_x[-1] + dx / 2.)
         else:
+            l_nx = NP_INT(0)
             l_xh = np.array([], dtype = NP_REAL)
-
-        l_grids[coarse_str]["nx"] = l_x.size
-        l_grids[coarse_str]["x"] = l_x
-        l_grids[coarse_str]["xh"] = l_xh
 
         # Broadcast the other values
         ny: Optional[NP_INT] = None
@@ -439,16 +425,20 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
         yh: Optional[NP_ARRAY[NP_REAL]] = None
         ngrid_y: Optional[NP_INT] = None
         if l_rank == MPI_ROOT:
-            ny = grids[coarse_str]["ny"]
-            y = np.copy(grids[coarse_str]["y"])
-            yh = np.copy(grids[coarse_str]["yh"])
-            ngrid_y = grids[coarse_str]["ngrid_y"]
+            y = np.copy(coords[coarse_str]["y"][1])
+            yh = np.copy(coords[coarse_str]["yh"][1])
+            ny = NP_INT(y.size)
+            ngrid_y = coords[coarse_str]["ngrid_y"][1]
         ny = comm.bcast(ny, root = MPI_ROOT)
         y = comm.bcast(y, root = MPI_ROOT)
         yh = comm.bcast(yh, root = MPI_ROOT)
         ngrid_y = comm.bcast(ngrid_y, root = MPI_ROOT)
 
         # Store the other values in l_grids
+        l_grids[coarse_str]["nx"] = l_nx
+        l_grids[coarse_str]["x"] = l_x
+        l_grids[coarse_str]["xh"] = l_xh
+
         l_grids[coarse_str]["ny"] = ny
         l_grids[coarse_str]["y"] = y
         l_grids[coarse_str]["yh"] = yh
@@ -461,16 +451,17 @@ def bcast_grids(grids: Optional[dict], comm: MPI_COMM) -> dict:
         l_grids[coarse_str]["z_lev"] = z_lev
 
         l_grids[coarse_str]["ngrid_y"] = ngrid_y
+        l_grids[coarse_str]["ngrid_y"] = ngrid_y
         l_grids[coarse_str]["ngrid_z"] = ngrid_z
 
-        # Store communication values in each loal grid
+        # Store communication values in each local grid
         l_grids[coarse_str]["l_counts_x"] = l_counts
         l_grids[coarse_str]["l_displs_x"] = l_displs
 
     return l_grids
 
 def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
-    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], grids: dict, 
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], coords: dict, 
     l_grids: dict, tt: NP_INT, comm: MPI_COMM, interp_method: str = "nearest") -> NP_ARRAY[NP_REAL]:
     field_out: dict = {}
 
@@ -521,8 +512,8 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             field_min = field_src.min()
             field_max = field_src.max()
 
-        nx: NP_INT = grids["01"]["nx"]
-        ny: NP_INT = grids["01"]["ny"]
+        nx: NP_INT = NP_INT(coords["01"]["x"][1].size)
+        ny: NP_INT = NP_INT(coords["01"]["y"][1].size)
         nz: NP_INT = NP_INT(z_src.shape[1])
 
         z_src = z_src.reshape(nx, ny, nz)
@@ -538,8 +529,8 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
     l_ny_src: NP_INT = l_grids["01"]["ny"]
     l_nlay_src: NP_INT = l_grids["01"]["lay"]
 
-    l_counts_src: list[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src * l_nlay_src
-    l_displs_src: list[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src * l_nlay_src
+    l_counts_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src * l_nlay_src
+    l_displs_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src * l_nlay_src
 
     l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nlay_src], dtype = NP_REAL) # NOTE: ASSUME only using layer midpoint values for field
     l_z_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nlay_src], dtype = NP_REAL) # NOTE: ASSUME only using layer midpoint values for field
@@ -548,6 +539,9 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
     field_max = comm.bcast(field_max, root = MPI_ROOT)
     comm.Scatterv([field_src, l_counts_src, l_displs_src, MPI_REAL], l_field_src, root = MPI_ROOT)
     comm.Scatterv([z_src, l_counts_src, l_displs_src, MPI_REAL], l_z_src, root = MPI_ROOT)
+
+    if np.any(np.isnan(l_field_src)):
+        print("{}: {} has NaNs in _src".format(l_rank, rte_field_key), flush = True)
 
     # Get source grid - points to interpolate from
     l_x_src: NP_ARRAY[NP_REAL] = l_grids["01"]["x"]
@@ -575,8 +569,8 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         l_displs_x: NP_ARRAY[NP_INT] = l_grids[coarse_str]["l_displs_x"] \
             + np.arange(0, comm_size, dtype = NP_INT) # NOTE: Requires an offset from the x-grids meeting
             
-        l_counts_lay_tgt: list[NP_INT] = l_counts_x * l_ny_tgt * l_nlay_tgt
-        l_displs_lay_tgt: list[NP_INT] = l_displs_x * l_ny_tgt * l_nlay_tgt
+        l_counts_lay_tgt: NP_ARRAY[NP_INT] = l_counts_x * l_ny_tgt * l_nlay_tgt
+        l_displs_lay_tgt: NP_ARRAY[NP_INT] = l_displs_x * l_ny_tgt * l_nlay_tgt
 
         l_x_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["x"]
         l_y_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["y"]
@@ -592,15 +586,17 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         l_field_lay_tgt: NP_ARRAY[NP_REAL] = \
             griddata(l_pts_src, l_field_src.flatten(), l_pts_lay_tgt,
                 method = interp_method)
+        if np.any(np.isnan(l_field_lay_tgt)):
+            print("{}: {}, {} has NaNs in _lay_tgt".format(l_rank, coarse_str, rte_field_key), flush = True)
         l_field_lay_tgt[l_field_lay_tgt < field_min] = field_min
         l_field_lay_tgt[l_field_lay_tgt > field_max] = field_max
 
         # Reconstruct the full field
         field_lay_tgt: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            nx_tgt: NP_INT = grids[coarse_str]["nx"]
-            ny_tgt: NP_INT = grids[coarse_str]["ny"]
-            nlay_tgt: NP_INT = grids[coarse_str]["lay"]
+            nx_tgt: NP_INT = NP_INT(coords[coarse_str]["x"][1].size)
+            ny_tgt: NP_INT = NP_INT(coords[coarse_str]["y"][1].size)
+            nlay_tgt: NP_INT = NP_INT(coords[coarse_str]["z_lay"][1].size)
 
             field_lay_tgt = np.empty(nx_tgt * ny_tgt * nlay_tgt, dtype = NP_REAL)
 
@@ -630,13 +626,15 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             l_field_lev_tgt: NP_ARRAY[NP_REAL] = \
                 griddata(l_pts_src, l_field_src.flatten(), l_pts_lev_tgt,
                     method = interp_method)
+            if np.any(np.isnan(l_field_lev_tgt)):
+                print("{}: {}, {} has NaNs in _lev_tgt".format(l_rank, coarse_str, rte_field_key), flush = True)
             l_field_lev_tgt[l_field_lev_tgt < field_min] = field_min
             l_field_lev_tgt[l_field_lev_tgt > field_max] = field_max
         
             # Reconstruct the full field
             field_lev_tgt: Optional[NP_ARRAY[NP_REAL]] = None
             if l_rank == MPI_ROOT:
-                nlev_tgt: NP_INT = grids[coarse_str]["lev"]
+                nlev_tgt: NP_INT = NP_INT(coords[coarse_str]["z_lev"][1].size)
                 field_lev_tgt = np.empty(nx_tgt * ny_tgt * nlev_tgt, dtype = NP_REAL)
             
             comm.Gatherv(l_field_lev_tgt,
@@ -664,7 +662,7 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
     return field_out
 
 def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
-    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], grids: dict, 
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], coords: dict, 
     l_grids: dict, tt: int, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
     field_out: dict = {}
 
@@ -692,8 +690,8 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             field_src[field_src > field_max] = field_max
             field_src[field_src < field_min] = field_min
 
-        nx: NP_INT = grids["01"]["nx"]
-        ny: NP_INT = grids["01"]["ny"]
+        nx: NP_INT = NP_INT(coords["01"]["x"][1].size)
+        ny: NP_INT = NP_INT(coords["01"]["y"][1].size)
 
         field_src = field_src.reshape(nx, ny)
     else:
@@ -705,8 +703,8 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
     l_nx_src: NP_INT = l_grids["01"]["nx"]
     l_ny_src: NP_INT = l_grids["01"]["ny"]
 
-    l_counts_src: list[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src
-    l_displs_src: list[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src
+    l_counts_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src
+    l_displs_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src
 
     l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src], dtype = NP_REAL)
 
@@ -755,12 +753,13 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         # Reconstruct the full field
         field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            nx_tgt: NP_INT = grids[coarse_str]["nx"]
-            ny_tgt: NP_INT = grids[coarse_str]["ny"]
+            nx_tgt: NP_INT = NP_INT(coords[coarse_str]["x"][1].size)
+            ny_tgt: NP_INT = NP_INT(coords[coarse_str]["y"][1].size)
 
             field_tgt = np.empty([nx_tgt, ny_tgt], dtype = NP_REAL)
 
-        comm.Gatherv(l_field_tgt, [field_tgt, l_counts_tgt, l_displs_tgt, MPI_REAL],
+        comm.Gatherv(l_field_tgt, 
+            [field_tgt, l_counts_tgt, l_displs_tgt, MPI_REAL],
             root = MPI_ROOT)
 
         if l_rank == MPI_ROOT:
@@ -772,7 +771,7 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
 
     return field_out
 
-def set_unspecified_fields(grids: dict, comm: MPI_COMM) -> dict:
+def set_unspecified_fields(coords: dict, comm: MPI_COMM) -> dict:
     """
     Set fields not specified by the DP-SCREAM output.
     """
@@ -782,29 +781,35 @@ def set_unspecified_fields(grids: dict, comm: MPI_COMM) -> dict:
 
     if l_rank == MPI_ROOT:
         coarse_factor_str: str
-        for coarse_factor_str in grids.keys():
-            fields_out[coarse_factor_str]: dict = {}
-
-            nx: NP_INT = grids[coarse_factor_str]["nx"]
-            ny: NP_INT = grids[coarse_factor_str]["ny"]
-            nlay: NP_INT = grids[coarse_factor_str]["lay"]
-            n_bnd_sw: NP_INT = grids[coarse_factor_str]["n_bnd_sw"]
-            n_bnd_lw: NP_INT = grids[coarse_factor_str]["n_bnd_lw"]
+        for coarse_factor_str in coords.keys():
+            nx: NP_INT = NP_INT(coords[coarse_factor_str]["x"][1].size)
+            ny: NP_INT = NP_INT(coords[coarse_factor_str]["y"][1].size)
+            nlay: NP_INT = NP_INT(coords[coarse_factor_str]["z_lay"][1].size)
+            n_bnd_sw: NP_INT = NP_INT(coords[coarse_factor_str]["n_bnd_sw"][1])
+            n_bnd_lw: NP_INT = NP_INT(coords[coarse_factor_str]["n_bnd_lw"][1])
 
             ## Longwave boundary conditions
-            fields_out[coarse_factor_str]["emis_sfc"]: NP_ARRAY[NP_REAL] = \
+            emis_sfc: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx, n_bnd_lw), dtype = NP_REAL)
             
-            fields_out[coarse_factor_str]["sfc_alb_dir"]: NP_ARRAY[NP_REAL] = \
+            sfc_alb_dir: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07 
-            fields_out[coarse_factor_str]["sfc_alb_dif"]: NP_ARRAY[NP_REAL] = \
+            sfc_alb_dif: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
 
-            fields_out[coarse_factor_str]["tsi"]: NP_ARRAY[NP_REAL] = \
+            tsi: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx), dtype = NP_REAL) * 551.58
 
-            fields_out[coarse_factor_str]["azi"]: NP_ARRAY[NP_REAL] = \
+            azi: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx), dtype = NP_REAL) * 0.0 
+            
+            fields_out[coarse_factor_str]: dict = dict(
+                emis_sfc = (fields_dimensions["emis_sfc"], emis_sfc, dict(description = fields_descriptions["emis_sfc"], units = fields_units["emis_sfc"])),
+                sfc_alb_dir = (fields_dimensions["sfc_alb_dir"], sfc_alb_dir, dict(description = fields_descriptions["sfc_alb_dir"], units = fields_units["sfc_alb_dir"])),
+                sfc_alb_dif = (fields_dimensions["sfc_alb_dif"], sfc_alb_dif, dict(description = fields_descriptions["sfc_alb_dif"], units = fields_units["sfc_alb_dif"])),
+                tsi = (fields_dimensions["tsi"], tsi, dict(description = fields_descriptions["tsi"], units = fields_units["tsi"])),
+                azi = (fields_dimensions["azi"], azi, dict(description = fields_descriptions["azi"], units = fields_units["azi"]))
+            )
 
             ## Set quantities not expected to be set in the DP-SCREAM output
             unexpected_keys: list[str] = ["vmr_ccl4", "vmr_cfc11", "vmr_cfc12",
@@ -813,13 +818,16 @@ def set_unspecified_fields(grids: dict, comm: MPI_COMM) -> dict:
                 "aermr03", "aermr04", "aermr05", "aermr06", "aermr07", "aermr08",
                 "aermr09", "aermr10", "aermr11"]
             
+            field_vals: NP_ARRAY[NP_REAL] = np.zeros((nlay, ny, nx), dtype = NP_REAL)
             for key in unexpected_keys:
-                fields_out[coarse_factor_str][key]: NP_ARRAY[NP_REAL] = \
-                    np.zeros((nlay, ny, nx), dtype = NP_REAL)
+                fields_out[coarse_factor_str][key] = \
+                    (fields_dimensions[key], field_vals, 
+                        dict(description = fields_descriptions[key], units = fields_units[key])
+                    )
                 
     return fields_out
 
-def save_rte_rrtmgp_cpp_input(grids: dict, fields: dict, tt: NP_INT,
+def save_rte_rrtmgp_cpp_input(coords: dict, fields: dict, tt: NP_INT,
     file_path_root: str, comm: MPI_COMM, szas: Optional[NP_ARRAY[NP_REAL]] = None):
 
     l_rank: NP_INT = NP_INT(comm.Get_rank())
@@ -828,85 +836,45 @@ def save_rte_rrtmgp_cpp_input(grids: dict, fields: dict, tt: NP_INT,
         time_str: str = ".t_{:03d}".format(tt)
 
         coarse_factor_str: str
-        for coarse_factor_str in grids.keys():
+        for coarse_factor_str in coords.keys():
             lr_str: str = ".lr_" + coarse_factor_str
-            nx: NP_INT = grids[coarse_factor_str]["nx"]
-            ny: NP_INT = grids[coarse_factor_str]["ny"]
+            nx: NP_INT = NP_INT(coords[coarse_factor_str]["x"][1].size)
+            ny: NP_INT = NP_INT(coords[coarse_factor_str]["y"][1].size)
             if szas is not None:
                 sza: NP_REAL
                 for sza in szas:
                     sza_str: str = ".sza_{:03.0f}".format(sza)
 
                     sza_rad: NP_REAL = np.deg2rad(sza)
-                    fields[coarse_factor_str]["mu0"]: NP_ARRAY[NP_REAL] = \
-                        np.zeros([ny, nx], dtype = NP_REAL) + np.cos(sza_rad)
+                    mu0: NP_ARRAY[NP_REAL] = np.zeros([ny, nx], dtype = NP_REAL) + np.cos(sza_rad)
+                    fields[coarse_factor_str]["mu0"]: list = (
+                        fields_dimensions["mu0"],
+                        mu0,
+                        dict(description = fields_descriptions["mu0"], units = fields_units["mu0"])
+                    )
                     
                     file_path: str = file_path_root + time_str + sza_str + lr_str + ".in.nc"
                     
-                    write_rte_input(grids, fields, coarse_factor_str, file_path)
+                    write_rte_input(coords, fields, coarse_factor_str, file_path)
             else:
                 file_path: str = file_path_root + time_str + lr_str + ".in.nc"
 
-                write_rte_input(grids, fields, coarse_factor_str, file_path)
+                write_rte_input(coords, fields, coarse_factor_str, file_path)
                     
-def write_rte_input(grids: dict, fields: dict, coarse_factor_str: str,
+def write_rte_input(coords: dict, fields: dict, coarse_factor_str: str,
     file_path: str):
 
-    l_grid: dict = grids[coarse_factor_str]
-    l_fields: dict = fields[coarse_factor_str]
+    out_coords: dict = coords[coarse_factor_str]
+    out_fields: dict = fields[coarse_factor_str]
 
-    nc_file: NC_DATASET = nc.Dataset(file_path, mode = "w",
-        datamodel = "NETCDF4", clobber = True)
+    ds: XR_DATASET = xr.Dataset(
+        data_vars = out_fields,
+        coords = out_coords
+    )
 
-    nc_file.createDimension("scalar", 1)
-    nc_file.createDimension("x", l_grid["nx"])
-    nc_file.createDimension("y", l_grid["ny"])
-    nc_file.createDimension("lay", l_grid["lay"])
-    nc_file.createDimension("lev", l_grid["lev"])
-    nc_file.createDimension("z", l_grid["lay"])
-    nc_file.createDimension("xh", l_grid["nx"] + 1)
-    nc_file.createDimension("yh", l_grid["ny"] + 1)
-    nc_file.createDimension("zh", l_grid["lev"])
-    nc_file.createDimension("band_sw", l_grid["n_bnd_sw"])
-    nc_file.createDimension("band_lw", l_grid["n_bnd_lw"])
-
-    ## Spatial grid
-    for rte_grid_key in grid_dimensions.keys():
-        field: NP_ARRAY[NP_REAL] = l_grid[rte_grid_key]
-        field_dimensions: str | tuple[Optional[str]] = grid_dimensions[rte_grid_key]
-        field_description: str = grid_descriptions[rte_grid_key]
-        field_units: str = grid_units[rte_grid_key]
-        field_dtype: type = grid_dtypes[rte_grid_key]
-
-        nc_field: NC_VARIABLE = nc_file.createVariable(rte_grid_key, field_dtype, field_dimensions)
-        nc_field.description: str = field_description
-        nc_field.units: str = field_units
-
-        print(rte_grid_key, flush = True)
-        if nc_field.size == 1:
-            breakpoint()
-
-        if nc_field.size == 1:
-            nc_field[...] = np.array([field])
-        else:
-            nc_field[...] = field
-
-    ## Fields
-    for rte_field_key in fields_dimensions.keys():
-        field: NP_ARRAY[NP_REAL] = l_fields[rte_field_key][:]
-
-        field_dimensions: tuple[str] = fields_dimensions[rte_field_key]
-        field_description: str = fields_descriptions[rte_field_key]
-        field_units: str = fields_units[rte_field_key]
-        field_dtype: type = field_dtypes[rte_grid_key]
-
-        nc_field: NC_VARIABLE = nc_file.createVariable(rte_field_key, field_dtype, field_dimensions)
-        nc_field.description: str = field_description
-        nc_field.units: str = field_units
-
-        nc_field[...] = field
-
-    nc_file.close()
+    for v in ds.data_vars:
+        ds[v].attrs.pop("coordinates", None)
+    ds.to_netcdf(file_path)
 
 if __name__ == "__main__":
     main(sys.argv)
