@@ -26,7 +26,7 @@ TIMES_PYTHON="[360]"
 T0_PYTHON=-10
 TF_PYTHON=-1
 
-mpirun -np 8 python exp_hres/convert_dp_screamxx_output_new_xr.py \
+mpirun -np 8 python exp_hres/convert_dp_screamxx_output_new.py \
     --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
     --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_INPUT_DIR} \
     --coarse_factors "${COARSE_FACTORS_PYTHON}" \
