@@ -84,7 +84,7 @@ def main():
     }
 
     l_keys: list[str] = get_l_keys(list(horz_average_kwargs.keys()), comm)
-    for key in ["vmr"]:#l_keys:
+    for key in l_keys:
         kwargs: dict = horz_average_kwargs[key]
         plot_horz_average(rte_indir_path, plot_outdir_path, key, kwargs)
 
@@ -211,7 +211,6 @@ def plot_horz_average(rte_indir_path: str, plot_outdir_path: str,
                 gas_key: str = "vmr_" + kwargs["gas_codes"][ii]
                 if gas_key in xr_rte_in.keys():
                     field: NP_ARRAY[NP_REAL] = xr_rte_in[gas_key].values.astype(NP_REAL) # (lay, y, x)
-                    breakpoint()
                     if field.max() > 0.: # If non-zero, then plot it
                         if field.ndim == 0: # Constant across domain
                             field_z: NP_ARRAY[NP_REAL] = field * np.ones((nlay), NP_REAL) # (lay); [N/A]

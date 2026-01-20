@@ -27,8 +27,9 @@ from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
 from utils.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
 from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys, \
     grid_descriptions, grid_units, fields_dimensions, fields_descriptions, fields_units
-from convert_utils import bcast_coords, coarsen_coords, get_coords_01, get_sort_mask, \
-    interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, set_unspecified_fields
+from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
+    interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
+    vals_to_fields
 
 
 # Script variables
@@ -113,9 +114,12 @@ def main(argv):
     rte_rrtmgp_cpp_dir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_dir_path[0])
     coarse_factors: NP_ARRAY[NP_INT]
     if args.coarse_factors[0] is None:
-        coarse_factors = np.array([2], dtype = NP_INT)
+        coarse_factors = np.array([1], dtype = NP_INT)
     else:
         coarse_factors = np.array(ast.literal_eval(args.coarse_factors[0]), dtype = NP_INT).flatten()
+        if not np.any(coarse_factors == NP_INT(1)):
+            coarse_factors = np.append(coarse_factors, NP_INT(1))
+    coarse_factors = np.sort(coarse_factors)
     szas: Optional[NP_ARRAY[NP_REAL]]
     if args.szas[0] is None:
         szas = None
@@ -140,7 +144,7 @@ def main(argv):
     else:
         times = None
 
-    interp_method: str = "nearest"
+    interp_method: str = "linear"
 
     file_ext: re.Pattern = re.compile("\\.nc")
     rte_rrtmgp_cpp_file_name_root: str = file_ext.sub("", os.path.basename(dpscream_file_path))
@@ -149,7 +153,7 @@ def main(argv):
     # Root rank gets original horizontal grid
     xr_dpscream: Optional[XR_DATASET]
     sort_mask: Optional[NP_ARRAY[NP_INT]]
-    coords: Optional[dict]
+    g_grids: Optional[dict]
     if l_rank == MPI_ROOT:
         xr_dpscream = xr.open_dataset(dpscream_file_path, engine = "netcdf4")
 
@@ -172,82 +176,77 @@ def main(argv):
             times = np.arange(t0, tf + 1, dtype = NP_INT)
 
         sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(xr_dpscream)
-        coords = {}
-        coords["01"] = get_coords_01(xr_dpscream, sort_mask)
+        g_grids = {}
+        g_grids["01"] = get_g_grid_01(xr_dpscream, sort_mask)
 
         coarse_factor: NP_INT
         for coarse_factor in coarse_factors:
             coarse_factor_str: str = "{:02}".format(coarse_factor)
-            coords[coarse_factor_str] = coarsen_coords(coords["01"], coarse_factor)
+            g_grids[coarse_factor_str] = coarsen_g_grid(g_grids["01"], coarse_factor)
     else:
         xr_dpscream = None
         sort_mask = None
-        coords = None
+        g_grids = None
         times = None
 
+    g_coords: Optional[list] = grids_to_coords(xr_dpscream, g_grids, comm)
+
     times = comm.bcast(times, root = MPI_ROOT)
-    l_grids: dict = bcast_coords(coords, comm)
+    l_grid_src: dict
+    l_grids_tgt: dict
+    [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, comm)
 
     tt: NP_INT
     for tt in times:
-        fields: Optional[dict]
+        g_vals: Optional[dict]
         if l_rank == MPI_ROOT:
-            fields = {"01" : {}}
+            g_vals = dict()
             coarse_factor: NP_INT
             for coarse_factor in coarse_factors:
                 coarse_factor_str: str = "{:02}".format(coarse_factor)
-                fields[coarse_factor_str] = {}
+                g_vals[coarse_factor_str] = {}
         else:
-            fields = None
+            g_vals = None
 
         ## Set unspecified fields
-        unspecified_fields: dict = set_unspecified_fields(coords, comm)
+        g_unspecified_vals: dict = set_unspecified_vals(xr_dpscream, g_grids, comm)
         if l_rank == MPI_ROOT:
             coarse_factor_str: str
-            for coarse_factor_str in fields.keys():
-                fields[coarse_factor_str] = {**fields[coarse_factor_str], **unspecified_fields[coarse_factor_str]}
+            for coarse_factor_str in g_vals.keys():
+                g_vals[coarse_factor_str] = {**g_vals[coarse_factor_str], **g_unspecified_vals[coarse_factor_str]}
 
         ## Interpolate 3D fields
         ii: int
         for ii in range(0, len(dpscream_3dfield_keys)):
             dpscream_field_key: str = dpscream_3dfield_keys[ii]
             rte_field_key: str = rte_3dfield_keys[ii]
-            field_val_dict: dict = interp_3dfield(xr_dpscream, dpscream_field_key, rte_field_key,
-                sort_mask, coords, l_grids, tt, comm, interp_method = interp_method)
+            val_dict: dict = interp_3dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, g_grids, l_grid_src, l_grids_tgt, tt, comm, interp_method = interp_method)
 
             if l_rank == MPI_ROOT:
                 coarse_factor_str: str
-                for coarse_factor_str in field_val_dict.keys():
-                    fields_val: dict = field_val_dict[coarse_factor_str]
-                    for field_key in fields_val.keys():
-                        field: list = (
-                            fields_dimensions[field_key],
-                            fields_val[field_key],
-                            dict(description = fields_descriptions[field_key], units = fields_units[field_key])
-                        )
-                        fields[coarse_factor_str][field_key] = field
+                for coarse_factor_str in val_dict.keys():
+                    vals: dict = val_dict[coarse_factor_str]
+                    for val_key in vals.keys():
+                        g_vals[coarse_factor_str][val_key] = vals[val_key]
 
         ## Interpolate 2D fields
         ii: int
         for ii in range(0, len(dpscream_2dfield_keys)):
             dpscream_field_key: str = dpscream_2dfield_keys[ii]
             rte_field_key: str = rte_2dfield_keys[ii]
-            field_val_dict: dict = interp_2dfield(xr_dpscream, dpscream_field_key, rte_field_key,
-                sort_mask, coords, l_grids, tt, comm, interp_method = interp_method)
+            val_dict: dict = interp_2dfield(xr_dpscream, dpscream_field_key, rte_field_key,
+                sort_mask, g_grids, l_grid_src, l_grids_tgt, tt, comm, interp_method = interp_method)
 
             if l_rank == MPI_ROOT:
                 coarse_factor_str: str
-                for coarse_factor_str in field_val_dict.keys():
-                    fields_val: dict = field_val_dict[coarse_factor_str]
-                    for field_key in fields_val.keys():
-                        field: list = (
-                            fields_dimensions[field_key],
-                            fields_val[field_key],
-                            dict(description = fields_descriptions[field_key], units = fields_units[field_key])
-                        )
-                        fields[coarse_factor_str][field_key] = field
+                for coarse_factor_str in val_dict.keys():
+                    vals: dict = val_dict[coarse_factor_str]
+                    for val_key in vals.keys():
+                        g_vals[coarse_factor_str][val_key] = vals[val_key]
 
-        save_rte_rrtmgp_cpp_input(coords, fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
+        g_fields: dict = vals_to_fields(g_vals, comm)
+        save_rte_rrtmgp_cpp_input(g_coords, g_fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
 
 if __name__ == "__main__":
     main(sys.argv)

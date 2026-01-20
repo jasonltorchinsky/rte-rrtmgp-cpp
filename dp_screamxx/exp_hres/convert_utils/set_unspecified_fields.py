@@ -4,26 +4,35 @@
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
     MPI_COMM, MPI_ROOT
-from utils.rte_rrtmgp_cpp_fields import fields_dimensions, fields_descriptions, fields_units
+from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
+    fields_dimensions, fields_descriptions, fields_units
 
-def set_unspecified_fields(coords: dict, comm: MPI_COMM) -> dict:
+def set_unspecified_fields(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM) -> dict:
     """
     Set fields not specified by the DP-SCREAM output.
     """
     l_rank: NP_INT = NP_INT(comm.Get_rank())
 
+    ## Wavelength info
+    n_bnd_sw: NP_INT = NP_INT(xr_dpscream.sizes["swband"])
+    n_bnd_lw: NP_INT = NP_INT(xr_dpscream.sizes["lwband"])
+
     fields_out: dict = {}
 
     if l_rank == MPI_ROOT:
-        coarse_factor_str: str
-        for coarse_factor_str in coords.keys():
-            nx: NP_INT = NP_INT(coords[coarse_factor_str]["x"][1].size)
-            ny: NP_INT = NP_INT(coords[coarse_factor_str]["y"][1].size)
-            nlay: NP_INT = NP_INT(coords[coarse_factor_str]["z_lay"][1].size)
-            n_bnd_sw: NP_INT = NP_INT(coords[coarse_factor_str]["n_bnd_sw"][1])
-            n_bnd_lw: NP_INT = NP_INT(coords[coarse_factor_str]["n_bnd_lw"][1])
+        coarse_str: str
+        for coarse_str in g_grids.keys():
+            nx: NP_INT = g_grids[coarse_str]["nx"]
+            ny: NP_INT = g_grids[coarse_str]["ny"]
+            nlay: NP_INT = g_grids[coarse_str]["nlay"]
+
+            ### NOTE: The number of points in the acceleration grid "should"
+            ### be between 1/10 and 1/20 of nx, ny, nlay
+            ngrid_x: NP_INT = NP_INT(np.ceil(nx / 10))
+            ngrid_y: NP_INT = NP_INT(np.ceil(ny / 10))
+            ngrid_z: NP_INT = NP_INT(np.ceil(nlay / 10))
 
             ## Longwave boundary conditions
             emis_sfc: NP_ARRAY[NP_REAL] = \
@@ -40,7 +49,10 @@ def set_unspecified_fields(coords: dict, comm: MPI_COMM) -> dict:
             azi: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx), dtype = NP_REAL) * 0.0 
             
-            fields_out[coarse_factor_str]: dict = dict(
+            fields_out[coarse_str]: dict = dict(
+                ngrid_x = ((), ngrid_x, dict(description = grid_descriptions["ngrid_x"], units = grid_units["ngrid_x"])),
+                ngrid_y = ((), ngrid_y, dict(description = grid_descriptions["ngrid_y"], units = grid_units["ngrid_y"])),
+                ngrid_z = ((), ngrid_z, dict(description = grid_descriptions["ngrid_z"], units = grid_units["ngrid_z"])),
                 emis_sfc = (fields_dimensions["emis_sfc"], emis_sfc, dict(description = fields_descriptions["emis_sfc"], units = fields_units["emis_sfc"])),
                 sfc_alb_dir = (fields_dimensions["sfc_alb_dir"], sfc_alb_dir, dict(description = fields_descriptions["sfc_alb_dir"], units = fields_units["sfc_alb_dir"])),
                 sfc_alb_dif = (fields_dimensions["sfc_alb_dif"], sfc_alb_dif, dict(description = fields_descriptions["sfc_alb_dif"], units = fields_units["sfc_alb_dif"])),
@@ -57,7 +69,7 @@ def set_unspecified_fields(coords: dict, comm: MPI_COMM) -> dict:
             
             field_vals: NP_ARRAY[NP_REAL] = np.zeros((nlay, ny, nx), dtype = NP_REAL)
             for key in unexpected_keys:
-                fields_out[coarse_factor_str][key] = \
+                fields_out[coarse_str][key] = \
                     (fields_dimensions[key], field_vals, 
                         dict(description = fields_descriptions[key], units = fields_units[key])
                     )

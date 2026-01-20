@@ -79,8 +79,6 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
         ax.plot(x_data, y_data, color = colors[idx%ncolors], linestyle = linestyles[idx%nlinestyles],
                 label = label, drawstyle = kwargs["draw_style"])
 
-    breakpoint()
-
     if (kwargs["profile_labels"] is not None) or (kwargs["profile_labels"] != []):
         ax.legend()
 

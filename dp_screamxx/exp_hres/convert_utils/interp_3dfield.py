@@ -11,12 +11,12 @@ from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
     g
 
 def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
-    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], coords: dict, 
-    l_grids: dict, tt: NP_INT, comm: MPI_COMM, interp_method: str = "nearest") -> NP_ARRAY[NP_REAL]:
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], g_grids: dict, 
+    l_grid_src: dict, l_grids_tgt: dict, tt: NP_INT, comm: MPI_COMM, 
+    interp_method: str = "nearest") -> NP_ARRAY[NP_REAL]:
     field_out: dict = {}
 
     l_rank: NP_INT = NP_INT(comm.Get_rank())
-    comm_size: NP_INT = NP_INT(comm.Get_size())
 
     z_src: Optional[NP_ARRAY[NP_REAL]]
     field_src: Optional[NP_ARRAY[NP_REAL]]
@@ -62,25 +62,32 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             field_min = field_src.min()
             field_max = field_src.max()
 
-        nx: NP_INT = NP_INT(coords["01"]["x"][1].size)
-        ny: NP_INT = NP_INT(coords["01"]["y"][1].size)
-        nz: NP_INT = NP_INT(z_src.shape[1])
+        g_nx: NP_INT = g_grids["01"]["nx"]
+        g_ny: NP_INT = g_grids["01"]["ny"]
+        g_nlay: NP_INT = g_grids["01"]["nlay"]
 
-        z_src = z_src.reshape(nx, ny, nz)
-        field_src = field_src.reshape(nx, ny, nz)
+        z_src = z_src.reshape(g_nx, g_ny, g_nlay)
+        field_src = field_src.reshape(g_nx, g_ny, g_nlay)
     else:
+        g_nx = None
+        g_ny = None
+        g_nlay = None
         z_src = None
         field_src = None
         field_min = None
         field_max = None
 
-    # Scatterv the original field
-    l_nx_src: NP_INT = l_grids["01"]["nx"]
-    l_ny_src: NP_INT = l_grids["01"]["ny"]
-    l_nlay_src: NP_INT = l_grids["01"]["lay"]
+    g_nx = comm.bcast(g_nx, root = MPI_ROOT)
+    g_ny = comm.bcast(g_ny, root = MPI_ROOT)
+    g_nlay = comm.bcast(g_nlay, root = MPI_ROOT)
 
-    l_counts_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src * l_nlay_src
-    l_displs_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src * l_nlay_src
+    # Scatterv the original field
+    l_nx_src: NP_INT = l_grid_src["nx"]
+    l_ny_src: NP_INT = g_ny
+    l_nlay_src: NP_INT = g_nlay
+
+    l_counts_src: NP_ARRAY[NP_INT] = l_grid_src["l_counts_x"] * l_ny_src * l_nlay_src
+    l_displs_src: NP_ARRAY[NP_INT] = l_grid_src["l_displs_x"] * l_ny_src * l_nlay_src
 
     l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nlay_src], dtype = NP_REAL) # NOTE: ASSUME only using layer midpoint values for field
     l_z_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nlay_src], dtype = NP_REAL) # NOTE: ASSUME only using layer midpoint values for field
@@ -94,37 +101,39 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         print("{}: {} has NaNs in _src".format(l_rank, rte_field_key), flush = True)
 
     # Get source grid - points to interpolate from
-    l_x_src: NP_ARRAY[NP_REAL] = l_grids["01"]["x"]
-    l_y_src: NP_ARRAY[NP_REAL] = l_grids["01"]["y"]
-    l_nz: NP_INT = l_z_src.shape[2]
+    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+    g_y: Optional[NP_ARRAY[NP_REAL]] = None
+    if l_rank == MPI_ROOT:
+        g_y = g_grids["01"]["y"]
+    l_y_src: NP_ARRAY[NP_REAL] = comm.bcast(g_y, root = MPI_ROOT)
 
     l_XX_src: NP_ARRAY[NP_REAL]
     l_YY_src: NP_ARRAY[NP_REAL]
     l_XX_src, l_YY_src = np.meshgrid(l_x_src, l_y_src, indexing = "ij")
-    l_XX_src = np.tile(np.expand_dims(l_XX_src, axis = 2), (1, 1, l_nz))
-    l_YY_src = np.tile(np.expand_dims(l_YY_src, axis = 2), (1, 1, l_nz))
+    l_XX_src = np.tile(np.expand_dims(l_XX_src, axis = 2), (1, 1, l_nlay_src))
+    l_YY_src = np.tile(np.expand_dims(l_YY_src, axis = 2), (1, 1, l_nlay_src))
 
     l_pts_src: NP_ARRAY[NP_REAL] = \
         np.stack([l_XX_src.flatten(), l_YY_src.flatten(), l_z_src.flatten()],
             axis = 1)
 
     # Coarsen the field as necessary
-    for coarse_str in l_grids.keys():
+    ### BUG SOMEWHERE IN HERE ###
+    for coarse_str in l_grids_tgt.keys():
         field_out[coarse_str]: dict = {}
         # Get target layer grid - points to interpolate to
-        l_ny_tgt: NP_INT = l_grids[coarse_str]["ny"]
-        l_nlay_tgt: NP_INT = l_grids[coarse_str]["lay"]
+        l_ny_tgt: NP_INT = l_grids_tgt[coarse_str]["ny"]
+        l_nlay_tgt: NP_INT = l_grids_tgt[coarse_str]["nlay"]
 
-        l_counts_x: NP_ARRAY[NP_INT] = l_grids[coarse_str]["l_counts_x"]
-        l_displs_x: NP_ARRAY[NP_INT] = l_grids[coarse_str]["l_displs_x"] \
-            + np.arange(0, comm_size, dtype = NP_INT) # NOTE: Requires an offset from the x-grids meeting
+        l_counts_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_counts_x"]
+        l_displs_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_displs_x"]
             
         l_counts_lay_tgt: NP_ARRAY[NP_INT] = l_counts_x * l_ny_tgt * l_nlay_tgt
         l_displs_lay_tgt: NP_ARRAY[NP_INT] = l_displs_x * l_ny_tgt * l_nlay_tgt
 
-        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["x"]
-        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["y"]
-        l_z_lay_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["z_lay"]
+        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["x"]
+        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["y"]
+        l_z_lay_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["z_lay"]
 
         l_XX_lay_tgt, l_YY_lay_tgt, l_ZZ_lay_tgt = \
             np.meshgrid(l_x_tgt, l_y_tgt, l_z_lay_tgt, indexing = "ij")
@@ -144,9 +153,9 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         # Reconstruct the full field
         field_lay_tgt: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            nx_tgt: NP_INT = NP_INT(coords[coarse_str]["x"][1].size)
-            ny_tgt: NP_INT = NP_INT(coords[coarse_str]["y"][1].size)
-            nlay_tgt: NP_INT = NP_INT(coords[coarse_str]["z_lay"][1].size)
+            nx_tgt: NP_INT = g_grids[coarse_str]["nx"]
+            ny_tgt: NP_INT = g_grids[coarse_str]["ny"]
+            nlay_tgt: NP_INT = g_grids[coarse_str]["nlay"]
 
             field_lay_tgt = np.empty(nx_tgt * ny_tgt * nlay_tgt, dtype = NP_REAL)
 
@@ -161,8 +170,8 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         ## Some fields need to be interpolated to regular vertical levels, too
         if dpscream_field_key in ["p", "T"]:
             # Get target level grid - points to interpolate to
-            l_nlev_tgt: NP_INT = l_grids[coarse_str]["lev"]
-            l_z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["z_lev"]
+            l_nlev_tgt: NP_INT = l_grids_tgt[coarse_str]["nlev"]
+            l_z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["z_lev"]
             l_counts_lev_tgt: list[NP_INT] = l_counts_x * l_ny_tgt * l_nlev_tgt
             l_displs_lev_tgt: list[NP_INT] = l_displs_x * l_ny_tgt * l_nlev_tgt
 
@@ -171,7 +180,7 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             l_pts_lev_tgt: NP_ARRAY[NP_REAL] = \
                 np.stack([l_XX_lev_tgt.flatten(), l_YY_lev_tgt.flatten(), l_ZZ_lev_tgt.flatten()], 
                     axis = 1)
-            
+
             ## Interpolate the values to regular vertical levels, and limit them
             l_field_lev_tgt: NP_ARRAY[NP_REAL] = \
                 griddata(l_pts_src, l_field_src.flatten(), l_pts_lev_tgt,
@@ -180,11 +189,11 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
                 print("{}: {}, {} has NaNs in _lev_tgt".format(l_rank, coarse_str, rte_field_key), flush = True)
             l_field_lev_tgt[l_field_lev_tgt < field_min] = field_min
             l_field_lev_tgt[l_field_lev_tgt > field_max] = field_max
-        
+
             # Reconstruct the full field
             field_lev_tgt: Optional[NP_ARRAY[NP_REAL]] = None
             if l_rank == MPI_ROOT:
-                nlev_tgt: NP_INT = NP_INT(coords[coarse_str]["z_lev"][1].size)
+                nlev_tgt: NP_INT = g_grids[coarse_str]["nlev"]
                 field_lev_tgt = np.empty(nx_tgt * ny_tgt * nlev_tgt, dtype = NP_REAL)
             
             comm.Gatherv(l_field_lev_tgt,

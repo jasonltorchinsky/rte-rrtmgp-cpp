@@ -10,8 +10,8 @@ from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET
 
 def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
-    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], coords: dict, 
-    l_grids: dict, tt: int, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
+    rte_field_key: str, sort_mask: NP_ARRAY[NP_INT], g_grids: dict, 
+    l_grid_src: dict, l_grids_tgt: dict, tt: int, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
     field_out: dict = {}
 
     l_rank: NP_INT = NP_INT(comm.Get_rank())
@@ -38,21 +38,26 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             field_src[field_src > field_max] = field_max
             field_src[field_src < field_min] = field_min
 
-        nx: NP_INT = NP_INT(coords["01"]["x"][1].size)
-        ny: NP_INT = NP_INT(coords["01"]["y"][1].size)
+        g_nx: NP_INT = g_grids["01"]["nx"]
+        g_ny: NP_INT = g_grids["01"]["ny"]
 
-        field_src = field_src.reshape(nx, ny)
+        field_src = field_src.reshape(g_nx, g_ny)
     else:
+        g_nx = None
+        g_ny = None
         field_src = None
         field_min = None
         field_max = None
 
-    # Scatterv the original field
-    l_nx_src: NP_INT = l_grids["01"]["nx"]
-    l_ny_src: NP_INT = l_grids["01"]["ny"]
+    g_nx = comm.bcast(g_nx, root = MPI_ROOT)
+    g_ny = comm.bcast(g_ny, root = MPI_ROOT)
 
-    l_counts_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_counts_x"] * l_ny_src
-    l_displs_src: NP_ARRAY[NP_INT] = l_grids["01"]["l_displs_x"] * l_ny_src
+    # Scatterv the original field
+    l_nx_src: NP_INT = l_grid_src["nx"]
+    l_ny_src: NP_INT = g_ny
+
+    l_counts_src: NP_ARRAY[NP_INT] = l_grid_src["l_counts_x"] * l_ny_src
+    l_displs_src: NP_ARRAY[NP_INT] = l_grid_src["l_displs_x"] * l_ny_src
 
     l_field_src: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src], dtype = NP_REAL)
 
@@ -61,8 +66,11 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
     comm.Scatterv([field_src, l_counts_src, l_displs_src, MPI_REAL], l_field_src, root = MPI_ROOT)
 
     # Get source grid - points to interpolate from
-    l_x_src: NP_ARRAY[NP_REAL] = l_grids["01"]["x"]
-    l_y_src: NP_ARRAY[NP_REAL] = l_grids["01"]["y"]
+    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+    g_y: Optional[NP_ARRAY[NP_REAL]] = None
+    if l_rank == MPI_ROOT:
+        g_y = g_grids["01"]["y"]
+    l_y_src: NP_ARRAY[NP_REAL] = comm.bcast(g_y, root = MPI_ROOT)
 
     l_XX_src: NP_ARRAY[NP_REAL]
     l_YY_src: NP_ARRAY[NP_REAL]
@@ -72,20 +80,19 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         np.stack([l_XX_src.flatten(), l_YY_src.flatten()], axis = 1)
 
     # Coarsen the field as necessary
-    for coarse_str in l_grids.keys():
+    for coarse_str in l_grids_tgt.keys():
         field_out[coarse_str]: dict = {}
         # Get target layer grid - points to interpolate to
-        l_ny_tgt: NP_INT = l_grids[coarse_str]["ny"]
+        l_ny_tgt: NP_INT = l_grids_tgt[coarse_str]["ny"]
 
-        l_counts_x: NP_ARRAY[NP_INT] = l_grids[coarse_str]["l_counts_x"]
-        l_displs_x: NP_ARRAY[NP_INT] = l_grids[coarse_str]["l_displs_x"] \
-            + np.arange(0, comm_size, dtype = NP_INT) # NOTE: Requires an offset from the x-grids meeting
+        l_counts_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_counts_x"]
+        l_displs_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_displs_x"]
             
         l_counts_tgt: list[NP_INT] = l_counts_x * l_ny_tgt
         l_displs_tgt: list[NP_INT] = l_displs_x * l_ny_tgt
 
-        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["x"]
-        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids[coarse_str]["y"]
+        l_x_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["x"]
+        l_y_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["y"]
 
         l_XX_tgt, l_YY_tgt = np.meshgrid(l_x_tgt, l_y_tgt, indexing = "ij")
         l_pts_tgt: NP_ARRAY[NP_REAL] = \
@@ -101,8 +108,8 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         # Reconstruct the full field
         field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            nx_tgt: NP_INT = NP_INT(coords[coarse_str]["x"][1].size)
-            ny_tgt: NP_INT = NP_INT(coords[coarse_str]["y"][1].size)
+            nx_tgt: NP_INT = g_grids[coarse_str]["nx"]
+            ny_tgt: NP_INT = g_grids[coarse_str]["ny"]
 
             field_tgt = np.empty([nx_tgt, ny_tgt], dtype = NP_REAL)
 
