@@ -17,16 +17,13 @@ from typing import Optional
 # Third-Party Library Imports
 from mpi4py import MPI
 import numpy as np
-from scipy.interpolate import griddata
 import xarray as xr
 
 # Local Library Imports
 from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
-    g
+    MPI_COMM, MPI_ROOT, XR_DATASET
 from utils.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
-from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys, \
-    grid_descriptions, grid_units, fields_dimensions, fields_descriptions, fields_units
+from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
 from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
     interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
     vals_to_fields

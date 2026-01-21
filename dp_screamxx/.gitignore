@@ -3,4 +3,5 @@
 *.out
 *.err
 *.png
+*.gif
 /__pycache__/*
