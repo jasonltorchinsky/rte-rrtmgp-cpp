@@ -109,9 +109,10 @@ def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
                 & (coarse_g_grid["x"] <= l_grid_src["x"].max())
                 )[0]
         l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
-        l_counts[l_rank] = (coarse_idxs[-1] - coarse_idxs[0]) + 1
         l_displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
-        l_displs[l_rank] = coarse_idxs[0]
+        if coarse_idxs.size >= 1:
+            l_counts[l_rank] = (coarse_idxs[-1] - coarse_idxs[0]) + NP_INT(1)
+            l_displs[l_rank] = coarse_idxs[0]
 
         allgatherv_counts: NP_ARRAY[NP_INT] = np.ones(comm_size, dtype = NP_INT)
         allgatherv_displs: NP_ARRAY[NP_INT] = np.arange(comm_size, dtype = NP_INT)
@@ -121,8 +122,14 @@ def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
         comm.Allgatherv(l_displs[l_rank],
             [l_displs, allgatherv_counts, allgatherv_displs, MPI_REAL])
 
-        l_nx: NP_INT = (coarse_idxs[-1] - coarse_idxs[0]) + 1
-        l_x: NP_ARRAY[NP_REAL] = coarse_g_grid["x"][coarse_idxs[0]:coarse_idxs[-1] + 1]
+        l_nx: NP_INT
+        l_x: NP_ARRAY[NP_REAL]
+        if coarse_idxs.size >= 1:
+            l_nx: NP_INT = (coarse_idxs[-1] - coarse_idxs[0]) + NP_INT(1)
+            l_x: NP_ARRAY[NP_REAL] = coarse_g_grid["x"][coarse_idxs[0]:coarse_idxs[-1] + 1]
+        else:
+            l_nx = NP_INT(0)
+            l_x = np.empty(0, dtype = NP_REAL)
 
         # Broadcast the other values
         ny: Optional[NP_INT] = None

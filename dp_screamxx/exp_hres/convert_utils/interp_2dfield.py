@@ -25,18 +25,22 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         assert(dpscream_field_key in xr_dpscream.keys())
         field_src: NP_ARRAY[NP_REAL] = \
             xr_dpscream[dpscream_field_key].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field; (ncol)
-            
+        
+        np.nan_to_num(field_src, NP_REAL(0.))
+
         ## Exceptions - Do in serial for now
-        if rte_field_key in ["t_sfc", "mu0"]: # In case fill values are unreasonable
-            if rte_field_key in ["t_sfc"]: # Between 0 K and 2300 K (max natural temperature on Earth)
-                field_min: NP_REAL = NP_REAL(0.0)
-                field_max: NP_REAL = NP_REAL(2300.0)
-            elif rte_field_key in ["mu0"]: # Between -1.0 and 1.0
-                field_min: NP_REAL = NP_REAL(-1.0)
-                field_max: NP_REAL = NP_REAL(1.0)
+        if rte_field_key in ["t_sfc"]:
+            field_min = NP_REAL(100.0) # Lowest temperature in mesosphere https://scied.ucar.edu/learning-zone/atmosphere/mesosphere [K]
+            field_max = NP_REAL(329.817) # Hottest observed temperature https://www.ncei.noaa.gov/news/earths-hottest-temperature [K]
+        elif rte_field_key in ["mu0"]: # Between -1.0 and 1.0
+            field_min: NP_REAL = NP_REAL(-1.0)
+            field_max: NP_REAL = NP_REAL(1.0)
+        else:
+            field_min = field_src.min()
+            field_max = field_src.max()
             
-            field_src[field_src > field_max] = field_max
-            field_src[field_src < field_min] = field_min
+        field_src[field_src > field_max] = field_max
+        field_src[field_src < field_min] = field_min
 
         g_nx: NP_INT = g_grids["01"]["nx"]
         g_ny: NP_INT = g_grids["01"]["ny"]

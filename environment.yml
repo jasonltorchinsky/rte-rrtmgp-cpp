@@ -31,9 +31,9 @@ dependencies:
   - brotli-python=1.1.0=py313h7033f15_4
   - bzip2=1.0.8=h4bc722e_7
   - c-ares=1.34.5=hb9d3cd8_0
-  - ca-certificates=2025.8.3=hbd8a1cb_0
+  - ca-certificates=2025.12.2=h06a4308_0
   - cairo=1.18.4=h3394656_0
-  - certifi=2025.8.3=pyhd8ed1ab_0
+  - certifi=2026.01.04=py313h06a4308_0
   - cffi=1.17.1=py313hf01b4d8_1
   - cftime=1.6.4=py313h29aa505_2
   - click=8.2.1=pyh707e725_0
@@ -156,6 +156,9 @@ dependencies:
   - markupsafe=3.0.2=py313h8060acc_1
   - matplotlib=3.10.6=py313h78bf25f_1
   - matplotlib-base=3.10.6=py313h683a580_1
+  - mpi=1.0=mpich
+  - mpi4py=4.0.3=py313ha730828_1
+  - mpich=4.3.2=external_0
   - msgpack-python=1.1.1=py313h7037e92_1
   - munkres=1.1.4=pyhd8ed1ab_1
   - narwhals=2.3.0=pyhcf101f3_0
@@ -235,4 +238,4 @@ dependencies:
   - zlib=1.3.1=hb9d3cd8_2
   - zstandard=0.24.0=py313h736c1ce_1
   - zstd=1.5.7=hb8e6e7a_2
-prefix: /global/homes/j/jlturner/.conda/envs/rte-rrtmgp-cpp
+prefix: /ascldap/users/jltorch/.conda/envs/rte-rrtmgp-cpp

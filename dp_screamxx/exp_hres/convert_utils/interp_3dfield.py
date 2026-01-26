@@ -38,6 +38,7 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             field_src: NP_ARRAY[NP_REAL] = \
                 xr_dpscream[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
         
+        np.nan_to_num(field_src, NP_REAL(0.))
         z_src = xr_dpscream["z_mid"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Layer midpoints [m]; (ncol, n_lay_z)
 
         ## Exceptions - Do in serial for now
@@ -58,9 +59,18 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         elif rte_field_key in ["dei"]: # Between 10. μm and 180. μm
             field_min = NP_REAL(10.)
             field_max = NP_REAL(180.)
+        elif rte_field_key in ["t"]:
+            field_min = NP_REAL(100.0) # Lowest temperature in mesosphere https://scied.ucar.edu/learning-zone/atmosphere/mesosphere [K]
+            field_max = NP_REAL(329.817) # Hottest observed temperature https://www.ncei.noaa.gov/news/earths-hottest-temperature [K]
+        elif rte_field_key in ["p"]:
+            field_min = NP_REAL(0.1) # Atmospheric pressure near op of mesosphere. [Pa]
+            field_max = NP_REAL(108480.0) # Highest recorded atmospheric pressure https://web.archive.org/web/20121017130834/http://wmo.asu.edu/highest-sea-lvl-air-pressure-above-700m [Pa]
         else:
             field_min = field_src.min()
             field_max = field_src.max()
+
+        field_src[field_src > field_max] = field_max
+        field_src[field_src < field_min] = field_min
 
         g_nx: NP_INT = g_grids["01"]["nx"]
         g_ny: NP_INT = g_grids["01"]["ny"]

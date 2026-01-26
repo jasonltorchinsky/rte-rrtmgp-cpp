@@ -28,7 +28,6 @@ from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to
     interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
     vals_to_fields
 
-
 # Script variables
 prog_name: str = "convert_dpscream_output"
 prog_desc: str = "Converts DP-SCREAM output to RTE-RRTMGP-CPP+RT input."
