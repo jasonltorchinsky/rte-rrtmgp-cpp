@@ -28,7 +28,7 @@ if(USECUDA)
   set(CUDA_INCLUDE_DIR "/projects/aue/cee/deploy/4a1675f4/linux-rhel8-x86_64/none-none/cuda-12.9.0-dywi3s7/include")
   set(INCLUDE_DIRS ${INCLUDE_DIRS} ${CUDA_INCLUDE_DIR})
 
-  ## find_package not used throuhgout this project, so we have to do it the hard way
+  ## find_package not used throughout this project, so we have to do it the hard way
   add_library(curand INTERFACE IMPORTED)
   set_target_properties(curand PROPERTIES
     INTERFACE_INCLUDE_DIRECTORIES ${CUDA_INCLUDE_DIR}

@@ -6,15 +6,14 @@ ln -sf ../rrtmgp-data/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
 ln -sf ../data/aerosol_optics.nc
 
 # Translate DP-SCREAMXX output to RTE-RRTMGP-CPP input
-DP_SCREAMXX_DIR=/projects/ml3drt
-DP_SCREAMXX_RUN_NAME=scream_dpxx_RICO_doSW_05X05
+DP_SCREAMXX_DIR=/projects/ml3drt/dpxx
+DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_300x300
 DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nhours_x1.2004-12-16-00000
+SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.1974-08-30-00000
 SCREAM_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}.nc
-SCREAM_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/scream_dpxx_RICO_doSW.${SCREAM_OUTPUT_FILE_BASE}.nc
 
 RTE_RRTMGP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
-RTE_RRTMGP_RUN_NAME=t_21_25
+RTE_RRTMGP_RUN_NAME=t_090_123
 RTE_RRTMGP_RUN_DIR=${RTE_RRTMGP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_RUN_NAME}
 RTE_RRTMGP_INPUT_DIR=${RTE_RRTMGP_RUN_DIR}/input
 RTE_RRTMGP_OUTPUT_DIR=${RTE_RRTMGP_RUN_DIR}/output
@@ -28,23 +27,23 @@ mkdir -p ${RTE_RRTMGP_OUTPUT_DIR}
 mkdir -p ${RTE_RRTMGP_VIZ_DIR}
 
 # Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[0, 85]"
-COARSE_FACTORS_PYTHON="[1, 2]"
+SZAS_PYTHON="[0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 75, 80, 85]"
+COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
 TIMES_PYTHON="[21, 22, 23, 24, 25]"
-T0_PYTHON=-4
-TF_PYTHON=-1
+T0_PYTHON=90
+TF_PYTHON=123
 
 #python exp_hres/viz_tools/animate_dp_screamxx_output.py \
 #    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
 
-#mpirun -np 2 python exp_hres/convert_dp_screamxx_output_new.py \
-#    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_INPUT_DIR} \
-#    --coarse_factors "${COARSE_FACTORS_PYTHON}" \
-#    --szas "${SZAS_PYTHON}" \
-#    --t0 "${T0_PYTHON}" --tf "${TF_PYTHON}"
-#    #--times "${TIMES_PYTHON}" \
+mpirun -np 128 python exp_hres/convert_dp_screamxx_output.py \
+    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
+    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_INPUT_DIR} \
+    --coarse_factors "${COARSE_FACTORS_PYTHON}" \
+    --szas "${SZAS_PYTHON}" \
+    --t0 "${T0_PYTHON}" --tf "${TF_PYTHON}"
+    #--times "${TIMES_PYTHON}" \
 
 for FILE_NAME in ${RTE_RRTMGP_INPUT_DIR}/*;
 do
@@ -72,14 +71,14 @@ do
   mv rte_rrtmgp_output.nc ${RTE_RRTMGP_OUTPUT_FILE_PATH}
 done
 
-#mpirun -np 4 python exp_hres/viz_tools/plot_input.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
+mpirun -np 4 python exp_hres/viz_tools/plot_input.py \
+    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} \
+    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
 mpirun -np 4 python exp_hres/viz_tools/plot_output.py \
     --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} \
     --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_OUTPUT_DIR} \
     --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
-#mpirun -np 4 python exp_hres/viz_tools/plot_comparison.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}
+mpirun -np 4 python exp_hres/viz_tools/plot_comparison.py \
+    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_INPUT_DIR} \
+    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_OUTPUT_DIR} \
+    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_VIZ_DIR}

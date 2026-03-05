@@ -3,7 +3,7 @@ from typing import Optional
 
 # Third-Party Library Imports
 import numpy as np
-from scipy.interpolate import griddata
+from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
 from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
@@ -76,17 +76,14 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
         g_y = g_grids["01"]["y"]
     l_y_src: NP_ARRAY[NP_REAL] = comm.bcast(g_y, root = MPI_ROOT)
 
-    l_XX_src: NP_ARRAY[NP_REAL]
-    l_YY_src: NP_ARRAY[NP_REAL]
-    l_XX_src, l_YY_src = np.meshgrid(l_x_src, l_y_src, indexing = "ij")
-
-    l_pts_src: NP_ARRAY[NP_REAL] = \
-        np.stack([l_XX_src.flatten(), l_YY_src.flatten()], axis = 1)
+    l_horz_interpolator: RegularGridInterpolator = \
+        RegularGridInterpolator((l_x_src, l_y_src), l_field_src, method = interp_method)
 
     # Coarsen the field as necessary
     for coarse_str in l_grids_tgt.keys():
         field_out[coarse_str]: dict = {}
         # Get target layer grid - points to interpolate to
+        l_nx_tgt: NP_INT = l_grids_tgt[coarse_str]["nx"]
         l_ny_tgt: NP_INT = l_grids_tgt[coarse_str]["ny"]
 
         l_counts_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_counts_x"]
@@ -103,9 +100,7 @@ def interp_2dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], axis = 1)
 
         ## Interpolate the values to regular vertical layers, and limit them
-        l_field_tgt: NP_ARRAY[NP_REAL] = \
-            griddata(l_pts_src, l_field_src.flatten(), l_pts_tgt,
-                method = interp_method)
+        l_field_tgt: NP_ARRAY[NP_REAL] = l_horz_interpolator(l_pts_tgt).reshape(l_nx_tgt, l_ny_tgt)
         l_field_tgt[l_field_tgt < field_min] = field_min
         l_field_tgt[l_field_tgt > field_max] = field_max
 

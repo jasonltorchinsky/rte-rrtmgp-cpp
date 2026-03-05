@@ -39,7 +39,8 @@ def coarsen_g_grid(g_grid: dict, coarse_factor: NP_INT) -> dict:
         nlay = g_grid["nlay"],
         nlev = g_grid["nlev"],
         z_lay = g_grid["z_lay"],
-        z_lev = g_grid["z_lev"]
+        z_lev = g_grid["z_lev"],
+        z = g_grid["z"]
     )
 
     return g_grid_coarse

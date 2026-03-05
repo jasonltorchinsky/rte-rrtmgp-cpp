@@ -36,6 +36,9 @@ def get_g_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
 
     z_lev: NP_ARRAY[NP_REAL] = np.linspace(z_min, z_max, nlev, dtype = NP_REAL) # Regularly-spaced RTE levels [m]; (nlev)
     z_lay: NP_ARRAY[NP_REAL] = (z_lev[1:] + z_lev[:-1]) / 2. # Regularly-spaced RTE layers [m]; (nlay)
+    z: NP_ARRAY[NP_REAL] = np.empty(nlev + nlay, dtype = NP_REAL)
+    z[0::2] = z_lev
+    z[1::2] = z_lay
 
     ## Spatial RTE-RRTMGP-CPP grid
     g_grid: dict = dict(
@@ -48,7 +51,8 @@ def get_g_grid_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
         nlay = nlay,
         nlev = nlev,
         z_lay = z_lay,
-        z_lev = z_lev
+        z_lev = z_lev,
+        z = z
     )
 
     return g_grid
