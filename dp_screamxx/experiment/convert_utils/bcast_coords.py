@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT
 
 def bcast_coords(coords: Optional[dict], comm: MPI_COMM) -> dict:

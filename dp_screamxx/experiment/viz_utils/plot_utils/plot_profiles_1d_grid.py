@@ -13,7 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Path3DCollection
 from matplotlib.colors import ListedColormap, to_rgba
 
 # Local Library Imports
-from utils.consts import NP_REAL, NP_INF, NP_LARGE
+from consts.consts import NP_REAL, NP_INF, NP_LARGE
 
 def plot_profiles_1d_grid(coord_grid: tuple[tuple[np.ndarray]],
     profiles_grid: tuple[tuple[tuple[np.ndarray]]], file_path: str, **kwargs):

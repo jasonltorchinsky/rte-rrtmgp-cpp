@@ -16,8 +16,8 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, MPI_COMM, MPI_ROOT
-from plot_tools import plot_profiles_1d
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, MPI_COMM, MPI_ROOT
+from plot_utils import plot_profiles_1d
 
 def main():
     ## Parse command-line input

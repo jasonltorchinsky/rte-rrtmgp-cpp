@@ -17,13 +17,13 @@ from typing import Optional
 # Third-Party Library Imports
 from mpi4py import MPI
 import numpy as np
-import xarray as xr
+from xarray import open_dataset as xr_open_dataset
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET
-from utils.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
-from utils.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
+from consts.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
+from consts.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
 from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
     interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
     vals_to_fields
@@ -116,29 +116,21 @@ def main(argv):
         if not np.any(coarse_factors == NP_INT(1)):
             coarse_factors = np.append(coarse_factors, NP_INT(1))
     coarse_factors = np.sort(coarse_factors)
-    szas: Optional[NP_ARRAY[NP_REAL]]
+    szas: Optional[NP_ARRAY[NP_REAL]] = None
     if args.szas[0] is None:
-        szas = None
-    else:
         szas = np.array(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
-    t0: Optional[NP_INT]
-    if args.t0 is None:
-        t0 = None
-    else:
+    t0: Optional[NP_INT] = None
+    if args.t0 is not None:
         t0 = NP_INT(args.t0[0])
-    tf: Optional[NP_INT]
-    if args.tf is None:
-        tf = None
-    else:
+    tf: Optional[NP_INT] = None
+    if args.tf is not None:
         tf = NP_INT(args.tf[0])
-    times: Optional[NP_ARRAY[NP_INT]]
+    times: Optional[NP_ARRAY[NP_INT]] = None
     if args.times is not None:
         if ((args.times[0] is None) or ((t0 is not None) or (tf is not None))):
             times = None
         else:
             times = np.array(ast.literal_eval(args.times[0]), dtype = NP_INT).flatten()
-    else:
-        times = None
 
     interp_method: str = "linear"
 
@@ -147,14 +139,14 @@ def main(argv):
     rte_rrtmgp_cpp_file_path_root: str = os.path.join(rte_rrtmgp_cpp_dir_path, rte_rrtmgp_cpp_file_name_root)
 
     # Root rank gets original horizontal grid
-    xr_dpscream: Optional[XR_DATASET]
-    sort_mask: Optional[NP_ARRAY[NP_INT]]
-    g_grids: Optional[dict]
+    xr_dpscream: Optional[XR_DATASET] = None
+    sort_mask: Optional[NP_ARRAY[NP_INT]] = None
+    g_grids: Optional[dict] = None
     if l_rank == MPI_ROOT:
         msg: str = "Opening DP-SCREAM file...".format(dpscream_file_path)
         print(msg, flush = True)
 
-        xr_dpscream = xr.open_dataset(dpscream_file_path, engine = "netcdf4")
+        xr_dpscream = xr_open_dataset(dpscream_file_path, engine = "netcdf4")
 
         # Get time-steps
         ntime_dpscream: NP_INT = NP_INT(xr_dpscream.sizes["time"])
@@ -182,11 +174,6 @@ def main(argv):
         for coarse_factor in coarse_factors:
             coarse_factor_str: str = "{:02}".format(coarse_factor)
             g_grids[coarse_factor_str] = coarsen_g_grid(g_grids["01"], coarse_factor)
-    else:
-        xr_dpscream = None
-        sort_mask = None
-        g_grids = None
-        times = None
 
     g_coords: Optional[list] = grids_to_coords(xr_dpscream, g_grids, comm)
 
@@ -260,6 +247,9 @@ def main(argv):
                     for val_key in vals.keys():
                         g_vals[coarse_factor_str][val_key] = vals[val_key]
 
+        if l_rank == MPI_ROOT:
+            msg: str = "Writing RTE_RRTMGP_CPP input...".format(rte_field_key)
+            print(msg, flush = True)
         g_fields: dict = vals_to_fields(g_vals, comm)
         save_rte_rrtmgp_cpp_input(g_coords, g_fields, tt, rte_rrtmgp_cpp_file_path_root, comm, szas)
 

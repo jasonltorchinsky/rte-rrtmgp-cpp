@@ -5,7 +5,7 @@ from typing import Optional
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
     MPI_COMM, MPI_ROOT
 
 def set_unspecified_vals(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM) -> Optional[dict]:
@@ -14,7 +14,7 @@ def set_unspecified_vals(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM)
     """
     l_rank: NP_INT = NP_INT(comm.Get_rank())
 
-    vals_out: Optional[dict]
+    vals_out: Optional[dict] = None
     if l_rank == MPI_ROOT:
         ## Wavelength info
         n_bnd_sw: NP_INT = NP_INT(xr_dpscream.sizes["swband"])
@@ -60,16 +60,14 @@ def set_unspecified_vals(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM)
             )
 
             ## Set quantities not expected to be set in the DP-SCREAM output
-            unexpected_keys: list[str] = ["vmr_ccl4", "vmr_cfc11", "vmr_cfc12",
-                "vmr_cfc22", "vmr_hfc143a", "vmr_hfc125", "vmr_hfc32", "vmr_hfc23",
-                "vmr_hfc134a", "vmr_cf4", "vmr_no2", "aermr01", "aermr02",
-                "aermr03", "aermr04", "aermr05", "aermr06", "aermr07", "aermr08",
-                "aermr09", "aermr10", "aermr11"]
-            
-            unexpected_vals: NP_ARRAY[NP_REAL] = np.zeros((nlay, ny, nx), dtype = NP_REAL)
-            for key in unexpected_keys:
-                vals_out[coarse_str][key] = unexpected_vals
-    else:
-        vals_out = None
+#            unexpected_keys: list[str] = ["vmr_ccl4", "vmr_cfc11", "vmr_cfc12",
+#                "vmr_cfc22", "vmr_hfc143a", "vmr_hfc125", "vmr_hfc32", "vmr_hfc23",
+#                "vmr_hfc134a", "vmr_cf4", "vmr_no2", "aermr01", "aermr02",
+#                "aermr03", "aermr04", "aermr05", "aermr06", "aermr07", "aermr08",
+#                "aermr09", "aermr10", "aermr11"]
+#            
+#            unexpected_vals: NP_ARRAY[NP_REAL] = np.zeros((nlay, ny, nx), dtype = NP_REAL)
+#            for key in unexpected_keys:
+#                vals_out[coarse_str][key] = unexpected_vals
                 
     return vals_out

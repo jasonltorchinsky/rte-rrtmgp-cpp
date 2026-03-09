@@ -6,7 +6,7 @@ import numpy as np
 from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
     g
 

@@ -23,7 +23,7 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET
 from convert_utils import get_sort_mask
 

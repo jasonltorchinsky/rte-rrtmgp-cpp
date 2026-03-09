@@ -4,9 +4,9 @@
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
     MPI_COMM, MPI_ROOT
-from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
+from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
     fields_dimensions, fields_descriptions, fields_units
 
 def set_unspecified_fields(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM) -> dict:

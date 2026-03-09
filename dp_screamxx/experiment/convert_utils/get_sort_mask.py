@@ -4,7 +4,7 @@
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
 
 def get_sort_mask(xr_dpscream: XR_DATASET) -> NP_ARRAY[NP_INT]:
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns

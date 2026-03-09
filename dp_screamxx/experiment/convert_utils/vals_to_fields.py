@@ -4,8 +4,8 @@ from typing import Optional
 # Third-Party Library Imports
 
 # Local Library Imports
-from utils.consts import NP_INT, XR_DATASET, MPI_COMM, MPI_ROOT
-from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
+from consts.consts import NP_INT, XR_DATASET, MPI_COMM, MPI_ROOT
+from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
     fields_dimensions, fields_descriptions, fields_units
 
 def vals_to_fields(g_vals: dict, comm: MPI_COMM) -> Optional[dict]:

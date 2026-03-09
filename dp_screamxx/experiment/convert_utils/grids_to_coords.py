@@ -4,8 +4,8 @@ from typing import Optional
 # Third-Party Library Imports
 
 # Local Library Imports
-from utils.consts import NP_INT, XR_DATASET, MPI_COMM, MPI_ROOT
-from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
+from consts.consts import NP_INT, XR_DATASET, MPI_COMM, MPI_ROOT
+from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
 
 def grids_to_coords(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM) -> Optional[dict]:
     l_rank: NP_INT = NP_INT(comm.Get_rank())

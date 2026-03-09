@@ -4,8 +4,8 @@
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY
-from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY
+from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
 
 def coarsen_coords(coords: dict, coarse_factor: NP_INT) -> dict:
     nx_fine: NP_INT = NP_INT(coords["x"][1].size)

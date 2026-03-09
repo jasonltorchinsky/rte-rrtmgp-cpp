@@ -6,7 +6,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 # Local Library Imports
-from utils.consts import NP_REAL, NP_INT, NP_ARRAY, NP_INF, NP_EPS, NP_LARGE, \
+from consts.consts import NP_REAL, NP_INT, NP_ARRAY, NP_INF, NP_EPS, NP_LARGE, \
     MPL_AXES, MPL_FIGURE
 
 def plot_distribution(data: NP_ARRAY[NP_INT | NP_REAL], file_path: str,

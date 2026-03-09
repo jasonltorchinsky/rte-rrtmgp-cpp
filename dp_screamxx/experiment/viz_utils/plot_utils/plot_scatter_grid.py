@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from matplotlib.collections import PathCollection
 
 # Local Library Imports
-from utils.consts import NP_REAL, NP_INF, NP_LARGE
+from consts.consts import NP_REAL, NP_INF, NP_LARGE
 
 def plot_scatter_grid(xdata_grid: tuple[tuple[tuple[np.ndarray]]],
     ydata_grid: tuple[tuple[tuple[np.ndarray]]], file_path: str, **kwargs):

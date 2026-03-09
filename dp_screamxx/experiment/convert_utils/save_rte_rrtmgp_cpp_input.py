@@ -6,9 +6,9 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET
-from utils.rte_rrtmgp_cpp_fields import fields_dimensions, fields_descriptions, fields_units
+from consts.rte_rrtmgp_cpp_fields import fields_dimensions, fields_descriptions, fields_units
 
 def save_rte_rrtmgp_cpp_input(coords: dict, fields: dict, tt: NP_INT,
     file_path_root: str, comm: MPI_COMM, szas: Optional[NP_ARRAY[NP_REAL]] = None):

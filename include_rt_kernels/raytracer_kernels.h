@@ -9,10 +9,10 @@ using Raytracer_definitions::Optics_scat;
 
 
 #ifdef RTE_USE_SP
-constexpr int rt_kernel_block = 512;
+constexpr int rt_kernel_block = 256;
 constexpr int rt_kernel_grid = 1024;
 #else
-constexpr int rt_kernel_block = 512;
+constexpr int rt_kernel_block = 256;
 constexpr int rt_kernel_grid = 256;
 #endif
 

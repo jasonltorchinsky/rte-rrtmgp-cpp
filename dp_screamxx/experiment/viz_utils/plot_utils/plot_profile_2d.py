@@ -7,7 +7,7 @@ import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, MPL_AXES, MPL_COLORBAR, \
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, MPL_AXES, MPL_COLORBAR, \
     MPL_FIGURE, MPL_CONTOUR
 
 

@@ -4,8 +4,8 @@
 import numpy as np
 
 # Local Library Imports
-from utils.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
-from utils.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
+from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET
+from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
 
 def get_coords_01(xr_dpscream: XR_DATASET, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     ## Construct a sorting mask for reordering "ncol" into x- and y-columns
