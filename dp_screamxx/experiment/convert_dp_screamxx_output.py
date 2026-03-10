@@ -184,18 +184,21 @@ def main(argv):
 
     tt: NP_INT
     for tt in times:
-        g_vals: Optional[dict]
+        g_vals: Optional[dict] = None
         if l_rank == MPI_ROOT:
             msg: str = "Converting time-step {}".format(tt)
             print(msg, flush = True)
+
+            time0: np.datetime64 = xr_dpscream["time"].isel(time = 0).values
+            timett: np.datetime64 = xr_dpscream["time"].isel(time = tt).values
+
+            time: NP_REAL = (timett - time0).astype(NP_REAL) / 3.6e12 # Hours since simulation start, dtime is in ns
 
             g_vals = dict()
             coarse_factor: NP_INT
             for coarse_factor in coarse_factors:
                 coarse_factor_str: str = "{:02}".format(coarse_factor)
-                g_vals[coarse_factor_str] = {}
-        else:
-            g_vals = None
+                g_vals[coarse_factor_str] = {"time" : time}
 
         ## Set unspecified fields
         g_unspecified_vals: dict = set_unspecified_vals(xr_dpscream, g_grids, comm)

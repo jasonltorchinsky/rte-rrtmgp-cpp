@@ -73,6 +73,7 @@ grid_dtypes: dict = {
 }
 
 fields_dimensions: dict = {
+    "time" : (),
     "p_lay" : ("lay", "y", "x"),
     "p_lev" : ("lev", "y", "x"),
     "t_lay" : ("lay", "y", "x"),
@@ -122,6 +123,7 @@ fields_dimensions: dict = {
 }
 
 fields_descriptions: dict = {
+    "time"  : "Time since simulation start",
     "p_lay" : "Pressure - layer midpoints",
     "p_lev" : "Pressure - layer interfaces",
     "t_lay" : "Temperature - layer midpoints",
@@ -171,6 +173,7 @@ fields_descriptions: dict = {
 }
 
 fields_units: dict = {
+    "time"  : "hours",
     "p_lay" : "Pa",
     "p_lev" : "Pa",
     "t_lay" : "K",
@@ -220,6 +223,7 @@ fields_units: dict = {
 }
 
 field_dtypes: dict = {
+    "time"  : NC_REAL,
     "p_lay" : NC_REAL,
     "p_lev" : NC_REAL,
     "t_lay" : NC_REAL,

@@ -10,7 +10,7 @@ from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
 
 def vals_to_fields(g_vals: dict, comm: MPI_COMM) -> Optional[dict]:
     l_rank: NP_INT = NP_INT(comm.Get_rank())
-    g_fields: Optional[dict]
+    g_fields: Optional[dict] = None
     if l_rank == MPI_ROOT:
         g_fields = dict()
         for coarse_str in g_vals.keys():
@@ -26,7 +26,5 @@ def vals_to_fields(g_vals: dict, comm: MPI_COMM) -> Optional[dict]:
                     g_fields[coarse_str][val_key] = \
                         (fields_dimensions[val_key], g_vals[coarse_str][val_key], 
                          dict(description = fields_descriptions[val_key], units = fields_units[val_key]))
-    else:
-        g_fields = None
 
     return g_fields

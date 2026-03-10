@@ -75,7 +75,24 @@ def main():
     l_keys: list[str] = get_l_keys(list(rmsre_convergence_kwargs.keys()), comm)
     for key in l_keys:
         kwargs: dict = rmsre_convergence_kwargs[key]
-        plot_rmsre_convergence(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
+        #plot_rmsre_convergence(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
+
+    rmsre_timeseries_kwargs: dict = {
+        "sfc_up" : {"file_name" : "sfc_up_rmsre_timeseries.png",
+            "title" : r"Upwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        "sfc_dn" : {"file_name" : "sfc_dn_rmsre_timeseries.png",
+            "title" : r"Downwelling Shortwave Surface Flux [$W m^{-2}$]"},
+        "tod_up" : {"file_name" : "tod_up_rmsre_timeseries.png",
+            "title" : r"Upwelling Shortwave Top-of-Domain Flux [$W m^{-2}$]"},
+        "flux_abs" : {"file_name" : "flux_abs_rmsre_timeseries.png",
+            "title" : r"Absorbed Shortwave Flux [$W m^{-3}$]",
+            "zmax" : 16000} # [m]
+    }
+    
+    l_keys: list[str] = get_l_keys(list(rmsre_timeseries_kwargs.keys()), comm)
+    for key in l_keys:
+        kwargs: dict = rmsre_timeseries_kwargs[key]
+        plot_rmsre_timeseries(rte_indir_path, rte_outdir_path, plot_outdir_path, key, kwargs)
 
 def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
     plot_outdir_path: str, key: str, kwargs: dict):
@@ -176,6 +193,122 @@ def plot_rmsre_convergence(rte_indir_path: str, rte_outdir_path: str,
 
     coord: NP_ARRAY[NP_REAL] = szas_list[0]
     profiles: list[NP_ARRAY[NP_REAL]] = rmsres_list
+    file_path: str = os.path.join(plot_outdir_path, kwargs["file_name"])
+    title: str = kwargs["title"]
+    xlabel: str = "Solar Zenith Angle"
+    ylabel: str = "Root-Mean-Square Relative Error"
+    yscale: str = "log"
+    coord_axis: str = "x"
+
+    plot_profiles_1d(coord, profiles, file_path, title = title,
+        profile_labels = profile_labels, xlabel = xlabel, ylabel = ylabel,
+        yscale = yscale, coord_axis = coord_axis)
+
+def plot_rmsre_timeseries(rte_indir_path: str, rte_outdir_path: str,
+    plot_outdir_path: str, key: str, kwargs: dict):
+    
+    file_ext: re.Pattern = re.compile(".in.nc")
+    file_names: list[str] = sorted([file_ext.sub("", file_name) for file_name in os.listdir(rte_indir_path)])
+
+    # Group time-series (tseries) by resolution
+    res_ext: re.Pattern = re.compile(".lr_..")
+    tseries_files_dict: dict = {}
+    for file_name in file_names:
+        res_match: Optional[re.Match] = res_ext.search(file_name)
+
+        res_str: str
+        if res_match is None:
+            res_str = "base"
+        else:
+            res_str = res_match.group()
+
+        if res_str in tseries_files_dict.keys():
+            tseries_files_dict[res_str] += [file_name]
+        else:
+            tseries_files_dict[res_str] = [file_name]
+
+    tstep_list: list[NP_ARRAY[NP_INT]] = [] # Time-step for each file
+    sza_list: list[NP_ARRAY[NP_INT]] = [] # SZA for each file
+    rmsre_list: list[NP_ARRAY[NP_REAL]] = [] # RMSRE for each tseries
+
+    profile_labels: list[str] = []
+
+    res_str: str
+    tseries_files: list[str]
+    for res_str, tseries_files in tseries_files_dict.items():
+        nt: int = len(tseries_files)
+
+        # Set to negative values so we can filter them out later in case something goes wrong
+        xvals: NP_ARRAY[NP_REAL] = np.zeros(nt, dtype = NP_REAL) - 1. # SZAs 
+        yvals: NP_ARRAY[NP_REAL] = np.zeros(nt, dtype = NP_REAL) - 1. # RSMREs
+
+        # Get horizontal resolution for profile label
+        infile_name: str = tseries_files[0] + ".in.nc"
+        infile_path: str = os.path.join(rte_indir_path, infile_name)
+        xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
+            engine = "netcdf4", decode_timedelta = False)
+
+        xh: NP_ARRAY[NP_REAL] = xr_rte_in["xh"].values.astype(NP_REAL) # Column interfaces - x-dimension [m]; (nx + 1)
+        dx: NP_REAL = xh[1] - xh[0] # Horizontal resolution [m]; ASSUME SAME IN x- AND y-
+        profile_label: str
+        if dx < NP_REAL(1000.0):
+            profile_label = r"{:0.0f} $m$".format(dx)
+        else:
+            profile_label = r"{:0.2f} $km$".format(dx / 1000.)
+        profile_labels += [profile_label]
+
+        for ii in range(0, nt):
+            file_name: str = tseries_files[ii]
+            infile_name: str = file_name + ".in.nc"
+            outfile_name: str = file_name + ".out.nc"
+
+            infile_path: str = os.path.join(rte_indir_path, infile_name)
+            outfile_path: str = os.path.join(rte_outdir_path, outfile_name)
+
+            if (os.path.isfile(infile_path) and os.path.isfile(outfile_path)):
+                xr_rte_in: XR_DATASET = xr.open_dataset(infile_path,
+                    engine = "netcdf4", decode_timedelta = False)
+                xr_rte_out: XR_DATASET = xr.open_dataset(outfile_path,
+                    engine = "netcdf4", decode_timedelta = False)
+
+                if key == "flux_abs":
+                    z_lev: NP_ARRAY[NP_REAL] = xr_rte_in["z_lev"].values.astype(NP_REAL) # Level altitude - z-dimension [m]; (n_lay_z)
+                    zmax_idx: NP_INT = NP_INT(np.sum(z_lev <= kwargs["zmax"]))
+
+                    # Two-Stream
+                    ts_flux_dn: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_dn"].values.astype(NP_REAL) # (z_lev, y, x); [W m^(-2)]
+                    ts_flux_up: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].values.astype(NP_REAL) # (z_lev, y, x); [W m^(-2)]
+                    ts_field: NP_ARRAY[NP_REAL] = ((ts_flux_dn[1:] + ts_flux_up[:-1]) - (ts_flux_dn[:-1] + ts_flux_up[1:])) / np.expand_dims(z_lev[1:] - z_lev[:-1], [1, 2]) # (z_lay, y, x); [W m^(-3)]
+
+                    # Ray-Tracer
+                    rt_flux_abs_dif: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_abs_dif"].values.astype(NP_REAL) # (z_lay, y, x); [W m^(-3)]
+                    rt_flux_abs_dir: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_abs_dir"].values.astype(NP_REAL) # (z_lay, y, x); [W m^(-3)]
+                    rt_field: NP_ARRAY[NP_REAL] = rt_flux_abs_dif + rt_flux_abs_dir
+
+                    ts_field = ts_field[:zmax_idx,...]
+                    rt_field = rt_field[:zmax_idx,...]
+
+                elif key == "sfc_up":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].isel(lev = 0).values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_up"].values.astype(NP_REAL) # (ny, nx)
+                elif key == "sfc_dn":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_dn"].isel(lev = 0).values.astype(NP_REAL) # (ny, nx)
+                    rt_flux_sfc_dir: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_dir"].values.astype(NP_REAL) # (ny, nx)
+                    rt_flux_sfc_dif: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_sfc_dif"].values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = rt_flux_sfc_dir + rt_flux_sfc_dif
+                elif key == "tod_up":
+                    ts_field: NP_ARRAY[NP_REAL] = xr_rte_out["sw_flux_up"].isel(lev = -1).values.astype(NP_REAL) # (ny, nx)
+                    rt_field: NP_ARRAY[NP_REAL] = xr_rte_out["rt_flux_tod_up"].values.astype(NP_REAL) # (ny, nx)
+
+                xvals[ii] = np.rad2deg(np.nanmean(np.arccos(xr_rte_in["mu0"].values.astype(NP_REAL)))) ## ASSUME: Uniform SZA
+                yvals[ii] = np.sqrt(np.nanmean(np.pow(rt_field - ts_field, 2) / np.nanmean(np.pow(rt_field, 2))))
+        breakpoint()
+
+        xvals_list += [xvals[xvals >= 0.]]
+        yvals_list += [yvals[xvals >= 0.]]
+
+    coord: NP_ARRAY[NP_REAL] = xvals_list[0]
+    profiles: list[NP_ARRAY[NP_REAL]] = yvals_list
     file_path: str = os.path.join(plot_outdir_path, kwargs["file_name"])
     title: str = kwargs["title"]
     xlabel: str = "Solar Zenith Angle"
