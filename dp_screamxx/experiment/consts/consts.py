@@ -40,6 +40,7 @@ from netCDF4._netCDF4 import Variable as NC_VARIABLE
 from numpy import ndarray as NP_ARRAY
 NP_DATETIME = np.dtype('datetime64[ns]')
 from xarray.core.dataset import Dataset as XR_DATASET
+from xarray.core.dataarray import DataArray as XR_DATAARRAY
 
 # Numeric constants
 NP_EPS: NP_REAL = np.finfo(NP_REAL).resolution

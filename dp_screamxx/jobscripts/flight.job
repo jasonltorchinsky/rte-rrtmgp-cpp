@@ -3,60 +3,57 @@
 #SBATCH --time=00:01:00
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=1
-#SBATCH --gres=gpu:1
-#SBATCH --constraint=gpu
-#SBATCH --qos=regular
+#SBATCH --account=fy260144
+#SBATCH --reservation=flight-cldera
 #SBATCH --job-name=dp_screamxx
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
-nvidia-smi
-
 # Machine-specific DP-SCREAMXX directories
-DP_SCREAMXX_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
-DP_SCREAMXX_RUN_NAME=scream_dpxx_COMBLE_400x400
-DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
-DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
+#DP_SCREAMXX_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
+#DP_SCREAMXX_RUN_NAME=scream_dpxx_COMBLE_400x400
+#DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
+#DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
+#DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
 
 # Machine-specific RTE-RRTMGP-CPP I/O directories
-RTE_RRTMGP_CPP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
-RTE_RRTMGP_CPP_RUN_NAME=t_070_074
-RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
-RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
-RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
-RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
-RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
-RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
-RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_FILE_BASE}
+#RTE_RRTMGP_CPP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
+#RTE_RRTMGP_CPP_RUN_NAME=t_070_074
+#RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
+#RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
+#RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
+#RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
+#RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
+#RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
+#RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_FILE_BASE}
 
-mkdir -p ${RTE_RRTMGP_CPP_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_OUTPUT_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
+#mkdir -p ${RTE_RRTMGP_CPP_DIR}
+#mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
+#mkdir -p ${RTE_RRTMGP_CPP_OUTPUT_DIR}
+#mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
 
 # RTE-RRTMGP-CPP directories
-RTE_RRTMGP_CPP_DIR=../.. # Source directory
-RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
-RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
-RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
-DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
-EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
-EXPERIMENT_VIZ_DIR=${EXPERIMENT_DIR}/viz_utils
+#RTE_RRTMGP_CPP_DIR=../.. # Source directory
+#RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
+#RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
+#RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
+#DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
+#EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
+#EXPERIMENT_VIZ_DIR=${EXPERIMENT_DIR}/viz_utils
 
 # Link RRTMGP files
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
-ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
+#ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
 
 # Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[0, 10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85]"
-COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
-TIMES_PYTHON="[60]"
-T0_PYTHON=70
-TF_PYTHON=74
+#SZAS_PYTHON="[0, 10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85]"
+#COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
+#TIMES_PYTHON="[60]"
+#T0_PYTHON=70
+#TF_PYTHON=74
 
 #python ${EXPERIMENT_VIZ_DIR}/animate_dp_screamxx_output.py \
 #    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \

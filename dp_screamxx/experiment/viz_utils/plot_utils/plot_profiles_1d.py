@@ -42,12 +42,12 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
     ## Implement pre-loop arguments
     if kwargs["coord_axis"].lower() == "x":
         x_data: np.ndarray = coord
-        x_min: np.float64 = np.min([x_min, x_data.min()])
-        x_max: np.float64 = np.max([x_max, x_data.max()])
+        x_min: np.float64 = np.nanmin([x_min, np.nanmin(x_data)])
+        x_max: np.float64 = np.nanmax([x_max, np.nanmax(x_data)])
     elif kwargs["coord_axis"].lower() == "y":
         y_data: np.ndarray = coord
-        y_min: np.float64 = np.min([y_min, y_data.min()])
-        y_max: np.float64 = np.max([y_max, y_data.max()])
+        y_min: np.float64 = np.nanmin([y_min, np.nanmin(y_data)])
+        y_max: np.float64 = np.nanmax([y_max, np.nanmax(y_data)])
 
     ## Set up the figure
     fig, ax = plt.subplots(layout = "constrained")
@@ -69,12 +69,12 @@ def plot_profiles_1d(coord: np.ndarray, profiles: list, file_path: str, **kwargs
 
         if kwargs["coord_axis"].lower() == "x":
             y_data: np.ndarray = profile
-            y_min: np.float64 = np.min([y_min, y_data.min()])
-            y_max: np.float64 = np.max([y_max, y_data.max()])
+            y_min: np.float64 = np.nanmin([y_min, np.nanmin(y_data)])
+            y_max: np.float64 = np.nanmax([y_max, np.nanmax(y_data)])
         elif kwargs["coord_axis"].lower() == "y":
             x_data: np.ndarray = profile
-            x_min: np.float64 = np.min([x_min, x_data.min()])
-            x_max: np.float64 = np.max([x_max, x_data.max()])
+            x_min: np.float64 = np.nanmin([x_min, np.nanmin(x_data)])
+            x_max: np.float64 = np.nanmax([x_max, np.nanmax(x_data)])
 
         ax.plot(x_data, y_data, color = colors[idx%ncolors], linestyle = linestyles[idx%nlinestyles],
                 label = label, drawstyle = kwargs["draw_style"])

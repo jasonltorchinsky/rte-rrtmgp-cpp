@@ -43,7 +43,7 @@ def save_rte_rrtmgp_cpp_input(coords: dict, fields: dict, tt: NP_INT,
                 file_path: str = file_path_root + time_str + lr_str + ".in.nc"
 
                 write_rte_input(coords, fields, coarse_factor_str, file_path)
-                    
+
 def write_rte_input(coords: dict, fields: dict, coarse_factor_str: str,
     file_path: str):
 
