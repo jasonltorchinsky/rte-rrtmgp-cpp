@@ -302,7 +302,6 @@ def plot_rmsre_timeseries(rte_indir_path: str, rte_outdir_path: str,
 
                 xvals[ii] = np.rad2deg(np.nanmean(np.arccos(xr_rte_in["mu0"].values.astype(NP_REAL)))) ## ASSUME: Uniform SZA
                 yvals[ii] = np.sqrt(np.nanmean(np.pow(rt_field - ts_field, 2) / np.nanmean(np.pow(rt_field, 2))))
-        breakpoint()
 
         xvals_list += [xvals[xvals >= 0.]]
         yvals_list += [yvals[xvals >= 0.]]

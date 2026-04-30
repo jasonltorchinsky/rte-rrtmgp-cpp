@@ -26,8 +26,8 @@ from convert_utils import get_sort_mask
 
 
 # Script variables
-prog_name: str = "visualize_dpscream_output"
-prog_desc: str = "Visualizes DP-SCREAM output."
+prog_name: str = "visualize_rte_rrtmgp_cpp_output"
+prog_desc: str = "Visualizes RTE-RRTMGP-CPP+RT output."
 
 def main(argv):
     # MPI Communicator info
@@ -40,12 +40,20 @@ def main(argv):
         description = prog_desc
     )
     
-    parser.add_argument("--dpscream_file_path",
+    parser.add_argument("--rte_rrtmgp_cpp_input_file_path",
         action = "store",
         nargs = 1,
         type = str,
         required = True,
-        help = "Path to DP-SCREAM output."
+        help = "Path to RTE-RRTMGP-CPP input."
+    )
+
+    parser.add_argument("--rte_rrtmgp_cpp_output_file_path",
+        action = "store",
+        nargs = 1,
+        type = str,
+        required = True,
+        help = "Path to RTE-RRTMGP-CPP output."
     )
 
     parser.add_argument("--rte_rrtmgp_cpp_viz_dir_path",
@@ -59,21 +67,18 @@ def main(argv):
     
     args: argparse.Namespace = parser.parse_args()
 
-    dpscream_file_path: str = os.path.normpath(args.dpscream_file_path[0])
-    plot_outdir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_viz_dir_path[0])
+    rte_rrtmgp_cpp_input_file_path: str = os.path.normpath(args.rte_rrtmgp_cpp_input_file_path[0])
+    rte_rrtmgp_cpp_output_file_path: str = os.path.normpath(args.rte_rrtmgp_cpp_output_file_path[0])
+    rte_rrtmgp_cpp_viz_dir_path: str = os.path.normpath(args.rte_rrtmgp_cpp_viz_dir_path[0])
 
     file_ext: re.Pattern = re.compile("\\.nc")
-    file_name_root: str = file_ext.sub("", os.path.basename(dpscream_file_path))
+    file_name_root: str = file_ext.sub("", os.path.basename(rte_rrtmgp_cpp_input_file_path))
 
-    xr_dpscream: XR_DATASET = xr.open_dataset(dpscream_file_path, engine = "netcdf4")
-    sort_mask: NP_ARRAY[NP_INT] = get_sort_mask(xr_dpscream)
+    xr_rte_rrtmgp_cpp_input: XR_DATASET = xr.open_dataset(rte_rrtmgp_cpp_input_file_path, engine = "netcdf4")
+    xr_rte_rrtmgp_cpp_output: XR_DATASET = xr.open_dataset(rte_rrtmgp_cpp_output_file_path, engine = "netcdf4")
 
     # Recover hours since simulation start
-    time: NP_ARRAY[np.datetime64] = xr_dpscream["time"].values
-    time: NP_ARRAY[NP_REAL] = (time - time[0]).astype(NP_REAL) / 3.6e12 # Hours since simulation start, dtime is in ns
-
-    # Recover time-step numbers
-    t: NP_ARRAY[NP_INT] = np.arange(time.size, dtype = NP_INT)
+    time: NP_ARRAY[np.datetime64] = xr_rte_rrtmgp_cpp_input["time"].values.astype(NP_REAL) # Hours since simulation start
 
     # Recover SZAs
     cosine_solar_zenith_angle: NP_ARRAY[NP_REAL] = \

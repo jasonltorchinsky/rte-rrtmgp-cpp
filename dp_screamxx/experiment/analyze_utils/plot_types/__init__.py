@@ -13,6 +13,8 @@ if src_dir not in sys.path:
 
 # Import from source files
 from .plot_distribution import plot_distribution
+from .plot_distributions import plot_distributions
+from .plot_ecdfs import plot_ecdfs
 from .plot_profiles_1d import plot_profiles_1d
 from .plot_profiles_1d_grid import plot_profiles_1d_grid
 from .plot_profile_2d import plot_profile_2d

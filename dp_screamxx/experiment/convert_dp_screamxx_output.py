@@ -143,7 +143,7 @@ def main(argv):
     sort_mask: Optional[NP_ARRAY[NP_INT]] = None
     g_grids: Optional[dict] = None
     if l_rank == MPI_ROOT:
-        msg: str = "Opening DP-SCREAM file...".format(dpscream_file_path)
+        msg: str = "Opening DP-SCREAM file: {}...".format(dpscream_file_path)
         print(msg, flush = True)
 
         xr_dpscream = xr_open_dataset(dpscream_file_path, engine = "netcdf4")

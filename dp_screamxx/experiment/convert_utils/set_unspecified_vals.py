@@ -38,12 +38,12 @@ def set_unspecified_vals(xr_dpscream: XR_DATASET, g_grids: dict, comm: MPI_COMM)
                 np.ones((ny, nx, n_bnd_lw), dtype = NP_REAL)
             
             sfc_alb_dir: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07 
+                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
             sfc_alb_dif: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
 
             tsi: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx), dtype = NP_REAL) * 551.58
+                np.ones((ny, nx), dtype = NP_REAL) * 1361.841
 
             azi: NP_ARRAY[NP_REAL] = \
                 np.ones((ny, nx), dtype = NP_REAL) * 0.0 

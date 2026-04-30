@@ -90,60 +90,85 @@ def main(argv):
     ny: NP_INT = NP_INT(y.size) # No. columns in y
 
     # Extract field
-    field_key: str = "LW_flux_up_at_model_top"
-    field_str: str = "olr"
-    title_str: str = r"ToA Outgoing Longwave Radiation [$W\,m^{-2}$]"
-    field: NP_ARRAY[NP_REAL] = \
-        xr_dpscream[field_key].isel(time = slice(1, None), ncol = sort_mask).values.astype(NP_REAL)
-    field = field.reshape(nt, nx, ny)
-
-    # Set up plot
-    fig, ax = plt.subplots(figsize = (6.4, 4.8), dpi = 150)
-
-    levels = MaxNLocator(nbins = 64).tick_values(field.min(), field.max())
-    cmap = plt.colormaps["Blues"]
-    norm = BoundaryNorm(levels, ncolors = cmap.N, clip = True)
-
-    mesh = ax.pcolormesh(XX, YY, field[0,...], shading = "flat", 
-        cmap = cmap, norm = norm)
-    fig.colorbar(mesh, ax = ax)
-    ax.set_title(title_str)
-    ax.set_xlabel(r"$x$ [$km$]")
-    ax.set_ylabel(r"$y$ [$km$]")
-    frame_text = ax.text(
-        0.02, 0.98, "t_step = 0",
-        transform = ax.transAxes,   # axes-relative coordinates
-        ha = "left",
-        va = "top",
-        fontsize = 12,
-        bbox = dict(facecolor = "white", alpha = 0.8, edgecolor = "black")
-    )
-
-    def update(frame):
-        """
-        This function gets called for each frame of the animation.
-        It updates the pcolormesh data.
-        """
-        # Evolve Z with frame index
-        Z_new = field[frame + 1,...]
-
-        # Update the mesh array
-        mesh.set_array(Z_new.ravel())
-
-        frame_text.set_text("t_step = {}".format(frame + 1))
-
-        return [mesh]
-
-    ani = FuncAnimation(
-        fig,
-        update,
-        frames = nt - 1,
-        blit = False
-    )
-
-    animation_file_name: str = animation_file_name_root + "_" + field_str + ".gif"
-    animation_file_path: str = os.path.join(plot_outdir_path, animation_file_name)
-    ani.save(animation_file_path, writer = PillowWriter(fps = 20))
+    field_str: str
+    field_key: str
+    title_str: str
+    for field_str in ["clt_max", "clt_ran", "clt_min"]:
+        if field_str == "olr":
+            field_key = "LW_flux_up_at_model_top"
+            title_str = r"ToA Outgoing Longwave Radiation [$W\,m^{-2}$]"
+    
+            cmap = plt.colormaps["Blues"]
+        
+            field: XR_DATAARRAY = \
+                xr_dpscream[field_key].isel(time = slice(1, None), ncol = sort_mask)
+        elif field_str in ["clt_max", "clt_ran", "clt_min"]:
+            field_key = "cldfrac_tot"
+    
+            cmap = plt.colormaps["Blues_r"]
+    
+            field: XR_DATAARRAY = \
+                xr_dpscream[field_key].isel(time = slice(1, None), ncol = sort_mask)
+    
+            if field_str == "clt_max":
+                title_str = r"Cloud Cover - Maximum Overlap"
+                field = field.max(dim = "lev")
+            elif field_str == "clt_min":
+                title_str = r"Cloud Cover - Minimum Overlap"
+                field = (field.sum(dim = "lev")).clip(max = 1.0)
+            else: # field_str == "clt_ran"
+                title_str = r"Cloud Cover - Random Overlap"
+                field = 1.0 - (1.0 - field).prod(dim = "lev")
+            
+        field: NP_ARRAY[NP_REAL] = field.values.astype(NP_REAL, copy = False)
+        field = field.reshape(nt, nx, ny)
+    
+        # Set up plot
+        fig, ax = plt.subplots(figsize = (6.4, 4.8), dpi = 150)
+    
+        levels = MaxNLocator(nbins = 64).tick_values(field.min(), field.max())
+        norm = BoundaryNorm(levels, ncolors = cmap.N, clip = True)
+    
+        mesh = ax.pcolormesh(XX, YY, field[0,...], shading = "flat", 
+            cmap = cmap, norm = norm)
+        fig.colorbar(mesh, ax = ax)
+        ax.set_title(title_str)
+        ax.set_xlabel(r"$x$ [$km$]")
+        ax.set_ylabel(r"$y$ [$km$]")
+        frame_text = ax.text(
+            0.02, 0.98, "t_step = 0",
+            transform = ax.transAxes,   # axes-relative coordinates
+            ha = "left",
+            va = "top",
+            fontsize = 12,
+            bbox = dict(facecolor = "white", alpha = 0.8, edgecolor = "black")
+        )
+    
+        def update(frame):
+            """
+            This function gets called for each frame of the animation.
+            It updates the pcolormesh data.
+            """
+            # Evolve Z with frame index
+            Z_new = field[frame + 1,...]
+    
+            # Update the mesh array
+            mesh.set_array(Z_new.ravel())
+    
+            frame_text.set_text("t_step = {}".format(frame + 1))
+    
+            return [mesh]
+    
+        ani = FuncAnimation(
+            fig,
+            update,
+            frames = nt - 1,
+            blit = False
+        )
+    
+        animation_file_name: str = animation_file_name_root + "_" + field_str + ".gif"
+        animation_file_path: str = os.path.join(plot_outdir_path, animation_file_name)
+        ani.save(animation_file_path, writer = PillowWriter(fps = 20))
 
 if __name__ == "__main__":
     main(sys.argv)
