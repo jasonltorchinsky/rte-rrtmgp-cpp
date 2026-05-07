@@ -103,6 +103,15 @@ def main(argv):
         default = None,
         help = "Time indexes to create RTE-RRTMGP-CPP input for [overwritten by t0, tf]."
     )
+
+    parser.add_argument("--include_night",
+        action = "store",
+        nargs = "?",
+        type = bool,
+        required = False,
+        default = False,
+        help = "Include times when the sun is not present."
+    )
     
     args: argparse.Namespace = parser.parse_args()
 
@@ -117,7 +126,7 @@ def main(argv):
             coarse_factors = np.append(coarse_factors, NP_INT(1))
     coarse_factors = np.sort(coarse_factors)
     szas: Optional[NP_ARRAY[NP_REAL]] = None
-    if args.szas[0] is None:
+    if args.szas is not None:
         szas = np.array(ast.literal_eval(args.szas[0]), dtype = NP_REAL).flatten()
     t0: Optional[NP_INT] = None
     if args.t0 is not None:
@@ -131,6 +140,7 @@ def main(argv):
             times = None
         else:
             times = np.array(ast.literal_eval(args.times[0]), dtype = NP_INT).flatten()
+    include_night: bool = args.include_night
 
     interp_method: str = "linear"
 
@@ -165,6 +175,12 @@ def main(argv):
             times = np.sort(times % ntime_dpscream)
         else:
             times = np.arange(t0, tf + 1, dtype = NP_INT)
+
+        ## Filter out night-time time-steps
+        if not include_night:
+            cosine_solar_zenith_angle: XR_DATAARRAY = xr_dpscream["cosine_solar_zenith_angle"].mean(dim = "ncol")
+            day_mask: XR_DATARRAY = (cosine_solar_zenith_angle > 0)
+            times = times[day_mask]
 
         sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(xr_dpscream)
         g_grids = {}

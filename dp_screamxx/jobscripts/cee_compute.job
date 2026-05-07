@@ -31,7 +31,7 @@ RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
 RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
 DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
 EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
-EXPERIMENT_VIZ_DIR=${EXPERIMENT_DIR}/analyze_utils
+EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
 # Link RRTMGP files
 ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
@@ -43,65 +43,27 @@ ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
 # Set SZAs, times, and coarsening factors
 SZAS_PYTHON="[]"
 COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
-TIMES_PYTHON="[]"
-T0_PYTHON=30
-TF_PYTHON=-1
 
-#STAGE_NAME="DP-SCREAM Visualization"
-#echo "Beginning ${STAGE_NAME}..."
-#python ${EXPERIMENT_VIZ_DIR}/animate_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-#
-#python ${EXPERIMENT_VIZ_DIR}/visualize_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-#echo "${STAGE_NAME} complete!"
+echo "RTE_RRTMGP_CPP_INPUT_DIR: ${RTE_RRTMGP_CPP_INPUT_DIR}"
+echo "RTE_RRTMGP_CPP_OUTPUT_DIR: ${RTE_RRTMGP_CPP_OUTPUT_DIR}"
+echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
 
+#-------------------------------------------------------------------------------
 #STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
 #echo "Beginning ${STAGE_NAME}..."
-##mpirun -np 256 
-#python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
+
+#mpirun -np 256 \
+#  python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
 #    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
 #    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --coarse_factors "${COARSE_FACTORS_PYTHON}" \
-#    --szas "${SZAS_PYTHON}" \
-#    --t0 "${T0_PYTHON}" --tf "${TF_PYTHON}"
-#    #--times "${TIMES_PYTHON}"
-#echo "${STAGE_NAME} complete!"
-    
+#    --coarse_factors "${COARSE_FACTORS_PYTHON}"
 
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
 #STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
 #echo "Beginning ${STAGE_NAME}..."
-#for FILE_NAME in ${RTE_RRTMGP_CPP_INPUT_DIR}/*;
-#do
-#    RTE_RRTMGP_CPP_OUTPUT_FILE_PATH=${RTE_RRTMGP_CPP_OUTPUT_DIR}/$(basename ${FILE_NAME} .in.nc).out.nc 
-#    if [ ! -f ${RTE_RRTMGP_CPP_OUTPUT_FILE_PATH} ]; then
-#        echo "Generating output for ${FILE_NAME}..."
-#        ln -sf ${FILE_NAME} rte_rrtmgp_input.nc
-## Run RTE-RRTMGP-CPP
-## Flags:
-## --shortwave          DEFAULT[true]  : Enable computation of shortwave radiation.
-## --longwave           DEFAULT[false] : Enable computation of longwave radiation.
-## --fluxes             DEFAULT[true]  : Enable computation of fluxes.
-## --two-stream         DEFAULT[true]  : Run two-stream solver to obtain 1D fluxes.
-## --raytracing         DEFAULT[32]    : Ray tracer rays-per pixel. '--raytracing False' to turn off.
-## --independent-column DEFAULT[false] : Run ray tracer in independent column mode.
-## --cloud-optics       DEFAULT[false] : Enable cloud optics (both liquid and ice).
-## --liq-cloud-optics   DEFAULT[false] : Liquid only cloud optics.
-## --ice-cloud-optics   DEFAULT[false] : Ice only cloud optics.
-## --cloud-mie          DEFAULT[false] : Use Mie tables for cloud scattering in ray tracer.
-## --aerosol-optics     DEFAULT[false] : Enable aerosol optics.
-## --single-gpt         DEFAULT[false] : Output optical properties and fluxes for a single g-point. '--single-gpt 100': output 100th g-point.
-## --profiling          DEFAULT[false] : Perform additional profiling run.
-## --delta-cloud        DEFAULT[false] : Delta-scaling of cloud optical properties.
-## --delta-aerosol      DEFAULT[false] : Delta-scaling of aerosol optical properties.
-## --tica               DEFAULT[false] : Attenuate path when doing an overhead 1D calculation of tilted input.
-#        ${RTE_RRTMGP_CPP_BUILD_DIR}/test_rte_rrtmgp_rt_gpu --cloud-optics --raytracing 128
-#        mv rte_rrtmgp_output.nc ${RTE_RRTMGP_CPP_OUTPUT_FILE_PATH}
-#    fi
-#done
-#echo "${STAGE_NAME} complete!"
 
 #python run_rte_rrtmgp_cpp_timeslices_multi_gpu.py \
 #  --rte-rrtmgp-cpp-input-dir ${RTE_RRTMGP_CPP_INPUT_DIR} \
@@ -111,21 +73,35 @@ TF_PYTHON=-1
 #  --rte-data-dir ${RTE_DATA_DIR} \
 #  --work-dir ${RTE_RRTMGP_CPP_INPUT_DIR}/.rte_rrtmgp_work \
 #  --raytracing 16384 \
-#  --gpus "[0,1,2,3,4,5,6,7,8,9,10,11,12]" #\
-#  #--lr 01
+#  --gpus "[3,4,5,6,7,8,9,10,11,12,13,14,15]" \
+#  --lr 01
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#STAGE_NAME="DP-SCREAM Visualization"
+#echo "Beginning ${STAGE_NAME}..."
+#python ${EXPERIMENT_ANALYZE_DIR}/animate_dp_screamxx_output.py \
+#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+#
+#python ${EXPERIMENT_ANALYZE_DIR}/visualize_dp_screamxx_output.py \
+#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+#echo "${STAGE_NAME} complete!"
 
 #STAGE_NAME="Input Visualization"
 #echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_input.py \
+#mpirun -np 8 python ${EXPERIMENT_ANALYZE_DIR}/plot_input.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
 
-#mpirun -np 32 python ${EXPERIMENT_VIZ_DIR}/plot_olr.py \
+#mpirun -np 32 python ${EXPERIMENT_ANALYZE_DIR}/plot_olr.py \
 #    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
 #    --distribution-visualization ribbons
 
-#python ${EXPERIMENT_VIZ_DIR}/plot_sza.py \
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
 
@@ -133,7 +109,7 @@ TF_PYTHON=-1
 
 #STAGE_NAME="Output Visualization"
 #echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_output.py \
+#mpirun -np 8 python ${EXPERIMENT_ANALYZE_DIR}/plot_output.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
@@ -141,50 +117,81 @@ TF_PYTHON=-1
 
 #STAGE_NAME="Comparison Visualization"
 #echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_comparison.py \
+#mpirun -np 8 python ${EXPERIMENT_ANALYZE_DIR}/plot_comparison.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
 
-#mpirun -np 16 python ${EXPERIMENT_VIZ_DIR}/plot_radiative_differences.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_differences \
-#    --zmax 16 #\
-#    #--lr 64
-
-#mpirun -np 32 python ${EXPERIMENT_VIZ_DIR}/plot_error.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/error \
-#    --error-type rmse,mae,mbe \
-#    --zmax 16 #\
-#    #--lr 64
-
-#mpirun -np 16 python ${EXPERIMENT_VIZ_DIR}/plot_flux_abs.py \
+#mpirun -np 16 python ${EXPERIMENT_ANALYZE_DIR}/plot_flux_abs.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/flux_abs \
 #    --zmax 16 #\
 #    #--lr 64
 
-mpirun -np 32 python ${EXPERIMENT_VIZ_DIR}/plot_atm_heating.py \
-    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
-    --zmax 16 --detailed-calc #\
-    #--lr 64
-
-#mpirun -np 16 python ${EXPERIMENT_VIZ_DIR}/plot_dn_sfc_flux.py \
+#mpirun -np 16 python ${EXPERIMENT_ANALYZE_DIR}/plot_dn_sfc_flux.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/dn_sfc_flux #\
 #    #--lr 64
 
-mpirun -np 32 python ${EXPERIMENT_VIZ_DIR}/plot_sfc_heating.py \
-    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
-    --case GATEIII #\
-    #--lr 04
 #echo "${STAGE_NAME} complete!"
+
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "Atmospheric Heating Rates:"
+#mpirun -np 32 \
+#   python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
+#    --zmax 16 \
+#    --lr 64
+
+#echo "Surface Heating Rates:"
+#mpirun -np 32 \
+#  python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
+#    --case GATEIII \
+#    --lr 64
+
+python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating_new.py \
+  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
+  --case GATEIII \
+  --lr 64
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT ANALYSIS VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "Error:"
+#mpirun -np 32 \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_error.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/error \
+#    --error-type rmse,mae,mbe \
+#    --zmax 16 \
+#    --lr 32,64
+
+#echo "Radiative Differences:"
+#mpirun -np 32 \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_radiative_differences.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_differences \
+#    --distribution-visualization ribbons \
+#    --zmax 16 \
+#    --lr 64
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------

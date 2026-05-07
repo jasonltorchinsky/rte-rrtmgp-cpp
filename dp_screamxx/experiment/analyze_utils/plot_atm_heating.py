@@ -155,7 +155,7 @@ def local_minmax(arr):
     return float(np.nanmin(arr)), float(np.nanmax(arr))
 
 
-def gather_x_slices(local_slices, comm):
+def gather_y_slices(local_slices, comm):
     rank = comm.Get_rank()
     gathered = comm.gather(local_slices, root=0)
     if rank != 0:
@@ -176,7 +176,7 @@ def get_first_dim_name(da, candidates):
     raise ValueError(f"None of candidate dims {candidates} found in {da.dims}")
 
 
-def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, y_mid, i0, i1, ilay_max):
+def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, x_mid, j0, j1, ilay_max):
     """
     Compute mixture gas constant R_mix [J kg-1 K-1] and cp_mix [J kg-1 K-1]
     from volume mixing ratios (mole fractions) using:
@@ -185,11 +185,10 @@ def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, y_mid, i0, i1, ilay_ma
       w_i    = x_i M_i / sum_j(x_j M_j)
       cp_mix = sum_i w_i cp_i
 
-    Returns arrays of shape (lay, x_local).
+    Returns arrays of shape (lay, y_local).
     """
     Ru = 8.314462618  # J mol-1 K-1
 
-    # Molecular weights [kg/mol]
     M = {
         "vmr_n2":  28.0134e-3,
         "vmr_o2":  31.9988e-3,
@@ -201,7 +200,6 @@ def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, y_mid, i0, i1, ilay_ma
         "vmr_o3":  47.9982e-3,
     }
 
-    # Approximate mass-specific cp [J/kg/K]
     cp_i = {
         "vmr_n2":  1039.0,
         "vmr_o2":   918.0,
@@ -218,7 +216,7 @@ def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, y_mid, i0, i1, ilay_ma
     x_i = {}
     for s in species:
         x_i[s] = ds_in_local[s].isel(
-            time=input_idx, lay=slice(0, ilay_max), y=y_mid, x=slice(i0, i1)
+            time=input_idx, lay=slice(0, ilay_max), y=slice(j0, j1), x=x_mid
         ).astype("float64").load().values
 
     x_sum = np.zeros_like(next(iter(x_i.values())))
@@ -246,6 +244,12 @@ def compute_mixture_R_cp_from_vmr(ds_in_local, input_idx, y_mid, i0, i1, ilay_ma
     cp_mix = np.where(bad, np.nan, cp_mix)
 
     return R_mix, cp_mix
+
+
+def safe_absmax(arr):
+    if np.any(np.isfinite(arr)):
+        return float(np.nanmax(np.abs(arr)))
+    return 0.0
 
 
 def main():
@@ -297,6 +301,16 @@ def main():
             "If not set, use dry-air constants."
         ),
     )
+    parser.add_argument(
+        "--combine-cbar",
+        action="store_true",
+        help=(
+            "If set, use combined colorbars: row 1 shares one colorbar across all columns, "
+            "rows 2-3 share one colorbar across all columns, and row 4 shares one colorbar across all columns. "
+            "Default: False, which gives one row-1 colorbar per column, one heating-rate colorbar per column "
+            "for rows 2-3, and one difference colorbar per row-4 panel."
+        ),
+    )
 
     args = parser.parse_args()
 
@@ -307,10 +321,8 @@ def main():
     comm = MPI.COMM_WORLD
     rank = comm.Get_rank()
 
-    # Dry-air defaults
-    Rd_dry = 287.05     # J kg-1 K-1
-    cp_dry = 1004.0     # J kg-1 K-1
-    sec_per_hour = 3600.0
+    Rd_dry = 287.05
+    cp_dry = 1004.0
 
     if rank == 0:
         os.makedirs(viz_dir, exist_ok=True)
@@ -346,17 +358,17 @@ def main():
             if rank == 0:
                 profile_label = get_profile_label(ds_in)
                 time_in = ds_in["time"].astype("float64").load().values
-                x = ds_in["x"].astype("float64").load().values
+                y = ds_in["y"].astype("float64").load().values
                 mu0 = ds_in["mu0"].astype("float64").load().values
             else:
                 profile_label = None
                 time_in = None
-                x = None
+                y = None
                 mu0 = None
 
         profile_label = comm.bcast(profile_label, root=0)
         time_in = comm.bcast(time_in, root=0)
-        x = comm.bcast(x, root=0)
+        y = comm.bcast(y, root=0)
         mu0 = comm.bcast(mu0, root=0)
 
         with xr.open_dataset(out_path, engine="netcdf4", decode_times=False) as ds_out:
@@ -366,7 +378,7 @@ def main():
 
                 ny = int(ds_out.sizes["y"])
                 nx = int(ds_out.sizes["x"])
-                y_mid = ny // 2
+                x_mid = nx // 2
 
                 z_out = ds_out["z"].astype("float64").load().values
                 ilay_max_avail = len(z_out)
@@ -384,7 +396,7 @@ def main():
                 ilev_max = min(ilev_max_avail, ilay_max + 1)
 
                 mu0_use = mu0[np.rint(time_out).astype(np.int64), :, :]
-                mu0_1d = mu0_use[:, y_mid, 0]
+                mu0_1d = mu0_use[:, 0, x_mid]
 
                 day_segments = find_day_night_transition_indices(mu0_1d, night_eps=args.night_eps)
                 chosen_days = choose_representative_day_segments(day_segments)
@@ -412,8 +424,8 @@ def main():
                 ]
             else:
                 time_out = None
-                nx = None
-                y_mid = None
+                ny = None
+                x_mid = None
                 t_indices = None
                 t_titles = None
                 ilay_max = None
@@ -421,22 +433,22 @@ def main():
                 z_out = None
 
             time_out = comm.bcast(time_out, root=0)
-            nx = comm.bcast(nx, root=0)
-            y_mid = comm.bcast(y_mid, root=0)
+            ny = comm.bcast(ny, root=0)
+            x_mid = comm.bcast(x_mid, root=0)
             t_indices = comm.bcast(t_indices, root=0)
             t_titles = comm.bcast(t_titles, root=0)
             ilay_max = comm.bcast(ilay_max, root=0)
             ilev_max = comm.bcast(ilev_max, root=0)
             z_out = comm.bcast(z_out, root=0)
 
-            i0, i1 = decompose_1d(nx, comm.Get_size(), rank)
-            x_loc = x[i0:i1]
+            j0, j1 = decompose_1d(ny, comm.Get_size(), rank)
+            y_loc = y[j0:j1]
 
             with xr.open_dataset(in_path, engine="netcdf4", decode_times=False) as ds_in_local:
-                lwp_local = ds_in_local["lwp"].isel(y=y_mid, x=slice(i0, i1)).astype("float64")
-                iwp_local = ds_in_local["iwp"].isel(y=y_mid, x=slice(i0, i1)).astype("float64")
-                t_lay_local = ds_in_local["t_lay"].isel(y=y_mid, x=slice(i0, i1), lay=slice(0, ilay_max)).astype("float64")
-                p_lay_local = ds_in_local["p_lay"].isel(y=y_mid, x=slice(i0, i1), lay=slice(0, ilay_max)).astype("float64")
+                lwp_local = ds_in_local["lwp"].isel(y=slice(j0, j1), x=x_mid).astype("float64")
+                iwp_local = ds_in_local["iwp"].isel(y=slice(j0, j1), x=x_mid).astype("float64")
+                t_lay_local = ds_in_local["t_lay"].isel(y=slice(j0, j1), x=x_mid, lay=slice(0, ilay_max)).astype("float64")
+                p_lay_local = ds_in_local["p_lay"].isel(y=slice(j0, j1), x=x_mid, lay=slice(0, ilay_max)).astype("float64")
 
                 lwp_iwp_slices_local = []
                 ray_hr_slices_local = []
@@ -451,12 +463,11 @@ def main():
                 rt_abs_dim = get_first_dim_name(rt_abs_dif_da, ("lay", "z"))
                 sw_lev_dim = get_first_dim_name(sw_up_da, ("lev", "z", "z_lev"))
 
-                rt_abs_dif = rt_abs_dif_da.isel({rt_abs_dim: slice(0, ilay_max), "y": y_mid, "x": slice(i0, i1)}).astype("float64")
-                rt_abs_dir = rt_abs_dir_da.isel({rt_abs_dim: slice(0, ilay_max), "y": y_mid, "x": slice(i0, i1)}).astype("float64")
-                sw_up = sw_up_da.isel({sw_lev_dim: slice(0, ilev_max), "y": y_mid, "x": slice(i0, i1)}).astype("float64")
-                sw_dn = sw_dn_da.isel({sw_lev_dim: slice(0, ilev_max), "y": y_mid, "x": slice(i0, i1)}).astype("float64")
+                rt_abs_dif = rt_abs_dif_da.isel({rt_abs_dim: slice(0, ilay_max), "y": slice(j0, j1), "x": x_mid}).astype("float64")
+                rt_abs_dir = rt_abs_dir_da.isel({rt_abs_dim: slice(0, ilay_max), "y": slice(j0, j1), "x": x_mid}).astype("float64")
+                sw_up = sw_up_da.isel({sw_lev_dim: slice(0, ilev_max), "y": slice(j0, j1), "x": x_mid}).astype("float64")
+                sw_dn = sw_dn_da.isel({sw_lev_dim: slice(0, ilev_max), "y": slice(j0, j1), "x": x_mid}).astype("float64")
 
-                # Obtain z and Δz from the output file directly
                 z_lay_use = z_out[:ilay_max]
 
                 z_ifc = np.empty(ilay_max + 1, dtype=np.float64)
@@ -464,10 +475,6 @@ def main():
                 z_ifc[0] = z_lay_use[0] - 0.5 * (z_lay_use[1] - z_lay_use[0])
                 z_ifc[-1] = z_lay_use[-1] + 0.5 * (z_lay_use[-1] - z_lay_use[-2])
                 dz = np.diff(z_ifc)
-
-                ray_abs_slices_local = []
-                ts_abs_slices_local = []
-                diff_abs_slices_local = []
 
                 for t_idx in t_indices:
                     input_idx = int(np.rint(time_out[t_idx]))
@@ -485,26 +492,22 @@ def main():
                         R_mix_local, cp_mix_local = compute_mixture_R_cp_from_vmr(
                             ds_in_local=ds_in_local,
                             input_idx=input_idx,
-                            y_mid=y_mid,
-                            i0=i0,
-                            i1=i1,
+                            x_mid=x_mid,
+                            j0=j0,
+                            j1=j1,
                             ilay_max=ilay_max,
                         )
                     else:
                         R_mix_local = np.full_like(T_local, Rd_dry, dtype=np.float64)
                         cp_mix_local = np.full_like(T_local, cp_dry, dtype=np.float64)
 
-                    # Ray-tracer: volumetric absorption -> heating rate
                     Qrt_local = (
                         rt_abs_dif.isel(time=t_idx).load().values
                         + rt_abs_dir.isel(time=t_idx).load().values
                     )
-                    ray_abs_slices_local.append(Qrt_local)
-
-                    ray_hr_local = 86400 * Qrt_local * R_mix_local * T_local / (p_lay_now * cp_mix_local) # Convert to per-day
+                    ray_hr_local = 86400.0 * Qrt_local * R_mix_local * T_local / (p_lay_now * cp_mix_local)
                     ray_hr_slices_local.append(ray_hr_local)
 
-                    # Two-stream absorbed flux: match legacy script formula, but use Δz from output z
                     sw_up_slice_local = sw_up.isel(time=t_idx).load().values
                     sw_dn_slice_local = sw_dn.isel(time=t_idx).load().values
 
@@ -513,13 +516,10 @@ def main():
                         (sw_dn_slice_local[1:, :] - sw_up_slice_local[1:, :])
                     )
                     Qts_local = ts_flux_diff_local / dz[:, None]
-                    ts_abs_slices_local.append(Qts_local)
-
-                    ts_hr_local = 86400 * Qts_local * R_mix_local * T_local / (p_lay_now * cp_mix_local) # Convert to per-day
+                    ts_hr_local = 86400.0 * Qts_local * R_mix_local * T_local / (p_lay_now * cp_mix_local)
                     ts_hr_slices_local.append(ts_hr_local)
 
                     diff_hr_slices_local.append(ray_hr_local - ts_hr_local)
-                    diff_abs_slices_local.append(Qrt_local - Qts_local)
 
         local_cloud_min = min(local_minmax(a)[0] for a in lwp_iwp_slices_local)
         local_cloud_max = max(local_minmax(a)[1] for a in lwp_iwp_slices_local)
@@ -536,21 +536,48 @@ def main():
         )
         hr_min = global_nanmin(local_hr_min, comm)
         hr_max = global_nanmax(local_hr_max, comm)
-
         hr_min = min(0.0, hr_min)
 
-        local_diff_hr_max = max(np.nanmax(np.abs(a)) if np.any(np.isfinite(a)) else 0.0 for a in diff_hr_slices_local)
+        local_diff_hr_max = max(safe_absmax(a) for a in diff_hr_slices_local)
         diff_hr_max = global_nanmax(local_diff_hr_max, comm)
 
-        all_x_parts = comm.gather(x_loc, root=0)
-        lwp_iwp_slices = gather_x_slices(lwp_iwp_slices_local, comm)
-        ray_hr_slices = gather_x_slices(ray_hr_slices_local, comm)
-        ts_hr_slices = gather_x_slices(ts_hr_slices_local, comm)
-        diff_hr_slices = gather_x_slices(diff_hr_slices_local, comm)
+        local_cloud_mins_by_col = []
+        local_cloud_maxs_by_col = []
+        local_hr_mins_by_col = []
+        local_hr_maxs_by_col = []
+        local_diff_absmax_by_col = []
+
+        for j in range(3):
+            cmin_j, cmax_j = local_minmax(lwp_iwp_slices_local[j])
+            hmin_j = min(local_minmax(ray_hr_slices_local[j])[0],
+                         local_minmax(ts_hr_slices_local[j])[0])
+            hmax_j = max(local_minmax(ray_hr_slices_local[j])[1],
+                         local_minmax(ts_hr_slices_local[j])[1])
+            dmax_j = safe_absmax(diff_hr_slices_local[j])
+
+            local_cloud_mins_by_col.append(cmin_j)
+            local_cloud_maxs_by_col.append(cmax_j)
+            local_hr_mins_by_col.append(hmin_j)
+            local_hr_maxs_by_col.append(hmax_j)
+            local_diff_absmax_by_col.append(dmax_j)
+
+        lwp_iwp_mins_by_col = [global_nanmin(v, comm) for v in local_cloud_mins_by_col]
+        lwp_iwp_maxs_by_col = [global_nanmax(v, comm) for v in local_cloud_maxs_by_col]
+
+        hr_mins_by_col = [global_nanmin(v, comm) for v in local_hr_mins_by_col]
+        hr_maxs_by_col = [global_nanmax(v, comm) for v in local_hr_maxs_by_col]
+        hr_mins_by_col = [min(0.0, v) for v in hr_mins_by_col]
+
+        diff_absmax_by_col = [global_nanmax(v, comm) for v in local_diff_absmax_by_col]
+
+        all_y_parts = comm.gather(y_loc, root=0)
+        lwp_iwp_slices = gather_y_slices(lwp_iwp_slices_local, comm)
+        ray_hr_slices = gather_y_slices(ray_hr_slices_local, comm)
+        ts_hr_slices = gather_y_slices(ts_hr_slices_local, comm)
+        diff_hr_slices = gather_y_slices(diff_hr_slices_local, comm)
 
         if rank == 0:
-            x_full = np.concatenate(all_x_parts)
-            diff_norm = TwoSlopeNorm(vmin=-diff_hr_max, vcenter=0.0, vmax=diff_hr_max)
+            y_full = np.concatenate(all_y_parts)
 
             fig, axes = plt.subplots(
                 4, 3,
@@ -563,40 +590,62 @@ def main():
             for j in range(3):
                 axes[0, j].set_title(t_titles[j])
 
-            pcm_cloud = None
-            pcm_hr = None
-            pcm_diff = None
+            pcm_cloud = [None, None, None]
+            pcm_hr = [None, None, None]
+            pcm_diff = [None, None, None]
+
+            heating_cmap = "hot"
 
             for j in range(3):
-                pcm_cloud = axes[0, j].pcolormesh(
-                    x_full / 1000.0, z_lay_use / 1000.0, lwp_iwp_slices[j],
+                if args.combine_cbar:
+                    cloud_vmin = lwp_iwp_min
+                    cloud_vmax = lwp_iwp_max
+                    hr_vmin = hr_min
+                    hr_vmax = hr_max
+                    diff_absmax_j = max(diff_hr_max, 1.0e-12)
+                else:
+                    cloud_vmin = lwp_iwp_mins_by_col[j]
+                    cloud_vmax = lwp_iwp_maxs_by_col[j]
+                    hr_vmin = hr_mins_by_col[j]
+                    hr_vmax = hr_maxs_by_col[j]
+                    diff_absmax_j = max(diff_absmax_by_col[j], 1.0e-12)
+
+                diff_norm = TwoSlopeNorm(vmin=-diff_absmax_j, vcenter=0.0, vmax=diff_absmax_j)
+
+                pcm_cloud[j] = axes[0, j].pcolormesh(
+                    y_full / 1000.0,
+                    z_lay_use / 1000.0,
+                    lwp_iwp_slices[j],
                     shading="auto",
                     cmap="Blues",
-                    vmin=lwp_iwp_min,
-                    vmax=lwp_iwp_max,
+                    vmin=cloud_vmin,
+                    vmax=cloud_vmax,
                 )
 
-                heating_cmap = "hot"
-                flux_cmap = "magma"
-                
-                pcm_hr = axes[1, j].pcolormesh(
-                    x_full / 1000.0, z_lay_use / 1000.0, ray_hr_slices[j],
+                pcm_hr[j] = axes[1, j].pcolormesh(
+                    y_full / 1000.0,
+                    z_lay_use / 1000.0,
+                    ray_hr_slices[j],
                     shading="auto",
                     cmap=heating_cmap,
-                    vmin=hr_min,
-                    vmax=hr_max,
+                    vmin=hr_vmin,
+                    vmax=hr_vmax,
                 )
 
                 axes[2, j].pcolormesh(
-                    x_full / 1000.0, z_lay_use / 1000.0, ts_hr_slices[j],
+                    y_full / 1000.0,
+                    z_lay_use / 1000.0,
+                    ts_hr_slices[j],
                     shading="auto",
                     cmap=heating_cmap,
-                    vmin=hr_min,
-                    vmax=hr_max,
+                    vmin=hr_vmin,
+                    vmax=hr_vmax,
                 )
 
-                pcm_diff = axes[3, j].pcolormesh(
-                    x_full / 1000.0, z_lay_use / 1000.0, diff_hr_slices[j],
+                pcm_diff[j] = axes[3, j].pcolormesh(
+                    y_full / 1000.0,
+                    z_lay_use / 1000.0,
+                    diff_hr_slices[j],
                     shading="auto",
                     cmap="RdBu_r",
                     norm=diff_norm,
@@ -606,25 +655,61 @@ def main():
             axes[2, 0].set_ylabel("Two-Stream")
             axes[3, 0].set_ylabel("Ray-Tracer - Two-Stream")
 
-            fig.supxlabel(r"$x \; [km]$")
+            fig.supxlabel(r"$y \; [km]$")
             fig.supylabel(r"$z \; [km]$")
 
-            cbar_cloud = fig.colorbar(
-                pcm_cloud, ax=axes[0, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
-            cbar_cloud.set_label(r"Liquid + Ice Water Path $\left[kg\,m^{-2}\right]$")
+            if args.combine_cbar:
+                cbar_cloud = fig.colorbar(
+                    pcm_cloud[0], ax=axes[0, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_cloud.set_label(r"Liquid + Ice Water Path $\left[kg\,m^{-2}\right]$")
 
-            cbar_hr = fig.colorbar(
-                pcm_hr, ax=axes[1:3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
-            cbar_hr.set_label(r"Heating Rate $\left[K\,d^{-1}\right]$")
+                cbar_hr = fig.colorbar(
+                    pcm_hr[0], ax=axes[1:3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_hr.set_label(r"Heating Rate $\left[K\,d^{-1}\right]$")
 
-            cbar_diff = fig.colorbar(
-                pcm_diff, ax=axes[3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
-            cbar_diff.set_label(r"Heating Rate Difference $\left[K\,d^{-1}\right]$")
+                cbar_diff = fig.colorbar(
+                    pcm_diff[0], ax=axes[3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_diff.set_label(r"Heating Rate Difference $\left[K\,d^{-1}\right]$")
+            else:
+                for j in range(3):
+                    cbar_cloud = fig.colorbar(
+                        pcm_cloud[j],
+                        ax=axes[0, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_cloud.set_label(r"Liquid + Ice Water Path $\left[kg\,m^{-2}\right]$")
 
-            calc_label = "VMR-based $c_p$, $R$" if args.detailed_calc else "Dry-air $c_p$, $R_d$"
+                for j in range(3):
+                    cbar_hr = fig.colorbar(
+                        pcm_hr[j],
+                        ax=axes[1:3, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_hr.set_label(r"Heating Rate $\left[K\,d^{-1}\right]$")
+
+                for j in range(3):
+                    cbar_diff = fig.colorbar(
+                        pcm_diff[j],
+                        ax=axes[3, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_diff.set_label(r"Heating Rate Difference $\left[K\,d^{-1}\right]$")
+
             fig.suptitle(f"Horizontal Resolution - {profile_label}", fontsize=14)
 
             out_png = os.path.join(viz_dir, f"{lr_tag}_atm_heating.png")

@@ -5,7 +5,8 @@ import glob
 import argparse
 import sys
 import time as pytime
-import math
+import traceback
+import gc
 
 import numpy as np
 import xarray as xr
@@ -27,6 +28,15 @@ def log(msg, comm=None, root_only=True):
     rank = comm.Get_rank()
     if (not root_only) or rank == 0:
         print(f"[{ts}] [rank {rank}] {msg}", flush=True)
+
+
+def arr_gb(a):
+    if a is None:
+        return 0.0
+    try:
+        return float(a.nbytes) / (1024.0 ** 3)
+    except Exception:
+        return 0.0
 
 
 def decompose_1d(n, size, rank):
@@ -244,9 +254,12 @@ def subset_cols_3d_layers(a, nt, nlay, loc_a, loc_b):
     return a.reshape(nt, nlay, -1)[:, :, loc_a:loc_b].reshape(nt, -1)
 
 
-def choose_case_layout(ncases, nranks, min_group=8, max_group=32):
+def choose_case_layout(ncases, nranks, min_group=8, max_group=32, serial_case_processing=False):
     if ncases <= 0:
         return 0, 0
+
+    if serial_case_processing:
+        return 1, np.array([nranks], dtype=int)
 
     best = None
     max_concurrent = min(ncases, nranks)
@@ -278,8 +291,14 @@ def choose_case_layout(ncases, nranks, min_group=8, max_group=32):
     return nactive_cases, sizes
 
 
-def assign_case_and_subrank(ncases, nranks, rank, min_group=8, max_group=32):
-    nactive_cases, sizes = choose_case_layout(ncases, nranks, min_group=min_group, max_group=max_group)
+def assign_case_and_subrank(ncases, nranks, rank, min_group=8, max_group=32, serial_case_processing=False):
+    nactive_cases, sizes = choose_case_layout(
+        ncases,
+        nranks,
+        min_group=min_group,
+        max_group=max_group,
+        serial_case_processing=serial_case_processing,
+    )
 
     if nactive_cases == 0:
         return MPI.UNDEFINED, -1, None
@@ -307,6 +326,8 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
     t0_wall = MPI.Wtime()
     if subrank == 0:
         log(f"Processing {lr_tag} with subgroup size {subsize} (world root rank {world_rank})")
+        log(f"{lr_tag}: opening input={in_path}")
+        log(f"{lr_tag}: opening output={out_path}")
 
     fluxes = [
         ("sw_sfc_up", r"Upwelling Surface Flux $\left[W\,m^{-2}\right]$"),
@@ -334,6 +355,9 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
 
         profile_label = safe_profile_label_from_input(ds_in)
 
+    if subrank == 0:
+        log(f"{lr_tag}: time_in shape={time_in.shape}, mu0 shape={mu0.shape}, z_lev shape={z_lev_in.shape}")
+
     if args.zmax is None:
         ilev_max = len(z_lev_in)
     else:
@@ -353,6 +377,9 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
         nx = int(ds_out.sizes["x"])
         ncol = ny * nx
 
+        if subrank == 0:
+            log(f"{lr_tag}: time_out shape={time_out.shape}, nx={nx}, ny={ny}, ncol={ncol}")
+
         if time_out.size != nt_out:
             raise ValueError(
                 f"{out_path}: output time coordinate length {time_out.size} "
@@ -366,6 +393,9 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
         mu0_use = mu0[time_idx, :, :]
         day_valid_3d = np.isfinite(mu0_use) & (mu0_use > args.night_eps)
 
+        del mu0_use
+        gc.collect()
+
         if args.time_units == "hours":
             time_x = time_use
             xlabel = "Time Since Simulation Start [Hours]"
@@ -374,23 +404,8 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             xlabel = "Input time-step index"
 
         if subrank == 0:
-            if mu0_use.ndim != 3:
-                raise ValueError(f"Unexpected mu0 shape for day segmentation: {mu0_use.shape}")
-
-            mu0_1d = mu0_use[:, 0, 0]
-            mu0_min = np.nanmin(mu0_use, axis=(1, 2))
-            mu0_max = np.nanmax(mu0_use, axis=(1, 2))
-            max_spread = np.nanmax(np.abs(mu0_max - mu0_min))
-            if np.isfinite(max_spread) and max_spread > 1.0e-12:
-                log(
-                    f"{lr_tag}: Warning: mu0 is not perfectly uniform across x,y. "
-                    f"Maximum spread = {max_spread:.3e}"
-                )
-
+            mu0_1d = mu0[time_idx, 0, 0]
             day_segments = find_day_segments(time_x, mu0_1d, night_eps=args.night_eps)
-            if not day_segments:
-                log(f"{lr_tag}: no daytime segments detected.", subcomm)
-
             common_xlabel = xlabel
             log(f"{lr_tag}: detected {len(day_segments)} daytime segment(s)")
         else:
@@ -417,9 +432,13 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             loc_b = 0
             day_loc_col = np.empty((nt, 0), dtype=bool)
 
+        del day_valid_3d
+        gc.collect()
+
         if i1 > i0:
             rt_flux_sfc_up = (
                 ds_out["rt_flux_sfc_up"]
+                .transpose("time", "y", "x")
                 .isel(time=slice(0, nt), y=slice(y0, y1))
                 .astype("float64")
                 .load()
@@ -427,6 +446,7 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             )
             rt_flux_sfc_dir = (
                 ds_out["rt_flux_sfc_dir"]
+                .transpose("time", "y", "x")
                 .isel(time=slice(0, nt), y=slice(y0, y1))
                 .astype("float64")
                 .load()
@@ -434,6 +454,7 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             )
             rt_flux_sfc_dif = (
                 ds_out["rt_flux_sfc_dif"]
+                .transpose("time", "y", "x")
                 .isel(time=slice(0, nt), y=slice(y0, y1))
                 .astype("float64")
                 .load()
@@ -441,6 +462,7 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             )
             rt_flux_tod_up = (
                 ds_out["rt_flux_tod_up"]
+                .transpose("time", "y", "x")
                 .isel(time=slice(0, nt), y=slice(y0, y1))
                 .astype("float64")
                 .load()
@@ -451,39 +473,67 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             sw_dn_da = ds_out["sw_flux_dn"]
             sw_lev_dim = get_first_dim_name(sw_up_da, ("lev", "z", "z_lev"))
 
-            sw_up_all = sw_up_da.isel(
-                time=slice(0, nt), y=slice(y0, y1), **{sw_lev_dim: slice(0, ilev_max)}
-            ).astype("float64").load().values
+            sw_up_all = (
+                sw_up_da
+                .transpose("time", sw_lev_dim, "y", "x")
+                .isel(time=slice(0, nt), y=slice(y0, y1), **{sw_lev_dim: slice(0, ilev_max)})
+                .astype("float64")
+                .load()
+                .values
+            )
 
-            sw_dn_all = sw_dn_da.isel(
-                time=slice(0, nt), y=slice(y0, y1), **{sw_lev_dim: slice(0, ilev_max)}
-            ).astype("float64").load().values
+            sw_dn_all = (
+                sw_dn_da
+                .transpose("time", sw_lev_dim, "y", "x")
+                .isel(time=slice(0, nt), y=slice(y0, y1), **{sw_lev_dim: slice(0, ilev_max)})
+                .astype("float64")
+                .load()
+                .values
+            )
+
+            nlev = sw_up_all.shape[1]
+            if not (-nlev <= args.lev_sfc_idx < nlev):
+                raise IndexError(f"{lr_tag}: lev_sfc_idx={args.lev_sfc_idx} out of bounds for nlev={nlev}")
+            if not (-nlev <= args.lev_top_idx < nlev):
+                raise IndexError(f"{lr_tag}: lev_top_idx={args.lev_top_idx} out of bounds for nlev={nlev}")
 
             if "rt_flux_abs_dif" in ds_out.variables and "rt_flux_abs_dir" in ds_out.variables:
                 rt_abs_dif_da = ds_out["rt_flux_abs_dif"]
                 rt_abs_dir_da = ds_out["rt_flux_abs_dir"]
                 rt_lay_dim = get_first_dim_name(rt_abs_dif_da, ("lay", "z", "z_lay"))
 
-                rt_abs_dif_all = rt_abs_dif_da.isel(
-                    time=slice(0, nt), y=slice(y0, y1), **{rt_lay_dim: slice(0, ilev_max - 1)}
-                ).astype("float64").load().values
+                rt_abs_dif_all = (
+                    rt_abs_dif_da
+                    .transpose("time", rt_lay_dim, "y", "x")
+                    .isel(time=slice(0, nt), y=slice(y0, y1), **{rt_lay_dim: slice(0, ilev_max - 1)})
+                    .astype("float64")
+                    .load()
+                    .values
+                )
 
-                rt_abs_dir_all = rt_abs_dir_da.isel(
-                    time=slice(0, nt), y=slice(y0, y1), **{rt_lay_dim: slice(0, ilev_max - 1)}
-                ).astype("float64").load().values
+                rt_abs_dir_all = (
+                    rt_abs_dir_da
+                    .transpose("time", rt_lay_dim, "y", "x")
+                    .isel(time=slice(0, nt), y=slice(y0, y1), **{rt_lay_dim: slice(0, ilev_max - 1)})
+                    .astype("float64")
+                    .load()
+                    .values
+                )
             else:
                 rt_abs_dif_all = None
                 rt_abs_dir_all = None
 
-            sw_sfc_up_ts_loc = subset_cols_2d(
-                sw_up_all[:, args.lev_sfc_idx, :, :], nt, loc_a, loc_b
-            )
-            sw_sfc_dn_ts_loc = subset_cols_2d(
-                sw_dn_all[:, args.lev_sfc_idx, :, :], nt, loc_a, loc_b
-            )
-            sw_tod_up_ts_loc = subset_cols_2d(
-                sw_up_all[:, args.lev_top_idx, :, :], nt, loc_a, loc_b
-            )
+            if subrank == 0:
+                log(f"{lr_tag}: rt_flux_sfc_up shape={rt_flux_sfc_up.shape}, {arr_gb(rt_flux_sfc_up):.3f} GiB")
+                log(f"{lr_tag}: sw_up_all shape={sw_up_all.shape}, {arr_gb(sw_up_all):.3f} GiB")
+                log(f"{lr_tag}: sw_dn_all shape={sw_dn_all.shape}, {arr_gb(sw_dn_all):.3f} GiB")
+                if rt_abs_dif_all is not None:
+                    log(f"{lr_tag}: rt_abs_dif_all shape={rt_abs_dif_all.shape}, {arr_gb(rt_abs_dif_all):.3f} GiB")
+                    log(f"{lr_tag}: rt_abs_dir_all shape={rt_abs_dir_all.shape}, {arr_gb(rt_abs_dir_all):.3f} GiB")
+
+            sw_sfc_up_ts_loc = subset_cols_2d(sw_up_all[:, args.lev_sfc_idx, :, :], nt, loc_a, loc_b)
+            sw_sfc_dn_ts_loc = subset_cols_2d(sw_dn_all[:, args.lev_sfc_idx, :, :], nt, loc_a, loc_b)
+            sw_tod_up_ts_loc = subset_cols_2d(sw_up_all[:, args.lev_top_idx, :, :], nt, loc_a, loc_b)
 
             sw_sfc_up_ray_loc = subset_cols_2d(rt_flux_sfc_up, nt, loc_a, loc_b)
             sw_sfc_dn_ray_loc = subset_cols_2d(rt_flux_sfc_dir + rt_flux_sfc_dif, nt, loc_a, loc_b)
@@ -491,12 +541,13 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
 
             sw_sfc_up_ray_loc = np.where(day_loc_col, sw_sfc_up_ray_loc, np.nan)
             sw_sfc_up_ts_loc = np.where(day_loc_col, sw_sfc_up_ts_loc, np.nan)
-
             sw_sfc_dn_ray_loc = np.where(day_loc_col, sw_sfc_dn_ray_loc, np.nan)
             sw_sfc_dn_ts_loc = np.where(day_loc_col, sw_sfc_dn_ts_loc, np.nan)
-
             sw_tod_up_ray_loc = np.where(day_loc_col, sw_tod_up_ray_loc, np.nan)
             sw_tod_up_ts_loc = np.where(day_loc_col, sw_tod_up_ts_loc, np.nan)
+
+            del rt_flux_sfc_up, rt_flux_sfc_dir, rt_flux_sfc_dif, rt_flux_tod_up
+            gc.collect()
 
             z_lev = z_lev_use[:sw_up_all.shape[1]]
             if z_lev.ndim != 1:
@@ -515,10 +566,16 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             )
             ts_abs_all = ts_flux_diff_all / dz[None, :, None, None]
 
+            del ts_flux_diff_all
+            gc.collect()
+
             if rt_abs_dif_all is None or rt_abs_dir_all is None:
                 raise KeyError(f"{out_path} missing rt_flux_abs_dif and/or rt_flux_abs_dir")
 
             rt_abs_all = rt_abs_dif_all + rt_abs_dir_all
+            del rt_abs_dif_all, rt_abs_dir_all
+            gc.collect()
+
             if rt_abs_all.shape[1] != nlay:
                 raise ValueError(
                     f"Ray absorbed-flux layer count ({rt_abs_all.shape[1]}) does not match dz layer count ({nlay})"
@@ -534,10 +591,16 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             ts_vi_all = np.sum(ts_abs_all * dz[None, :, None, None], axis=1)
             rt_vi_all = np.sum(rt_abs_all * dz[None, :, None, None], axis=1)
 
+            del ts_abs_all, rt_abs_all
+            gc.collect()
+
             flux_abs_vi_ts_loc = subset_cols_2d(ts_vi_all, nt, loc_a, loc_b)
             flux_abs_vi_ray_loc = subset_cols_2d(rt_vi_all, nt, loc_a, loc_b)
             flux_abs_vi_ts_loc = np.where(day_loc_col, flux_abs_vi_ts_loc, np.nan)
             flux_abs_vi_ray_loc = np.where(day_loc_col, flux_abs_vi_ray_loc, np.nan)
+
+            del ts_vi_all, rt_vi_all, sw_up_all, sw_dn_all
+            gc.collect()
 
         else:
             sw_sfc_up_ray_loc = np.empty((nt, 0), dtype=np.float64)
@@ -551,6 +614,9 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
             flux_abs_vi_ray_loc = np.empty((nt, 0), dtype=np.float64)
             flux_abs_vi_ts_loc = np.empty((nt, 0), dtype=np.float64)
 
+        del day_loc_col
+        gc.collect()
+
         flux_arrays = {
             "sw_sfc_up": (sw_sfc_up_ray_loc, sw_sfc_up_ts_loc),
             "sw_sfc_dn": (sw_sfc_dn_ray_loc, sw_sfc_dn_ts_loc),
@@ -562,6 +628,8 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
         for flux_tag, flux_ylabel in fluxes:
             if subrank == 0:
                 log(f"{lr_tag}: flux={flux_tag}")
+
+            log(f"{lr_tag}: entering reductions for flux={flux_tag}", subcomm, root_only=False)
 
             ray_loc, ts_loc = flux_arrays[flux_tag]
 
@@ -580,6 +648,15 @@ def process_one_case(case_idx, lr_tag, in_path, out_path, args, subcomm, world_r
                             "xlabel": common_xlabel,
                         }
                     )
+
+            del ray_loc, ts_loc
+            gc.collect()
+
+        del flux_arrays
+        gc.collect()
+
+    del mu0, z_lev_use, time_in
+    gc.collect()
 
     if subrank == 0:
         log(f"{lr_tag}: done (walltime {MPI.Wtime() - t0_wall:.2f} s).")
@@ -613,14 +690,6 @@ def should_use_log_scale(error_type, log_scale, series_list):
         if np.any(finite & (y <= 0.0)):
             return False
     return True
-
-
-def collect_unique_day_segments(series_list):
-    if not series_list:
-        return []
-
-    ref = series_list[0].get("day_segments", [])
-    return ref
 
 
 def format_day_ticks(seg):
@@ -678,9 +747,9 @@ def plot_error_figure(error_type, valid_case_results, fluxes, args, viz_dir):
                 color = PLOT_COLORS[i % len(PLOT_COLORS)]
                 tx = np.asarray(s["time_x"], dtype=np.float64)
                 yy = np.asarray(s["metric"], dtype=np.float64)
-
                 sl = slice(seg["i0"], seg["i1"])
-                line, = ax.plot(
+
+                ax.plot(
                     tx[sl],
                     yy[sl],
                     linewidth=2,
@@ -692,17 +761,9 @@ def plot_error_figure(error_type, valid_case_results, fluxes, args, viz_dir):
                 legend_handles, legend_labels = axes[0, 0].get_legend_handles_labels()
 
             ax.set_xlim(seg["t0"], seg["t1"])
-
             xticks = format_day_ticks(seg)
             ax.set_xticks(xticks)
-
-            tick_labels = [
-                f"{xticks[0]:g}",
-                f"{xticks[1]:g}",
-                f"{xticks[2]:g}",
-            ]
-            ax.set_xticklabels(tick_labels)
-
+            ax.set_xticklabels([f"{xticks[0]:g}", f"{xticks[1]:g}", f"{xticks[2]:g}"])
             ax.grid(False)
             ax.axvline(seg["tmid"], color="0.7", linewidth=0.8, zorder=0)
 
@@ -712,7 +773,7 @@ def plot_error_figure(error_type, valid_case_results, fluxes, args, viz_dir):
             if use_log:
                 ax.set_yscale("log")
 
-            if col==0:
+            if col == 0:
                 ax.set_ylabel(flux_ylabel)
             if row == 0:
                 ax.set_title(f"Day {col + 1}")
@@ -828,6 +889,12 @@ def main():
         default=32,
         help="Preferred maximum ranks per active case (default: 32).",
     )
+    parser.add_argument(
+        "--serial-case-processing",
+        type=str2bool,
+        default=False,
+        help="If true, run only one case at a time using all ranks.",
+    )
 
     args = parser.parse_args()
 
@@ -876,40 +943,78 @@ def main():
     case_items = sorted(pairs.items())
     ncases = len(case_items)
 
-    my_case_idx, my_subrank, subgroup_sizes = assign_case_and_subrank(
-        ncases=ncases,
-        nranks=wsize,
-        rank=wrank,
-        min_group=args.min_case_ranks,
-        max_group=args.max_case_ranks,
-    )
-
-    if wrank == 0:
-        active_cases = len(subgroup_sizes) if subgroup_sizes is not None else 0
-        log(f"Active concurrent cases: {active_cases}", world)
-        if subgroup_sizes is not None:
-            log(f"Subgroup sizes: {list(map(int, subgroup_sizes))}", world)
-
-    if my_case_idx == MPI.UNDEFINED or my_case_idx >= ncases:
-        subcomm = world.Split(color=MPI.UNDEFINED, key=wrank)
-        gathered = world.gather(None, root=0)
+    if args.serial_case_processing:
         if wrank == 0:
-            log("No assigned case on some ranks; continuing with active ranks only.", world)
-        return
+            log("Serial case processing enabled: one case at a time.", world)
 
-    my_lr_tag, my_paths = case_items[my_case_idx]
-    my_in_path, my_out_path = my_paths
+        gathered_all = []
 
-    subcomm = world.Split(color=my_case_idx, key=wrank)
+        for active_case_idx in range(ncases):
+            has_case = True
+            subcomm = world.Split(color=0, key=wrank)
 
-    case_result = process_one_case(
-        my_case_idx, my_lr_tag, my_in_path, my_out_path, args, subcomm, wrank
-    )
+            my_lr_tag, my_paths = case_items[active_case_idx]
+            my_in_path, my_out_path = my_paths
 
-    gathered = world.gather(case_result if subcomm.Get_rank() == 0 else None, root=0)
+            case_result = process_one_case(
+                active_case_idx, my_lr_tag, my_in_path, my_out_path, args, subcomm, wrank
+            )
 
-    if wrank != 0:
-        return
+            gathered = world.gather(
+                case_result if subcomm.Get_rank() == 0 else None,
+                root=0
+            )
+
+            if wrank == 0:
+                valid = [g for g in gathered if g is not None]
+                gathered_all.extend(valid)
+
+        if wrank != 0:
+            return
+
+        valid_case_results = gathered_all
+        valid_case_results.sort(key=lambda d: d["case_idx"])
+
+    else:
+        my_case_idx, my_subrank, subgroup_sizes = assign_case_and_subrank(
+            ncases=ncases,
+            nranks=wsize,
+            rank=wrank,
+            min_group=args.min_case_ranks,
+            max_group=args.max_case_ranks,
+            serial_case_processing=False,
+        )
+
+        if wrank == 0:
+            active_cases = len(subgroup_sizes) if subgroup_sizes is not None else 0
+            log(f"Active concurrent cases: {active_cases}", world)
+            if subgroup_sizes is not None:
+                log(f"Subgroup sizes: {list(map(int, subgroup_sizes))}", world)
+
+        has_case = (my_case_idx != MPI.UNDEFINED and my_case_idx < ncases)
+
+        color = my_case_idx if has_case else MPI.UNDEFINED
+        subcomm = world.Split(color=color, key=wrank)
+
+        case_result = None
+        if has_case:
+            my_lr_tag, my_paths = case_items[my_case_idx]
+            my_in_path, my_out_path = my_paths
+
+            case_result = process_one_case(
+                my_case_idx, my_lr_tag, my_in_path, my_out_path, args, subcomm, wrank
+            )
+
+        gathered = world.gather(
+            case_result if (has_case and subcomm.Get_rank() == 0) else None,
+            root=0
+        )
+
+        if wrank != 0:
+            return
+
+        valid_case_results = [g for g in gathered if g is not None]
+        valid_case_results.sort(key=lambda d: d["case_idx"])
 
     fluxes = [
         ("sw_sfc_up", r"Upwelling Surface Flux $\left[W\,m^{-2}\right]$"),
@@ -919,9 +1024,6 @@ def main():
         ("flux_abs_vi", r"Vertically-Integrated Absorbed Flux $\left[W\,m^{-2}\right]$"),
     ]
 
-    valid_case_results = [g for g in gathered if g is not None]
-    valid_case_results.sort(key=lambda d: d["case_idx"])
-
     for error_type in args.error_type:
         plot_error_figure(error_type, valid_case_results, fluxes, args, viz_dir)
 
@@ -929,4 +1031,14 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception:
+        rank = MPI.COMM_WORLD.Get_rank()
+        print(f"\n===== Unhandled exception on rank {rank} =====", flush=True)
+        traceback.print_exc()
+        print(f"===== End exception on rank {rank} =====\n", flush=True)
+        try:
+            MPI.COMM_WORLD.Abort(1)
+        except Exception:
+            sys.exit(1)

@@ -1,11 +1,11 @@
 #!/bin/bash
-#SBATCH --time=0-04:00:00
-#SBATCH --nodes=1
-#SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=28
+#SBATCH --time=0-18:00:00
+#SBATCH --nodes=2
+#SBATCH --ntasks-per-node=28
+#SBATCH --cpus-per-task=1
 #SBATCH --account=fy260144
 #SBATCH --reservation=flight-cldera
-#SBATCH --job-name=GATEIII_300x300-1974-09-03
+#SBATCH --job-name=1974-08-30
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
@@ -20,12 +20,12 @@ DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP
 RTE_RRTMGP_CPP_DIR=/pscratch/jltorch/ml3drt/rte-rrtmgp-cpp
 RTE_RRTMGP_CPP_RUN_NAME=1974-08-30
 RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
-RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/separate_input_v1
+RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
 RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
 RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
 RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
 RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
-RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_FILE_BASE}
+RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_CPP_FILE_BASE}
 
 mkdir -p ${RTE_RRTMGP_CPP_DIR}
 mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
@@ -34,76 +34,129 @@ mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
 
 # RTE-RRTMGP-CPP directories
 RTE_RRTMGP_CPP_DIR=$(realpath "../..") # Source directory
-RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
-RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
-RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
 DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
 EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
 EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
+#-------------------------------------------------------------------------------
+# CHECK DIRECTORIES FOR ERRORS
+echo "RTE_RRTMGP_CPP_INPUT_DIR: ${RTE_RRTMGP_CPP_INPUT_DIR}"
+echo "RTE_RRTMGP_CPP_OUTPUT_DIR: ${RTE_RRTMGP_CPP_OUTPUT_DIR}"
+echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+#STAGE_NAME="DP-SCREAM OUTPUT VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "OLR:"
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+#  python ${EXPERIMENT_ANALYZE_DIR}/plot_olr.py \
+#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
+#    --distribution-visualization ribbons
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+#STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
+#echo "Beginning ${STAGE_NAME}..."
 
 # Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[]"
-COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
-TIMES_PYTHON="[60]"
-T0_PYTHON=0
-TF_PYTHON=-1
+#SZAS_PYTHON="[]"
+#COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
 
-#python ${EXPERIMENT_ANALYZE_DIR}/animate_dp_screamxx_output.py \
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+#  python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
 #    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+#    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --coarse_factors "${COARSE_FACTORS_PYTHON}"
 
-#python ${EXPERIMENT_ANALYZE_DIR}/visualize_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
-#    --plots olr
-
-#srun -n ${SLURM_NTASKS} python ${EXPERIMENT_ANALYZE_DIR}/plot_olr_distribution.py \
-#  --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#  --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
-#  --spinup-end 10 \
-#  --cbar-log False
-
-#srun --mpi=pmi2 -n ${SLURM_NTASKS} python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
-#  --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#  --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#  --coarse_factors "${COARSE_FACTORS_PYTHON}" \
-#  --szas "${SZAS_PYTHON}" \
-#  --t0 "${T0_PYTHON}" --tf "${TF_PYTHON}"
-#  #--times "${TIMES_PYTHON}"
-    
-
-#STAGE_NAME="Input Visualization"
-#echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_input.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
 #echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
 
-#STAGE_NAME="Output Visualization"
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT Combination"
 #echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_output.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+
+#SEPARATE_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/separate_output
+#COMBINED_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
+#
+#echo "SEPARATE_DIR: ${SEPARATE_DIR}"
+#echo "COMBINED_DIR: ${COMBINED_DIR}"
+#echo "DP_SCREAM FILE: ${DP_SCREAMXX_OUTPUT_FILE_PATH}"
+#
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+#  python ${EXPERIMENT_DIR}/combine_rte_rrtmgp_cpp_files.py \
+#    --input-dir ${SEPARATE_DIR} \
+#    --output-dir ${COMBINED_DIR} \
+#    --dpscream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#    --kind out \
+#    --lr 16,32,64 \
+#    --engine netcdf4 \
+#    --scheduler single-threaded \
+#    --replace-existing \
+#    --lock-writes \
+#    --keep-t-index \
+#    --time-chunk 1 \
+#    --xy-chunk 300
+
 #echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
 
-#STAGE_NAME="Comparison Visualization"
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_comparison.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+#
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
 
-#mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_difference_distribution.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
-#    --lr 64
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
 
-mpirun -np 8 python ${EXPERIMENT_VIZ_DIR}/plot_flux_abs.py \
+echo "Atmospheric Heating Rates:"
+srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+   python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
     --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
     --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
-    --lr 64
+    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
+    --zmax 16
+
+echo "Surface Heating Rates:"
+srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+  python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
+    --case GATEIII
+
 #echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT ANALYSIS VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "Error:"
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_error.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/error \
+#    --error-type rmse,mae,mbe \
+#    --zmax 16 \
+#    --serial-case-processing true
+
+#echo "Radiative Differences:"
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_radiative_differences.py \
+#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_differences \
+#    --distribution-visualization ribbons \
+#    --zmax 16
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------

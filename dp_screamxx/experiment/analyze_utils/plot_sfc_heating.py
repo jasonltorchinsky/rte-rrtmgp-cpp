@@ -193,6 +193,12 @@ def compute_grid_spacing(ds_in, ds_out):
     return dx, dy
 
 
+def safe_absmax(arr):
+    if np.any(np.isfinite(arr)):
+        return float(np.nanmax(np.abs(arr)))
+    return 0.0
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--rte_rrtmgp_cpp_input_dir_path", nargs=1, type=str, required=True)
@@ -206,6 +212,16 @@ def main():
         type=str,
         default=None,
         help="Optional case selector. If --case GATEIII, plot surface heating rate instead of net surface shortwave flux.",
+    )
+    parser.add_argument(
+        "--combine-cbar",
+        action="store_true",
+        help=(
+            "If set, use combined colorbars: row 1 shares one colorbar across all columns, "
+            "rows 2-3 share one colorbar across all columns, and row 4 shares one colorbar across all columns. "
+            "Default: False, which gives one row-1 colorbar per column, one rows-2/3 colorbar per column, "
+            "and one row-4 colorbar per column, each scaled from the corresponding subplot(s)."
+        ),
     )
 
     args = parser.parse_args()
@@ -268,22 +284,13 @@ def main():
         dx = comm.bcast(dx, root=0)
         dy = comm.bcast(dy, root=0)
 
-        #
-        # >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-        # Adjustable constants for GATEIII surface heating rate calculation
-        # Units should be:
-        #   rho_w : kg m^-3
-        #   c_pw  : J kg^-1 K^-1
-        #   h_m   : m
-        # <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<
-        #
         rho_w = None
         c_pw = None
         h_m = None
         if case_name == "GATEIII":
-            rho_w = 1.027e3 # Reference density of sea water (doi:10.1017/9781107588417)
-            c_pw  = 3986    # Reference specific heat capacity at constant pressure for sea water (doi:10.1017/9781107588417)
-            h_m   = 19.753  # Average mixing layer depth in August in observation region (doi:10.17882/91774)
+            rho_w = 1.027e3
+            c_pw = 3986
+            h_m = 19.753
 
         with xr.open_dataset(out_path, engine="netcdf4", decode_times=False) as ds_out:
             time_out = ds_out["time"].values.astype(np.float64)
@@ -315,10 +322,6 @@ def main():
                 lwp = ds_in_local["lwp"].isel(x=slice(i0, i1)).astype("float64").load().values
                 iwp = ds_in_local["iwp"].isel(x=slice(i0, i1)).astype("float64").load().values
 
-            #
-            # Net surface shortwave flux:
-            # Qnr = downwelling - upwelling
-            #
             rt_sfc_dn = (
                 ds_out["rt_flux_sfc_dir"].isel(x=slice(i0, i1)).astype("float64").load().values
                 + ds_out["rt_flux_sfc_dif"].isel(x=slice(i0, i1)).astype("float64").load().values
@@ -326,10 +329,6 @@ def main():
             rt_sfc_up = ds_out["rt_flux_sfc_up"].isel(x=slice(i0, i1)).astype("float64").load().values
             rt_sfc_net = rt_sfc_dn - rt_sfc_up
 
-            #
-            # Two-stream net surface shortwave flux:
-            # use lev=0 for surface, consistent with original script
-            #
             ts_sfc_dn = ds_out["sw_flux_dn"].isel(lev=0, x=slice(i0, i1)).astype("float64").load().values
             ts_sfc_up = ds_out["sw_flux_up"].isel(lev=0, x=slice(i0, i1)).astype("float64").load().values
             ts_sfc_net = ts_sfc_dn - ts_sfc_up
@@ -349,18 +348,15 @@ def main():
                 ts_xy = ts_sfc_net[t_idx]
 
                 if case_name == "GATEIII":
-                    #
-                    # Requested formula:
-                    # heating_rate = Qnr / (rho_w * c_pw * h_m)
-                    #
-                    denom = rho_w * c_pw * h_m 
-                    ray_xy = (ray_xy / denom) * 86400 # convert to per-day
-                    ts_xy = (ts_xy / denom) * 86400 # convert to per-day
+                    denom = rho_w * c_pw * h_m
+                    ray_xy = (ray_xy / denom) * 86400.0
+                    ts_xy = (ts_xy / denom) * 86400.0
 
                 ray_local.append(ray_xy)
                 ts_local.append(ts_xy)
                 diff_local.append(ray_xy - ts_xy)
 
+        # Global limits used when --combine-cbar is True
         cloud_min = global_nanmin(min(local_minmax(a)[0] for a in cloud_local), comm)
         cloud_max = global_nanmax(max(local_minmax(a)[1] for a in cloud_local), comm)
 
@@ -380,9 +376,34 @@ def main():
         )
 
         diff_max = global_nanmax(
-            max(np.nanmax(np.abs(a)) if np.any(np.isfinite(a)) else 0.0 for a in diff_local),
+            max(safe_absmax(a) for a in diff_local),
             comm,
         )
+
+        # Per-column limits used when --combine-cbar is False
+        local_cloud_mins_by_col = []
+        local_cloud_maxs_by_col = []
+        local_field_mins_by_col = []
+        local_field_maxs_by_col = []
+        local_diff_absmax_by_col = []
+
+        for j in range(3):
+            cmin_j, cmax_j = local_minmax(cloud_local[j])
+            fmin_j = min(local_minmax(ray_local[j])[0], local_minmax(ts_local[j])[0])
+            fmax_j = max(local_minmax(ray_local[j])[1], local_minmax(ts_local[j])[1])
+            dmax_j = safe_absmax(diff_local[j])
+
+            local_cloud_mins_by_col.append(cmin_j)
+            local_cloud_maxs_by_col.append(cmax_j)
+            local_field_mins_by_col.append(fmin_j)
+            local_field_maxs_by_col.append(fmax_j)
+            local_diff_absmax_by_col.append(dmax_j)
+
+        cloud_mins_by_col = [global_nanmin(v, comm) for v in local_cloud_mins_by_col]
+        cloud_maxs_by_col = [global_nanmax(v, comm) for v in local_cloud_maxs_by_col]
+        field_mins_by_col = [global_nanmin(v, comm) for v in local_field_mins_by_col]
+        field_maxs_by_col = [global_nanmax(v, comm) for v in local_field_maxs_by_col]
+        diff_absmax_by_col = [global_nanmax(v, comm) for v in local_diff_absmax_by_col]
 
         cloud = [gather_field(a, comm) for a in cloud_local]
         ray = [gather_field(a, comm) for a in ray_local]
@@ -393,7 +414,6 @@ def main():
             x_km = x / 1000.0
             y_km = y / 1000.0
             X, Y = np.meshgrid(x_km, y_km)
-            diff_norm = TwoSlopeNorm(vmin=-diff_max, vcenter=0.0, vmax=diff_max)
 
             fig, axes = plt.subplots(
                 4, 3,
@@ -406,43 +426,56 @@ def main():
             for j in range(3):
                 axes[0, j].set_title(t_titles[j])
 
-            pcm_cloud = pcm_field = pcm_diff = None
+            pcm_cloud = [None, None, None]
+            pcm_field = [None, None, None]
+            pcm_diff = [None, None, None]
+
+            heating_cmap = "hot"
+            flux_cmap = "magma"
+            field_cmap = heating_cmap if case_name == "GATEIII" else flux_cmap
 
             for j in range(3):
-                pcm_cloud = axes[0, j].pcolormesh(
-                    X, Y, cloud[j],
+                if args.combine_cbar:
+                    cloud_vmin = cloud_min
+                    cloud_vmax = cloud_max
+                    field_vmin = field_min
+                    field_vmax = field_max
+                    diff_absmax_j = max(diff_max, 1.0e-12)
+                else:
+                    cloud_vmin = cloud_mins_by_col[j]
+                    cloud_vmax = cloud_maxs_by_col[j]
+                    field_vmin = field_mins_by_col[j]
+                    field_vmax = field_maxs_by_col[j]
+                    diff_absmax_j = max(diff_absmax_by_col[j], 1.0e-12)
+
+                diff_norm = TwoSlopeNorm(vmin=-diff_absmax_j, vcenter=0.0, vmax=diff_absmax_j)
+
+                pcm_cloud[j] = axes[0, j].pcolormesh(
+                    X, Y, cloud[j].transpose(),
                     shading="auto",
                     cmap="Blues",
-                    vmin=cloud_min,
-                    vmax=cloud_max,
+                    vmin=cloud_vmin,
+                    vmax=cloud_vmax,
                 )
 
-                heating_cmap = "hot"
-                flux_cmap = "magma"
-
-                if case_name == "GATEIII":
-                    cmap = heating_cmap
-                else:
-                    cmap = flux_cmap
-
-                pcm_field = axes[1, j].pcolormesh(
-                    X, Y, ray[j],
+                pcm_field[j] = axes[1, j].pcolormesh(
+                    X, Y, ray[j].transpose(),
                     shading="auto",
-                    cmap=cmap,
-                    vmin=field_min,
-                    vmax=field_max,
+                    cmap=field_cmap,
+                    vmin=field_vmin,
+                    vmax=field_vmax,
                 )
 
                 axes[2, j].pcolormesh(
-                    X, Y, ts[j],
+                    X, Y, ts[j].transpose(),
                     shading="auto",
-                    cmap=cmap,
-                    vmin=field_min,
-                    vmax=field_max,
+                    cmap=field_cmap,
+                    vmin=field_vmin,
+                    vmax=field_vmax,
                 )
 
-                pcm_diff = axes[3, j].pcolormesh(
-                    X, Y, diff[j],
+                pcm_diff[j] = axes[3, j].pcolormesh(
+                    X, Y, diff[j].transpose(),
                     shading="auto",
                     cmap="RdBu_r",
                     norm=diff_norm,
@@ -455,26 +488,68 @@ def main():
             fig.supxlabel(r"$x \; [km]$")
             fig.supylabel(r"$y \; [km]$")
 
-            cbar_cloud = fig.colorbar(
-                pcm_cloud, ax=axes[0, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
-            cbar_cloud.set_label(r"Vertically-Integrated Liquid + Ice Water Path $\left[kg\,m^{-1}\right]$")
-
-            cbar_field = fig.colorbar(
-                pcm_field, ax=axes[1:3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
+            cloud_label = r"Vertically-Integrated Liquid + Ice Water Path $\left[kg\,m^{-1}\right]$"
             if case_name == "GATEIII":
-                cbar_field.set_label(r"Surface Heating Rate $\left[K\,d^{-1}\right]$")
+                field_label = r"Surface Heating Rate $\left[K\,d^{-1}\right]$"
+                diff_label = r"Surface Heating Rate $\left[K\,d^{-1}\right]$"
             else:
-                cbar_field.set_label(r"Net Surface Shortwave Flux $\left[W\,m^{-2}\right]$")
+                field_label = r"Net Surface Shortwave Flux $\left[W\,m^{-2}\right]$"
+                diff_label = r"Net Surface Shortwave Flux $\left[W\,m^{-2}\right]$"
 
-            cbar_diff = fig.colorbar(
-                pcm_diff, ax=axes[3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
-            )
-            if case_name == "GATEIII":
-                cbar_diff.set_label(r"Surface Heating Rate $\left[K\,d^{-1}\right]$")
+            if args.combine_cbar:
+                cbar_cloud = fig.colorbar(
+                    pcm_cloud[0], ax=axes[0, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_cloud.set_label(cloud_label)
+
+                cbar_field = fig.colorbar(
+                    pcm_field[0], ax=axes[1:3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_field.set_label(field_label)
+
+                cbar_diff = fig.colorbar(
+                    pcm_diff[0], ax=axes[3, :], location="right", shrink=0.95, fraction=0.046, pad=0.04
+                )
+                cbar_diff.set_label(diff_label)
             else:
-                cbar_diff.set_label(r"Net Surface Shortwave Flux $\left[W\,m^{-2}\right]$")
+                # Row 1: one cloud colorbar per column; only right-most labeled
+                for j in range(3):
+                    cbar_cloud = fig.colorbar(
+                        pcm_cloud[j],
+                        ax=axes[0, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_cloud.set_label(cloud_label)
+
+                # Rows 2-3: one field colorbar per column; only right-most labeled
+                for j in range(3):
+                    cbar_field = fig.colorbar(
+                        pcm_field[j],
+                        ax=axes[1:3, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_field.set_label(field_label)
+
+                # Row 4: one difference colorbar per column; only right-most labeled
+                for j in range(3):
+                    cbar_diff = fig.colorbar(
+                        pcm_diff[j],
+                        ax=axes[3, j],
+                        location="right",
+                        shrink=0.95,
+                        fraction=0.046,
+                        pad=0.04,
+                    )
+                    if j == 2:
+                        cbar_diff.set_label(diff_label)
 
             if case_name == "GATEIII":
                 fig.suptitle(
@@ -497,6 +572,7 @@ def main():
 
     if rank == 0:
         log("All resolutions complete.", comm)
+
 
 if __name__ == "__main__":
     main()
