@@ -65,7 +65,7 @@ echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
 #STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
 #echo "Beginning ${STAGE_NAME}..."
 
-#python run_rte_rrtmgp_cpp_timeslices_multi_gpu.py \
+#python run_rte_rrtmgp_cpp_timeslices_multi_gpu_new.py \
 #  --rte-rrtmgp-cpp-input-dir ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #  --rte-rrtmgp-cpp-executable-dir ${RTE_RRTMGP_CPP_BUILD_DIR} \
 #  --rte-rrtmgp-cpp-output-dir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
@@ -74,7 +74,7 @@ echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
 #  --work-dir ${RTE_RRTMGP_CPP_INPUT_DIR}/.rte_rrtmgp_work \
 #  --raytracing 16384 \
 #  --gpus "[3,4,5,6,7,8,9,10,11,12,13,14,15]" \
-#  --lr 01
+#  --missing-output-list /ascldap/users/jltorch/codes/rte-rrtmgp-cpp/jasonltorchinsky/timeseries-analysis/dp_screamxx/jobscripts/missing_files.txt
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
@@ -141,30 +141,43 @@ echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
+#echo "Absorbed Flux:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/abs_flux \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --yslice 132.5 \
+#  --lr 64
+
+#echo "Net Surface Flux:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/net_sfc_flux \
+#  --detailed-calc true \
+#  --lr 64
+
 #echo "Atmospheric Heating Rates:"
-#mpirun -np 32 \
-#   python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
-#    --zmax 16 \
-#    --lr 64
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating_new.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --yslice 132.5 \
+#  --case GATEIII \
+#  --lr 64
 
 #echo "Surface Heating Rates:"
-#mpirun -np 32 \
-#  python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
-#    --case GATEIII \
-#    --lr 64
-
-python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating_new.py \
-  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
-  --case GATEIII \
-  --lr 64
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
+#  --case GATEIII \
+#  --detailed-calc true \
+#  --lr 64
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
@@ -183,15 +196,26 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating_new.py \
 #    --zmax 16 \
 #    --lr 32,64
 
-#echo "Radiative Differences:"
+echo "Radiative Distributions:"
 #mpirun -np 32 \
-# python ${EXPERIMENT_ANALYZE_DIR}/plot_radiative_differences.py \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_radiative_distributions.py \
 #    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_differences \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_distributions \
 #    --distribution-visualization ribbons \
 #    --zmax 16 \
+#    --case GATEIII \
 #    --lr 64
+
+python ${EXPERIMENT_ANALYZE_DIR}/plot_radiative_distributions_new.py \
+  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/radiative_distributions \
+  --detailed-calc true \
+  --zmax 16 \
+  --yslice 132.5 \
+  --case GATEIII \
+  --lr 64
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------

@@ -116,21 +116,39 @@ echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
-echo "Atmospheric Heating Rates:"
-srun --mpi=pmi2 -n ${SLURM_NTASKS} \
-   python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
-    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
-    --zmax 16
+echo "Absorbed Flux:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
+  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/abs_flux \
+  --detailed-calc true \
+  --zmax 16 \
+  --yslice 132.5
 
-echo "Surface Heating Rates:"
-srun --mpi=pmi2 -n ${SLURM_NTASKS} \
-  python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
-    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
-    --case GATEIII
+echo "Net Surface Flux:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/net_sfc_flux \
+  --detailed-calc true
+
+#echo "Atmospheric Heating Rates:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_heating.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_heating \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --yslice 132.5 \
+#  --case GATEIII
+
+#echo "Surface Heating Rates:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_heating.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_heating \
+#  --detailed-calc false \
+#  --case GATEIII
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------

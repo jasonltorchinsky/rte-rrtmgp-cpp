@@ -17,6 +17,9 @@ from matplotlib.colors import LogNorm
 from matplotlib.lines import Line2D
 from matplotlib.patches import Patch
 
+from calc_atm_heating import calc_atm_heating
+from consts import rho_w, cp_sw, h_m, sec_per_day
+
 
 def log(msg, comm=None, root_only=True):
     ts = pytime.strftime("%Y-%m-%d %H:%M:%S")
@@ -295,7 +298,6 @@ def plot_triptych_pcolormesh(
             seg_edges = t_edges[i_start:i_end + 1]
             seg_H = Hs[row][:, i_start:i_end]
 
-            heating_cmap = "hot"
             flux_cmap = "magma"
 
             if np.any(np.isfinite(seg_H)):
@@ -404,15 +406,14 @@ def plot_triptych_ribbons(
     ]
     legend_labels = ["Median", "40-60%", "20-80%", "5-95%", "Min / Max"]
 
-    if legend_handles and legend_labels:
-        fig.legend(
-            legend_handles,
-            legend_labels,
-            loc="upper center",
-            ncol=min(len(legend_labels), 6),
-            bbox_to_anchor=(0.5, 1.04),
-            frameon=True,
-        )
+    fig.legend(
+        legend_handles,
+        legend_labels,
+        loc="upper center",
+        ncol=min(len(legend_labels), 6),
+        bbox_to_anchor=(0.5, 1.04),
+        frameon=True,
+    )
 
     fig.supxlabel("Time Since Simulation Start [Hours]")
     fig.supylabel(flux_ylabel)
@@ -552,20 +553,15 @@ def main():
     parser.add_argument("--time-units", type=str, default="hours", choices=["hours"])
     parser.add_argument("--lr", type=str, default=None)
     parser.add_argument("--zmax", type=float, default=None)
-    parser.add_argument(
-        "--distribution-visualization",
-        action="store",
-        type=str,
-        required=False,
-        choices=("pcolormesh", "boxplot", "ribbons", "violin"),
-        default=None,
-    )
+    parser.add_argument("--distribution-visualization", action="store", type=str, required=False,
+        choices=("pcolormesh", "boxplot", "ribbons", "violin"), default=None)
     parser.add_argument("--figure-dpi", action="store", type=int, required=False, default=200)
     parser.add_argument("--figure-height", action="store", type=float, required=False, default=9.0)
     parser.add_argument("--figure-width-per-day", action="store", type=float, required=False, default=3.6)
     parser.add_argument("--distribution-subsample", action="store", type=int, required=False, default=0)
     parser.add_argument("--violin-max-per-day", action="store", type=int, required=False, default=12)
     parser.add_argument("--timings", action="store", type=str2bool, required=False, default=True)
+    parser.add_argument("--case", action="store", type=str, required=False, default="")
 
     args = parser.parse_args()
 
@@ -598,6 +594,7 @@ def main():
         log(f"Output dir: {output_dir}", comm)
         log(f"Plot dir:   {viz_dir}", comm)
         log(f"Visualizations: {visualizations_to_make}", comm)
+        log(f"Case: {args.case}", comm)
 
     pairs = find_pairs(input_dir, output_dir)
     if rank == 0:
@@ -623,13 +620,20 @@ def main():
 
     os.makedirs(viz_dir, exist_ok=True)
 
-    fluxes = [
+    diagnostics = [
         ("sw_sfc_up", r"Upwelling Surface Flux $\left[W\,m^{-2}\right]$", "columns"),
         ("sw_sfc_dn", r"Downwelling Surface Flux $\left[W\,m^{-2}\right]$", "columns"),
         ("sw_tod_up", r"Upwelling Top-of-Domain Flux $\left[W\,m^{-2}\right]$", "columns"),
         ("flux_abs", r"Absorbed Flux $\left[W\,m^{-3}\right]$", "cells"),
         ("flux_abs_vi", r"Vertically-Integrated Absorbed Flux $\left[W\,m^{-2}\right]$", "columns"),
+        ("net_sfc_flux", r"Net Surface Flux $\left[W\,m^{-2}\right]$", "columns"),
     ]
+
+    if args.case == "GATEIII":
+        diagnostics.extend([
+            ("sfc_heating", r"Surface Heating Rate $\left[K\,d^{-1}\right]$", "columns"),
+            ("atm_heating", r"Atmospheric Heating Rate $\left[K\,d^{-1}\right]$", "cells"),
+        ])
 
     for lr_tag, (in_path, out_path) in pairs.items():
         t0_wall = MPI.Wtime()
@@ -724,9 +728,9 @@ def main():
             day_loc_col = day_valid_3d[:, y0:y1, :].reshape(nt, -1)[:, loc_a:loc_b]
         t_out1 = MPI.Wtime()
 
-        for flux_tag, flux_ylabel, count_kind in fluxes:
+        for flux_tag, flux_ylabel, count_kind in diagnostics:
             if rank == 0:
-                log(f"{lr_tag}: flux={flux_tag}", comm)
+                log(f"{lr_tag}: diagnostic={flux_tag}", comm)
 
             t_flux0 = MPI.Wtime()
             with xr.open_dataset(out_path, engine="netcdf4", decode_times=False) as ds_out:
@@ -778,6 +782,47 @@ def main():
                         .astype("float32").load().values
                         .reshape(nt, -1)[:, loc_a:loc_b]
                     )
+                    ray_loc = np.where(day_loc_col, ray_loc, np.nan)
+                    ts_loc = np.where(day_loc_col, ts_loc, np.nan)
+
+                elif flux_tag in ("net_sfc_flux", "sfc_heating"):
+                    ts_sfc_dn = (
+                        ds_out["sw_flux_dn"]
+                        .isel(time=slice(0, nt), lev=args.lev_sfc_idx, y=slice(y0, y1))
+                        .astype("float32").load().values
+                        .reshape(nt, -1)[:, loc_a:loc_b]
+                    )
+                    ts_sfc_up = (
+                        ds_out["sw_flux_up"]
+                        .isel(time=slice(0, nt), lev=args.lev_sfc_idx, y=slice(y0, y1))
+                        .astype("float32").load().values
+                        .reshape(nt, -1)[:, loc_a:loc_b]
+                    )
+
+                    rt_sfc_dn = (
+                        ds_out["rt_flux_sfc_dir"]
+                        .isel(time=slice(0, nt), y=slice(y0, y1))
+                        .astype("float32").load().values
+                        + ds_out["rt_flux_sfc_dif"]
+                        .isel(time=slice(0, nt), y=slice(y0, y1))
+                        .astype("float32").load().values
+                    ).reshape(nt, -1)[:, loc_a:loc_b]
+
+                    rt_sfc_up = (
+                        ds_out["rt_flux_sfc_up"]
+                        .isel(time=slice(0, nt), y=slice(y0, y1))
+                        .astype("float32").load().values
+                        .reshape(nt, -1)[:, loc_a:loc_b]
+                    )
+
+                    ts_loc = ts_sfc_dn - ts_sfc_up
+                    ray_loc = rt_sfc_dn - rt_sfc_up
+
+                    if flux_tag == "sfc_heating":
+                        denom = rho_w * cp_sw * h_m
+                        ts_loc = (ts_loc / denom) * sec_per_day
+                        ray_loc = (ray_loc / denom) * sec_per_day
+
                     ray_loc = np.where(day_loc_col, ray_loc, np.nan)
                     ts_loc = np.where(day_loc_col, ts_loc, np.nan)
 
@@ -846,6 +891,40 @@ def main():
                         ray_loc = rt_vi.reshape(nt, -1)[:, loc_a:loc_b].astype(np.float32, copy=False)
                         ray_loc = np.where(day_loc_col, ray_loc, np.nan)
                         ts_loc = np.where(day_loc_col, ts_loc, np.nan)
+
+                elif flux_tag == "atm_heating":
+                    in_time_index = xr.DataArray(
+                        time_idx[:nt],
+                        dims=("time",),
+                        coords={"time": np.arange(nt)},
+                    )
+
+                    ts_heat_da, rt_heat_da = calc_atm_heating(
+                        rad_tran_infile=in_path,
+                        rad_tran_outfile=out_path,
+                        in_time_index=in_time_index,
+                        out_time_index=slice(0, nt),
+                        y_index=slice(y0, y1),
+                        zmax_index=ilev_max - 1,
+                        detailed_calc=False,
+                    )
+
+                    ts_heat = ts_heat_da.astype("float32").load().values
+                    rt_heat = rt_heat_da.astype("float32").load().values
+
+                    if ts_heat.ndim != 4 or rt_heat.ndim != 4:
+                        raise ValueError(
+                            f"Expected atm_heating arrays with 4 dims [time, z, y, x]; "
+                            f"got ts={ts_heat.shape}, rt={rt_heat.shape}"
+                        )
+
+                    nlay = ts_heat.shape[1]
+                    ts_loc = ts_heat.reshape(nt, nlay, -1)[:, :, loc_a:loc_b].reshape(nt, -1).astype(np.float32, copy=False)
+                    ray_loc = rt_heat.reshape(nt, nlay, -1)[:, :, loc_a:loc_b].reshape(nt, -1).astype(np.float32, copy=False)
+
+                    day_loc_cell = np.repeat(day_loc_col[:, None, :], nlay, axis=1).reshape(nt, -1)
+                    ray_loc = np.where(day_loc_cell, ray_loc, np.nan)
+                    ts_loc = np.where(day_loc_cell, ts_loc, np.nan)
 
                 else:
                     raise ValueError(f"Unhandled flux_tag={flux_tag}")
