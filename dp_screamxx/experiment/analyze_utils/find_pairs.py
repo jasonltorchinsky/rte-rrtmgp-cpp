@@ -3,8 +3,8 @@ import os
 import re
 
 def find_pairs(input_dir, output_dir, lrs):
-    infiles = sorted(glob.glob(os.path.join(input_dir, "*.in.nc")))
-    outfiles = sorted(glob.glob(os.path.join(output_dir, "*.out.nc")))
+    infiles = sorted(glob.glob(os.path.join(input_dir, "*.in.nc")), reverse = True)
+    outfiles = sorted(glob.glob(os.path.join(output_dir, "*.out.nc")), reverse = True)
 
     paired_infiles = []
     paired_outfiles = []

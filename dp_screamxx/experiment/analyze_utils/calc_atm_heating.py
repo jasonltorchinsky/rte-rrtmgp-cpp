@@ -1,11 +1,11 @@
 import xarray as xr
 
-from calc_flux_abs import calc_flux_abs
-from consts import g, R_d,cp_d, cp_iw, cp_lw, sec_per_day
+from calc_abs_flux import calc_abs_flux
+from consts import g, R_d, cp_d, cp_iw, cp_lw, sec_per_day
 
 def calc_atm_heating(rad_tran_infile, rad_tran_outfile, in_time_index, out_time_index, 
     y_index = slice(0, None), zmax_index = None, detailed_calc = False):
-    [ts_flux_abs, rt_flux_abs] = calc_flux_abs(rad_tran_outfile, out_time_index,
+    [ts_abs_flux, rt_abs_flux] = calc_abs_flux(rad_tran_outfile, out_time_index,
         y_index, zmax_index)
 
     levmax_index = zmax_index
@@ -47,16 +47,17 @@ def calc_atm_heating(rad_tran_infile, rad_tran_outfile, in_time_index, out_time_
 
         mass_cell = mass_air + mass_lw + mass_iw
         cp_cell = ((cp_d * mass_air) + (cp_lw * mass_lw) + (cp_iw * mass_iw)) / mass_cell
+        
+        cp_cell = cp_cell.rename({"lay": "z"}).assign_coords(time = ts_abs_flux["time"].values)
     else:
         mass_cell = mass_air
         cp_cell = cp_d
 
-    mass_cell = mass_cell.rename({"lay": "z"}).assign_coords(time = ts_flux_abs["time"].values)
-    cp_cell = cp_cell.rename({"lay": "z"}).assign_coords(time = ts_flux_abs["time"].values)
+    mass_cell = mass_cell.rename({"lay": "z"}).assign_coords(time = ts_abs_flux["time"].values)
     density_cell = mass_cell / vol # [kg m^{-3}],  [time, lay, y, x]
 
     # ASSUME: --detailed-calc = False
-    ts_atm_heating = (ts_flux_abs / (density_cell * cp_cell)) * sec_per_day # [K d^{-1}]
-    rt_atm_heating = (rt_flux_abs / (density_cell * cp_cell)) * sec_per_day # [K d^{-1}]
+    ts_atm_heating = (ts_abs_flux / (density_cell * cp_cell)) * sec_per_day # [K d^{-1}]
+    rt_atm_heating = (rt_abs_flux / (density_cell * cp_cell)) * sec_per_day # [K d^{-1}]
 
     return [ts_atm_heating, rt_atm_heating]

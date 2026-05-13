@@ -3,16 +3,16 @@
 MPI-parallel combine of RTE NetCDF files into time-stacked outputs, using DP-SCREAM
 time coordinates mapped from filename stem + timestep index.
 
-Features
---------
-- Supports multiple input directories via repeated --input-dir.
-- Supports multiple DP-SCREAM files via repeated --dpscream-file.
-- Handles missing timestep indices naturally.
-- Final output contains only times for files actually present.
-- Duplicate timestep within an output group: warn, keep first.
-- Parallelizes within a group by assigning files/time slices across MPI ranks.
-- Writes to an intermediate Zarr store by region, then exports final NetCDF.
-- Reads DP-SCREAM metadata only on rank 0, then broadcasts to all ranks.
+Design notes
+------------
+This version avoids constructing a full time-expanded xarray template in memory.
+Instead, rank 0:
+
+1. Opens one representative input file
+2. Extracts variable metadata, dims, attrs, and coordinate information
+3. Creates a metadata-only Zarr store with final array shapes
+4. All ranks region-write their assigned time slices into the store
+5. Rank 0 optionally exports the completed Zarr store to NetCDF
 
 If you need help using SandiaAI Chat: https://wp.sandia.gov/sandia-ai-chat/how-to-use/
 """
@@ -32,6 +32,7 @@ from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import xarray as xr
+import zarr
 
 GRID_SCALARS = ("ngrid_x", "ngrid_y", "ngrid_z")
 
@@ -189,10 +190,14 @@ def out_path_for_group(example: Path, output_dir: Path, input_roots: List[Path],
     return output_dir / out_name
 
 
-def choose_chunks_for_var(da: xr.DataArray, time_chunk: int, xy_chunk: Optional[int]) -> Tuple[int, ...]:
+def choose_chunks_for_shape_dims(
+    dims: Tuple[str, ...],
+    shape: Tuple[int, ...],
+    time_chunk: int,
+    xy_chunk: Optional[int],
+) -> Tuple[int, ...]:
     chunks = []
-    for d in da.dims:
-        n = da.sizes[d]
+    for d, n in zip(dims, shape):
         if d == "time":
             chunks.append(min(time_chunk, n))
         elif d in ("x", "y"):
@@ -200,17 +205,6 @@ def choose_chunks_for_var(da: xr.DataArray, time_chunk: int, xy_chunk: Optional[
         else:
             chunks.append(n)
     return tuple(chunks)
-
-
-def build_zarr_encoding(ds: xr.Dataset, time_chunk: int, xy_chunk: Optional[int]) -> Dict[str, dict]:
-    enc = {}
-    for name, da in ds.variables.items():
-        if name in ds.dims:
-            continue
-        if da.ndim == 0:
-            continue
-        enc[name] = {"chunks": choose_chunks_for_var(da, time_chunk=time_chunk, xy_chunk=xy_chunk)}
-    return enc
 
 
 def list_rte_files(input_dirs: List[Path], pattern: str) -> List[Path]:
@@ -244,7 +238,7 @@ def build_groups(
     input_dirs: List[Path],
     pattern: str,
     kind_filter: str,
-    lr_filter: Optional[str],
+    lr_filter: Optional[set],
     dps_time_map: Dict[str, np.ndarray],
     quiet: bool,
 ):
@@ -258,7 +252,7 @@ def build_groups(
 
     groups = defaultdict(list)
     warnings_list = []
-    seen = {}  # (kind, lr, t_index) -> first_path
+    seen = {}
 
     for p in sorted(files):
         kind = kind_from_name(p)
@@ -315,7 +309,6 @@ def build_group_entries(files: List[Path], dps_time_map: Dict[str, np.ndarray]) 
                 "base": base,
             }
         )
-
     entries.sort(key=lambda e: (e["time_hours"], e["t_index"], e["path"].name))
     for i, e in enumerate(entries):
         e["time_pos"] = i
@@ -350,7 +343,7 @@ def preprocess_one_file(
     return ds
 
 
-def build_template_from_first(
+def infer_store_metadata(
     first_path: Path,
     *,
     engine: Optional[str],
@@ -358,44 +351,78 @@ def build_template_from_first(
     keep_t_index: bool,
 ):
     with open_ds(first_path, engine=engine) as ds0:
-        scalar_vars = {}
-        for v in GRID_SCALARS:
-            if v in ds0.variables and ds0[v].ndim == 0:
-                scalar_vars[v] = ds0[v].load()
-
+        ds0 = ds0.drop_vars([v for v in GRID_SCALARS if v in ds0.variables and ds0[v].ndim == 0], errors="ignore")
         if "time" in ds0.variables and "time" not in ds0.dims:
             ds0 = ds0.drop_vars("time")
-
-        ds0 = ds0.drop_vars([v for v in GRID_SCALARS if v in ds0.variables and ds0[v].ndim == 0], errors="ignore")
-        ds0 = ds0.expand_dims(time=np.array([entries[0]["time_hours"]], dtype=np.float64))
         ds0 = add_vertical_coords(ds0)
-        ds0 = ds0.isel(time=slice(0, 1)).copy()
+
+        scalar_vars = {}
+        scalar_attrs = {}
+        scalar_dtypes = {}
+
+        coord_info = {}
+        data_var_info = {}
 
         time_vals = np.array([e["time_hours"] for e in entries], dtype=np.float64)
-        ds0 = ds0.reindex(time=time_vals)
-        ds0 = ds0.assign_coords(
-            time=xr.DataArray(
-                time_vals,
-                dims=("time",),
-                attrs={"units": "hours since simulation start", "long_name": "time"},
-            )
-        )
+        t_index_vals = np.array([e["t_index"] for e in entries], dtype=np.int64)
 
-        if keep_t_index:
-            ds0["t_index"] = xr.DataArray(
-                np.array([e["t_index"] for e in entries], dtype=np.int64),
-                dims=("time",),
-                attrs={"long_name": "RTE timestep index corresponding to DP-SCREAM time index"},
-            )
+        for name, da in ds0.coords.items():
+            coord_info[name] = {
+                "dims": da.dims,
+                "shape": da.shape,
+                "dtype": np.dtype(da.dtype),
+                "attrs": dict(da.attrs),
+                "values": np.asarray(da.values),
+            }
 
-        for v, da in scalar_vars.items():
-            ds0[v] = da
+        for v in GRID_SCALARS:
+            if v in ds0.variables and ds0[v].ndim == 0:
+                scalar_vars[v] = np.asarray(ds0[v].values)
+                scalar_attrs[v] = dict(ds0[v].attrs)
+                scalar_dtypes[v] = np.dtype(ds0[v].dtype)
 
-        return ds0, scalar_vars
+        for name, da in ds0.data_vars.items():
+            if da.ndim == 0:
+                scalar_vars[name] = np.asarray(da.values)
+                scalar_attrs[name] = dict(da.attrs)
+                scalar_dtypes[name] = np.dtype(da.dtype)
+                continue
+
+            dims = tuple("time" if d == "time" else d for d in da.dims)
+            shape = list(da.shape)
+
+            if "time" in da.dims:
+                time_axis = da.dims.index("time")
+                shape[time_axis] = len(entries)
+            else:
+                dims = ("time",) + dims
+                shape = [len(entries)] + shape
+
+            data_var_info[name] = {
+                "dims": tuple(dims),
+                "shape": tuple(shape),
+                "dtype": np.dtype(da.dtype),
+                "attrs": dict(da.attrs),
+            }
+
+        time_attrs = {"units": "hours since simulation start", "long_name": "time"}
+
+        return {
+            "coord_info": coord_info,
+            "data_var_info": data_var_info,
+            "scalar_vars": scalar_vars,
+            "scalar_attrs": scalar_attrs,
+            "scalar_dtypes": scalar_dtypes,
+            "time_vals": time_vals,
+            "time_attrs": time_attrs,
+            "t_index_vals": t_index_vals,
+            "keep_t_index": keep_t_index,
+            "global_attrs": dict(ds0.attrs),
+        }
 
 
-def initialize_zarr_store(
-    template_ds: xr.Dataset,
+def initialize_zarr_store_metadata_only(
+    meta: dict,
     zarr_path: Path,
     *,
     time_chunk: int,
@@ -403,7 +430,6 @@ def initialize_zarr_store(
     replace_existing: bool,
     lock_writes: bool,
     quiet: bool,
-    zarr_consolidated: bool,
 ):
     lock_dir = zarr_path.with_name(zarr_path.name + ".init_lock")
     lock_ctx = _mkdir_lock(lock_dir, quiet=quiet) if lock_writes else nullcontext()
@@ -418,16 +444,89 @@ def initialize_zarr_store(
         if tmp.exists():
             _safe_rmtree(tmp)
 
-        enc = build_zarr_encoding(template_ds, time_chunk=time_chunk, xy_chunk=xy_chunk)
         if not quiet:
-            log(f"Initializing Zarr store template -> {tmp}")
+            log(f"Initializing metadata-only Zarr store -> {tmp}")
 
-        template_ds.to_zarr(tmp, mode="w", consolidated=zarr_consolidated, encoding=enc)
+        root = zarr.open_group(str(tmp), mode="w")
+
+        for k, v in meta["global_attrs"].items():
+            root.attrs[k] = v
+
+        time_vals = meta["time_vals"]
+        arr = root.create_dataset(
+            "time",
+            shape=time_vals.shape,
+            chunks=(min(time_chunk, len(time_vals)),),
+            dtype=time_vals.dtype,
+            overwrite=True,
+        )
+        arr[:] = time_vals
+        for k, v in meta["time_attrs"].items():
+            arr.attrs[k] = v
+        arr.attrs["_ARRAY_DIMENSIONS"] = ["time"]
+
+        if meta["keep_t_index"]:
+            t_index_vals = meta["t_index_vals"]
+            arr = root.create_dataset(
+                "t_index",
+                shape=t_index_vals.shape,
+                chunks=(min(time_chunk, len(t_index_vals)),),
+                dtype=t_index_vals.dtype,
+                overwrite=True,
+            )
+            arr[:] = t_index_vals
+            arr.attrs["long_name"] = "RTE timestep index corresponding to DP-SCREAM time index"
+            arr.attrs["_ARRAY_DIMENSIONS"] = ["time"]
+
+        for name, info in meta["coord_info"].items():
+            if name == "time":
+                continue
+            arr = root.create_dataset(
+                name,
+                shape=info["shape"],
+                chunks=info["shape"],
+                dtype=info["dtype"],
+                overwrite=True,
+            )
+            arr[:] = info["values"]
+            for k, v in info["attrs"].items():
+                arr.attrs[k] = v
+            arr.attrs["_ARRAY_DIMENSIONS"] = list(info["dims"])
+
+        for name, val in meta["scalar_vars"].items():
+            arr = root.create_dataset(
+                name,
+                shape=(),
+                dtype=meta["scalar_dtypes"][name],
+                overwrite=True,
+            )
+            arr[()] = val
+            for k, v in meta["scalar_attrs"][name].items():
+                arr.attrs[k] = v
+            arr.attrs["_ARRAY_DIMENSIONS"] = []
+
+        for name, info in meta["data_var_info"].items():
+            chunks = choose_chunks_for_shape_dims(
+                info["dims"],
+                info["shape"],
+                time_chunk=time_chunk,
+                xy_chunk=xy_chunk,
+            )
+            arr = root.create_dataset(
+                name,
+                shape=info["shape"],
+                chunks=chunks,
+                dtype=info["dtype"],
+                overwrite=True,
+                fill_value=np.nan if np.issubdtype(info["dtype"], np.floating) else 0,
+            )
+            for k, v in info["attrs"].items():
+                arr.attrs[k] = v
+            arr.attrs["_ARRAY_DIMENSIONS"] = list(info["dims"])
 
         if not quiet:
             log(f"Committing initialized Zarr store -> {zarr_path}")
         _atomic_commit_dir(tmp, zarr_path, replace_existing=replace_existing)
-
 
 def write_time_slices_to_zarr(
     entries: List[dict],
@@ -436,39 +535,40 @@ def write_time_slices_to_zarr(
     engine: Optional[str],
     quiet: bool,
     keep_t_index: bool,
-    zarr_consolidated: bool,
 ):
     my_entries = [e for i, e in enumerate(entries) if (i % NRANKS) == RANK]
 
     if not quiet:
-        log(f"Assigned {len(my_entries)} time slice(s) for regional Zarr writes", every_rank=True)
+        log(f"Assigned {len(my_entries)} time slice(s) for direct Zarr writes", every_rank=True)
+
+    root = zarr.open_group(str(zarr_path), mode="r")
 
     n_local = len(my_entries)
     for j, e in enumerate(my_entries, start=1):
-        ds = preprocess_one_file(
+        with preprocess_one_file(
             e["path"],
             engine=engine,
             time_hours=e["time_hours"],
             t_index=e["t_index"],
             keep_t_index=keep_t_index,
-        )
+        ) as ds:
 
-        region = {"time": slice(e["time_pos"], e["time_pos"] + 1)}
+            time_pos = e["time_pos"]
 
-        # For region writes, xarray requires every written variable to share
-        # at least one dimension with the region dims, here just "time".
-        keep_data_vars = [name for name, var in ds.data_vars.items() if "time" in var.dims]
-        ds_region = ds[keep_data_vars].assign_coords(time=ds["time"])
+            for name, da in ds.data_vars.items():
+                if "time" not in da.dims:
+                    continue
 
-        ds_region.to_zarr(
-            zarr_path,
-            mode="r+",
-            region=region,
-            consolidated=zarr_consolidated,
-        )
+                arr = root[name]
+                values = np.asarray(da.values)
 
-        ds_region.close()
-        ds.close()
+                if da.dims[0] == "time":
+                    arr[time_pos:time_pos + 1, ...] = values
+                else:
+                    # Should not normally happen because preprocess expands time,
+                    # but keep this defensive.
+                    values = np.expand_dims(values, axis=0)
+                    arr[time_pos:time_pos + 1, ...] = values
 
         if (not quiet) and (j == 1 or j == n_local or j % 10 == 0):
             log(
@@ -477,14 +577,12 @@ def write_time_slices_to_zarr(
                 every_rank=True,
             )
 
-
 def export_zarr_to_netcdf(
     zarr_path: Path,
     out_path: Path,
     *,
     engine: Optional[str],
     quiet: bool,
-    zarr_consolidated: bool,
     replace_existing: bool,
 ):
     if out_path.exists():
@@ -495,7 +593,7 @@ def export_zarr_to_netcdf(
     if not quiet:
         log(f"Opening Zarr for final export -> {zarr_path}")
 
-    ds = xr.open_zarr(zarr_path, consolidated=zarr_consolidated)
+    ds = xr.open_zarr(str(zarr_path), consolidated=False)
 
     if "time" in ds.coords:
         ds = ds.assign_coords(time=ds["time"].astype("float64"))
@@ -527,7 +625,6 @@ def combine_one_group(
     keep_t_index: bool,
     lock_writes: bool,
     replace_existing: bool,
-    zarr_consolidated: bool,
     keep_zarr: bool,
     time_chunk: int,
     xy_chunk: Optional[int],
@@ -558,23 +655,26 @@ def combine_one_group(
 
     if RANK == 0:
         t0 = time.time()
-        template_ds, _scalar_vars = build_template_from_first(
+        if not quiet:
+            log(f"[{kind} lr_{lr}] Inferring metadata from first file: {first_path}")
+        meta = infer_store_metadata(
             first_path,
             engine=engine,
             entries=entries,
             keep_t_index=keep_t_index,
         )
-        initialize_zarr_store(
-            template_ds,
+
+        if not quiet:
+            log(f"[{kind} lr_{lr}] Initializing Zarr store: {zarr_path}")
+        initialize_zarr_store_metadata_only(
+            meta,
             zarr_path,
             time_chunk=time_chunk,
             xy_chunk=xy_chunk,
             replace_existing=replace_existing,
             lock_writes=lock_writes,
             quiet=quiet,
-            zarr_consolidated=zarr_consolidated,
         )
-        template_ds.close()
         if not quiet:
             log(f"[{kind} lr_{lr}] Template/init time: {time.time() - t0:.1f} s")
 
@@ -587,9 +687,9 @@ def combine_one_group(
         engine=engine,
         quiet=quiet,
         keep_t_index=keep_t_index,
-        zarr_consolidated=zarr_consolidated,
     )
     barrier()
+
     if RANK == 0 and not quiet:
         log(f"[{kind} lr_{lr}] Parallel Zarr slice-write time: {time.time() - t1:.1f} s")
 
@@ -600,13 +700,13 @@ def combine_one_group(
             out_path,
             engine=engine,
             quiet=quiet,
-            zarr_consolidated=zarr_consolidated,
             replace_existing=replace_existing,
         )
         if not keep_zarr:
             if not quiet:
                 log(f"Removing intermediate Zarr store: {zarr_path}")
             _safe_rmtree(zarr_path)
+
         if not quiet:
             log(f"[{kind} lr_{lr}] NetCDF export time: {time.time() - t2:.1f} s")
             log(f"[{kind} lr_{lr}] Total group time: {time.time() - t_group0:.1f} s")
@@ -635,8 +735,6 @@ def main():
     ap.add_argument("--quiet", action="store_true")
 
     ap.add_argument("--keep-zarr", action="store_true")
-    ap.add_argument("--zarr-consolidated", action="store_true")
-    ap.add_argument("--suppress-zarr-v3-warning", action="store_true")
     ap.add_argument("--keep-t-index", action="store_true")
 
     ap.add_argument("--time-chunk", type=int, default=1,
@@ -656,12 +754,11 @@ def main():
     except Exception:
         pass
 
-    if args.suppress_zarr_v3_warning:
-        warnings.filterwarnings(
-            "ignore",
-            message=r"Consolidated metadata is currently not part in the Zarr format 3 specification.*",
-            category=UserWarning,
-        )
+    warnings.filterwarnings(
+        "ignore",
+        message=r"Consolidated metadata is currently not part in the Zarr format 3 specification.*",
+        category=UserWarning,
+    )
 
     if args.scheduler is not None:
         import dask  # type: ignore
@@ -725,7 +822,6 @@ def main():
             keep_t_index=args.keep_t_index,
             lock_writes=args.lock_writes,
             replace_existing=args.replace_existing,
-            zarr_consolidated=args.zarr_consolidated,
             keep_zarr=args.keep_zarr,
             time_chunk=args.time_chunk,
             xy_chunk=args.xy_chunk,

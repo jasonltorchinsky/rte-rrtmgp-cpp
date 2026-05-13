@@ -11,12 +11,11 @@ import xarray as xr
 
 # Local imports
 from consts import rho_sw, cp_sw, h_m, sec_per_day
-from find_yslice_index import find_yslice_index
 from find_zmax_index import find_zmax_index
 from find_pairs import find_pairs
 from find_daytime_slices import find_daytime_slices
 from calc_atm_heating import calc_atm_heating
-from calc_flux_abs import calc_flux_abs
+from calc_abs_flux import calc_abs_flux
 from calc_sfc_net import calc_sfc_net
 from calc_tod_up import calc_tod_up
 from calc_hwp import calc_hwp
@@ -37,8 +36,6 @@ def main():
         help = "Resolution factor tag.")
     parser.add_argument("--zmax", nargs = "?", default = 16., type = float,
         help = "Maximum height for calculations [km].")
-    parser.add_argument("--yslice", nargs = "?", default = 132.5, type = float,
-        help = "ycoordinate for XZ-slice [km].")
     parser.add_argument("--case", nargs = "?", default = "", type = str,
         help = "Case to determine heating rate calculation parameters.")
     parser.add_argument("--detailed-calc", nargs = "?", default = False, type = bool,
@@ -53,7 +50,6 @@ def main():
     recalculate = args.recalculate
     lrs = [str(lr) for lr in args.lr.split(",")]
     zmax = args.zmax
-    yslice = args.yslice
     case = args.case
     detailed_calc = args.detailed_calc
 
@@ -107,17 +103,18 @@ def main():
         #-----------------------------------------------------------------------
         # Plot multiple quantities
         #-----------------------------------------------------------------------
-        # Net surface flux, surface heating, absorbed radiative flux, 
-        # atmospheric heating
         if case == "GATEIII":
-            field_keys = ["sfc_heating", "atm_heating", "tod_up"]
-            supylabels = [r"Surface Heating Rate $\left[ K\,d^{-1} \right]$", 
+            field_keys = ["net_sfc_flux", "abs_flux", "sfc_heating", "atm_heating", "tod_up"]
+            supylabels = [r"Net Surface Flux $\left[ W\,m^{-2} \right]$",
+                r"Absorbed Flux $\left[ W\,m^{-3} \right]$",
+                r"Surface Heating Rate $\left[ K\,d^{-1} \right]$", 
                 r"Atmosphere Heating Rate $\left[ K\,d^{-1} \right]$",
                 r"Top-of-Domain Upwelling Flux $\left[ W\,m^{-2} \right]$"]
         else:
-            field_keys = ["net_sfc_flux", "abs_flux", "tod_up"]
+            field_keys = ["net_sfc_flux", "abs_flux", "atm_heating", "tod_up"]
             supylabels = [r"Net Surface Flux $\left[ W\,m^{-2} \right]$",
                 r"Absorbed Flux $\left[ W\,m^{-3} \right]$",
+                r"Atmosphere Heating Rate $\left[ K\,d^{-1} \right]$",
                 r"Top-of-Domain Upwelling Flux $\left[ W\,m^{-2} \right]$"]
 
         for jj in range(len(field_keys)):
@@ -184,13 +181,13 @@ def main():
                 elif field_key == "atm_heating":
                     [ts_field, rt_field] = calc_atm_heating(rad_tran_infile,
                         rad_tran_outfile, in_daytime_slice, out_daytime_slice, 
-                        detailed_calc = detailed_calc) # [K d^{-1}], [time, lay, x]
+                        zmax_index = zmax_index, detailed_calc = detailed_calc) # [K d^{-1}], [time, lay, x]
                 elif field_key == "net_sfc_flux":
                     [ts_field, rt_field] = calc_sfc_net(rad_tran_outfile, 
                         out_daytime_slice) # [W m^{-2}], [time, y, x]
                 elif field_key == "abs_flux":
-                    [ts_field, rt_field] = calc_flux_abs(rad_tran_outfile, 
-                        out_daytime_slice) # [W m^{-3}], [time, lay, x]
+                    [ts_field, rt_field] = calc_abs_flux(rad_tran_outfile, 
+                        out_daytime_slice, zmax_index = zmax_index) # [W m^{-3}], [time, lay, x]
                 elif field_key == "tod_up":
                     [ts_field, rt_field] = calc_tod_up(rad_tran_outfile, 
                         out_daytime_slice) # [W m^{-2}], [time, y, x]
@@ -247,10 +244,11 @@ def main():
                     color = "#000000", linewidth = 2.0)
 
                 #---------------------------------------------------------------
-                # Set common parameters for plots in column
+                # Set common elements for plots in column
                 #---------------------------------------------------------------
                 xticks = [time.min(), (time.min() + time.max()) / 2., time.max()]
                 for ll in range(3):
+                    axs[ll,kk].axvline(xticks[1], color = "gray", linewidth = 1.0)
                     axs[ll,kk].set_xlim(xticks[0], xticks[2])
                     axs[ll,kk].set_xticks(xticks)
                 axs[2,kk].set_xticklabels(["{0:g}".format(v) for v in xticks])

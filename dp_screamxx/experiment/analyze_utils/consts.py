@@ -7,3 +7,8 @@ cp_d = 1.0061e3 # Specific heat of dry air at constant pressure [J kg^{-1} K^{-1
 cp_lw = 4184. # Specific heat of liquid water at constant pressure [J kg^{-1} K^{-1}]
 cp_iw = 2093. # Specific heat of ice water at constant pressure [J kg^{-1} K^{-1}]
 sec_per_day = 86400. # Seconds per day [s d^{-1}]
+
+heating_cmap = "hot"
+flux_cmap = "magma"
+plot_colors = ["#332288", "#117733", "#44AA99", "#88CCEE", 
+    "#DDCC77", "#CC6677", "#AA4499", "#882255"]

@@ -1,6 +1,6 @@
 import xarray as xr
 
-def calc_flux_abs(rad_tran_outfile, out_time_index, y_index = slice(0, None), zmax_index = None):
+def calc_abs_flux(rad_tran_outfile, out_time_index, y_index = slice(0, None), zmax_index = None):
     levmax_index = zmax_index
     laymax_index = zmax_index
     if zmax_index is not None:

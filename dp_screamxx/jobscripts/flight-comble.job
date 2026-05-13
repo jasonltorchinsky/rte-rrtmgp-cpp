@@ -1,23 +1,31 @@
-# Run parameters
-export CUDA_VISIBLE_DEVICES=0
+#!/bin/bash
+#SBATCH --time=0-18:00:00
+#SBATCH --nodes=1
+#SBATCH --ntasks-per-node=8
+#SBATCH --cpus-per-task=1
+#SBATCH --account=fy260144
+#SBATCH --reservation=flight-cldera
+#SBATCH --job-name=2020-03-12
+#SBATCH --output=%j.out
+#SBATCH --error=%j.err
 
 # Machine-specific DP-SCREAMXX directories
-DP_SCREAMXX_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
-DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_300x300
+DP_SCREAMXX_DATA_DIR=/pscratch/jltorch/ml3drt/dpxx # DP-SCREAMXX output parent directory
+DP_SCREAMXX_RUN_NAME=scream_dpxx_COMBLE_400x400
 DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.1974-08-30-00000
+DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
 DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
 
 # Machine-specific RTE-RRTMGP-CPP I/O directories
-RTE_RRTMGP_CPP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
-RTE_RRTMGP_CPP_RUN_NAME=1974-08-30
+RTE_RRTMGP_CPP_DIR=/pscratch/jltorch/ml3drt/rte-rrtmgp-cpp
+RTE_RRTMGP_CPP_RUN_NAME=2020-03-12
 RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
 RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
 RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
 RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
 RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
 RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
-RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_FILE_BASE}
+RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_CPP_FILE_BASE}
 
 mkdir -p ${RTE_RRTMGP_CPP_DIR}
 mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
@@ -26,26 +34,12 @@ mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
 
 # RTE-RRTMGP-CPP directories
 RTE_RRTMGP_CPP_DIR=$(realpath "../..") # Source directory
-RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
-RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
-RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
 DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
 EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
 EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
-# Link RRTMGP files
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
-ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
-
 # Set Case - for Python Scripts
-CASE_NAME="GATEIII"
-
-# Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[]"
-COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
+CASE_NAME="COMBLE"
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
@@ -58,10 +52,28 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
+#STAGE_NAME="DP-SCREAM OUTPUT VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "OLR:"
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+#  python ${EXPERIMENT_ANALYZE_DIR}/plot_olr.py \
+#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
+#    --distribution-visualization ribbons
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
 #STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
 #echo "Beginning ${STAGE_NAME}..."
 
-#mpirun -np 256 \
+# Set SZAs, times, and coarsening factors
+#SZAS_PYTHON="[]"
+#COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
+
+#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
 #  python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
 #    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
 #    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
@@ -71,61 +83,53 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
-#echo "Beginning ${STAGE_NAME}..."
+STAGE_NAME="RTE-RRTMGP-CPP+RT Combination"
+echo "Beginning ${STAGE_NAME}..."
 
-#python run_rte_rrtmgp_cpp_timeslices_multi_gpu_new.py \
-#  --rte-rrtmgp-cpp-input-dir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#  --rte-rrtmgp-cpp-executable-dir ${RTE_RRTMGP_CPP_BUILD_DIR} \
-#  --rte-rrtmgp-cpp-output-dir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#  --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
-#  --rte-data-dir ${RTE_DATA_DIR} \
-#  --work-dir ${RTE_RRTMGP_CPP_INPUT_DIR}/.rte_rrtmgp_work \
-#  --raytracing 16384 \
-#  --gpus "[3,4,5,6,7,8,9,10,11,12,13,14,15]" \
-#  --missing-output-list /ascldap/users/jltorch/codes/rte-rrtmgp-cpp/jasonltorchinsky/timeseries-analysis/dp_screamxx/jobscripts/missing_files.txt
+SEPARATE_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/separate_input
+COMBINED_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
 
-#echo "${STAGE_NAME} complete!"
+echo "SEPARATE_DIR: ${SEPARATE_DIR}"
+echo "COMBINED_DIR: ${COMBINED_DIR}"
+echo "DP_SCREAM FILE: ${DP_SCREAMXX_OUTPUT_FILE_PATH}"
+
+srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+  python ${EXPERIMENT_DIR}/combine_rte_rrtmgp_cpp_files_new.py \
+    --input-dir ${SEPARATE_DIR} \
+    --output-dir ${COMBINED_DIR} \
+    --dpscream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+    --kind in \
+    --engine netcdf4 \
+    --scheduler single-threaded \
+    --replace-existing \
+    --lock-writes \
+    --keep-t-index \
+    --time-chunk 1 \
+    --xy-chunk 128
+
+echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#STAGE_NAME="DP-SCREAM Visualization"
+#STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
-
-#python ${EXPERIMENT_ANALYZE_DIR}/animate_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-
-#python ${EXPERIMENT_ANALYZE_DIR}/visualize_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+#
 #echo "${STAGE_NAME} complete!"
-
-#mpirun -np 32 python ${EXPERIMENT_ANALYZE_DIR}/plot_olr.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
-#    --distribution-visualization ribbons
-
-#python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-
-#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
-echo "Atmosphere Radiative Transfer:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
-  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran \
-  --detailed-calc true \
-  --zmax 16 \
-  --yslice 132.5 \
-  --case ${CASE_NAME} \
-  --lr 64
+#echo "Atmosphere Radiative Transfer:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --yslice 132.5 \
+#  --case ${CASE_NAME}
 
 #echo "Surface Radiative Transfer:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_rad_tran.py \
@@ -133,8 +137,7 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
 #  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/sfc_rad_tran \
 #  --detailed-calc true \
-#  --case ${CASE_NAME} \
-#  --lr 64
+#  --case ${CASE_NAME}
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
@@ -148,20 +151,18 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
 #  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/rad_tran_errors \
-#  --detailed-calc false \
+#  --detailed-calc true \
 #  --zmax 16 \
-#  --case ${CASE_NAME} \
-#  --lr 32,64
+#  --case ${CASE_NAME}
 
-#echo "Radiative Transfer Distributions:"
+#echo "Radiative Distributions:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_rad_tran_dists.py \
 #  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/rad_tran_dists \
 #  --detailed-calc true \
 #  --zmax 16 \
-#  --case ${CASE_NAME} \
-#  --lr 64
+#  --case ${CASE_NAME}
 
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
