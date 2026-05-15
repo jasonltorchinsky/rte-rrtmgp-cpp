@@ -1,899 +1,765 @@
 #!/usr/bin/env python3
 """
-Combine per-timestep RTE-RRTMGP-CPP NetCDF files into time-stacked outputs
-using DP-SCREAM time coordinates.
+combine_scream_timesteps.py
 
-Key properties:
-- MPI-enabled with mpi4py if available; serial fallback if not.
-- Memory-safe for large datasets: does not build a full time-expanded xarray Dataset.
-- Initializes Zarr from metadata only, then writes per-time slices directly via zarr array assignment.
-- Avoids xarray region writes for slice assignment.
-- Rank 0 handles discovery, grouping, metadata inference, Zarr initialization, and final NetCDF export.
-- All ranks participate in distributed per-time-slice writes.
+Combine many single-timestep NETCDF4 files into one combined NETCDF4 file per lr group.
 
-Requirements:
-- Python 3
-- xarray
-- zarr
+Key features
+------------
+- Pure Python workflow
+- MPI-parallel across many nodes/ranks using mpi4py
+- Parallel NETCDF4 I/O via netCDF4-python (requires parallel-enabled NetCDF/HDF5)
+- Dynamic resource reallocation across lr groups:
+    * initially allocate ranks proportional to estimated work
+    * when an lr group finishes, all of its ranks are reassigned to the coarsest
+      still-running lr group
+- Preserves dimensions, global attributes, variable attributes
+- Static variables copied once
+- Time-dependent variables written as (time, ...) exactly
+- Reconstructs output time from t_XXX file-name index using the original DP-SCREAM
+  time coordinate
+- Skips missing time indices
+- Detects corrupt/unreadable input files and reports them
+- Provides periodic progress / ETA logging
+- Handles output filename collisions by appending _1, _2, ...
+
+Assumptions
+-----------
+- Input filenames look like:
+  scream_dpxx_COMBLE_400x400.scream.INSTANT.nmins_x15.2020-03-12-79200.t_033.lr_01.in.nc
+- Output filename should look like:
+  scream_dpxx_COMBLE_400x400.scream.INSTANT.nmins_x15.2020-03-12-79200.lr_01.in.nc
+- Each input file contains exactly one scalar variable named `time`, but that variable
+  is ignored and reconstructed from the DP-SCREAM parent file time axis.
+- The DP-SCREAM parent file path is supplied explicitly with --dpscream-file.
+- Static variables are:
+    ngrid_x, ngrid_y, ngrid_z, x, xh, y, yh, z, zh, z_lay, z_lev
+- All other variables except time are considered time-dependent and are written with a
+  leading `time` dimension.
+- All files within one lr group have identical schema.
+
+Performance notes
+-----------------
+- Best performance is obtained when launched with many MPI ranks across nodes.
+- Each lr group is handled by an MPI subcommunicator.
+- Within a group, variables are split across ranks to avoid duplicative reading/writing.
+- Parallel NETCDF writing is used to let many ranks write different variables concurrently.
+- Chunking/compression defaults are conservative because fastest wallclock is prioritized.
+  Compression is off by default.
+- Reading is file-by-file, variable-by-variable, avoiding accumulation of many timesteps
+  in memory.
+- This is optimized for Lustre input/output paths; do not use NFS for scratch/output.
+
+Requirements
+------------
+- Python >= 3.9
+- mpi4py
+- netCDF4 built against parallel NetCDF/HDF5
 - numpy
-- netCDF4 or another engine supported by xarray for NetCDF reads
-- mpi4py optional
+
+Example launch
+--------------
+srun -N 8 -n 448 python combine_scream_timesteps.py \
+  --separate-dir /lustre/project/in_sep \
+  --combined-dir /lustre/project/out_combined \
+  --dpscream-file /lustre/project/orig/scream_dpxx_COMBLE_400x400.scream.INSTANT.nmins_x15.2020-03-12-79200.nc \
+  --lr 01,02,04,08,16,32,64 \
+  --preserve-precision True
 """
 
 from __future__ import annotations
 
 import argparse
-import contextlib
-import fnmatch
-import json
+import collections
 import math
 import os
 import re
-import shutil
-import socket
 import sys
-import tempfile
-import time
-from dataclasses import dataclass, asdict
-from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple, Any
+import time as walltime
+import traceback
+from dataclasses import dataclass, field
+from typing import Dict, List, Tuple, Optional
 
 import numpy as np
-import xarray as xr
-import zarr
+from mpi4py import MPI
+from netCDF4 import Dataset
 
 
-# ----------------------------
-# MPI setup with serial fallback
-# ----------------------------
-try:
-    from mpi4py import MPI  # type: ignore
-    _COMM = MPI.COMM_WORLD
-    RANK = _COMM.Get_rank()
-    SIZE = _COMM.Get_size()
-    HAVE_MPI = True
-except Exception:
-    MPI = None
-    _COMM = None
-    RANK = 0
-    SIZE = 1
-    HAVE_MPI = False
+COMM = MPI.COMM_WORLD
+WORLD_RANK = COMM.Get_rank()
+WORLD_SIZE = COMM.Get_size()
 
+STATIC_VARS = {
+    "ngrid_x", "ngrid_y", "ngrid_z",
+    "x", "xh", "y", "yh", "z", "zh", "z_lay", "z_lev",
+}
+IGNORE_INPUT_VARS = {"time"}
 
-# ----------------------------
-# Logging
-# ----------------------------
-HOSTNAME = socket.gethostname()
-
-
-def log(msg: str, quiet: bool = False, rank_only: Optional[int] = None) -> None:
-    if quiet:
-        return
-    if rank_only is not None and RANK != rank_only:
-        return
-    ts = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
-    print(f"[{ts}] [rank {RANK}/{SIZE} @ {HOSTNAME}] {msg}", flush=True)
-
-
-# ----------------------------
-# Dataclasses
-# ----------------------------
-@dataclass
-class ParsedRTEFile:
-    path: str
-    filename: str
-    base: str
-    t_index: int
-    lr: int
-    kind: str  # "in" or "out"
-
-
-@dataclass
-class GroupEntry:
-    path: str
-    t_index: int
-    time_hours: float
-    base: str
-    time_pos: int
-    filename: str
-
-
-@dataclass
-class GroupKey:
-    kind: str
-    lr: int
-
-    def to_name(self) -> str:
-        return f"{self.kind}.lr_{self.lr}"
-
-
-@dataclass
-class GroupInfo:
-    key: GroupKey
-    output_nc: str
-    output_zarr: str
-    entries: List[GroupEntry]
-
-
-# ----------------------------
-# Regex / filename parsing
-# ----------------------------
-RTE_RE = re.compile(
-    r"^(?P<base>.+)\.t_(?P<t>\d+)\.lr_(?P<lr>\d+)\.(?P<kind>in|out)\.nc$"
+FILENAME_RE = re.compile(
+    r"^(?P<prefix>.+?)\.t_(?P<tidx>\d+)\.lr_(?P<lr>\d+)\.in\.nc$"
 )
-TSTEP_RE = re.compile(r"\.t_(\d+)\.")
-LR_RE = re.compile(r"\.lr_(\d+)\.")
-KIND_RE = re.compile(r"\.(in|out)\.nc$")
+
+LOG_INTERVAL_SECONDS = 30.0
 
 
-def parse_rte_filename(path: Path) -> Optional[ParsedRTEFile]:
-    m = RTE_RE.match(path.name)
-    if not m:
-        return None
-    return ParsedRTEFile(
-        path=str(path),
-        filename=path.name,
-        base=m.group("base"),
-        t_index=int(m.group("t")),
-        lr=int(m.group("lr")),
-        kind=m.group("kind"),
-    )
-
-
-def remove_timestep_from_filename(filename: str) -> str:
-    # Example:
-    #   foo.t_12.lr_7.in.nc -> foo.lr_7.in.nc
-    return re.sub(r"\.t_\d+(?=\.lr_\d+\.(?:in|out)\.nc$)", "", filename)
-
-
-def stem_without_nc(path: Path) -> str:
-    # filename without trailing .nc
-    if path.name.endswith(".nc"):
-        return path.name[:-3]
-    return path.stem
-
-
-# ----------------------------
-# Filesystem helpers
-# ----------------------------
-def safe_rmtree(path: Path, quiet: bool = False) -> None:
-    if path.exists():
-        log(f"Removing directory tree: {path}", quiet=quiet)
-        shutil.rmtree(path, ignore_errors=False)
-
-
-def atomic_commit_dir(tmp_dir: Path, final_dir: Path, replace_existing: bool, quiet: bool = False) -> None:
-    if final_dir.exists():
-        if not replace_existing:
-            raise FileExistsError(f"Target already exists: {final_dir}")
-        safe_rmtree(final_dir, quiet=quiet)
-    tmp_dir.rename(final_dir)
-    log(f"Committed directory {tmp_dir} -> {final_dir}", quiet=quiet)
-
-
-@contextlib.contextmanager
-def mkdir_lock(lock_dir: Path, enabled: bool, poll_sec: float = 1.0, quiet: bool = False):
-    if not enabled:
-        yield
+def log(msg: str, comm: MPI.Comm = COMM, root_only: bool = False) -> None:
+    if root_only and comm.Get_rank() != 0:
         return
-
-    acquired = False
-    try:
-        while not acquired:
-            try:
-                lock_dir.mkdir(parents=False, exist_ok=False)
-                acquired = True
-                log(f"Acquired lock: {lock_dir}", quiet=quiet)
-            except FileExistsError:
-                log(f"Waiting on lock: {lock_dir}", quiet=quiet)
-                time.sleep(poll_sec)
-        yield
-    finally:
-        if acquired and lock_dir.exists():
-            try:
-                lock_dir.rmdir()
-                log(f"Released lock: {lock_dir}", quiet=quiet)
-            except Exception as e:
-                log(f"Warning: failed to remove lock {lock_dir}: {e}", quiet=quiet)
+    now = walltime.strftime("%Y-%m-%d %H:%M:%S")
+    sys.stdout.write(f"[{now}] [world_rank={WORLD_RANK}] {msg}\n")
+    sys.stdout.flush()
 
 
-def ensure_dir(path: Path) -> None:
-    path.mkdir(parents=True, exist_ok=True)
+def parse_bool(s: str) -> bool:
+    s2 = str(s).strip().lower()
+    if s2 in {"1", "true", "t", "yes", "y"}:
+        return True
+    if s2 in {"0", "false", "f", "no", "n"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Cannot parse boolean from '{s}'")
 
 
-# ----------------------------
-# CLI
-# ----------------------------
-def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(
-        description="Combine per-timestep RTE-RRTMGP-CPP NetCDF files into time-stacked outputs using DP-SCREAM time coordinates."
-    )
-    p.add_argument("--input-dir", action="append", required=True, help="Input directory root to search recursively. Repeatable.")
-    p.add_argument("--dpscream-file", action="append", required=True, help="DP-SCREAM NetCDF file. Repeatable.")
-    p.add_argument("--output-dir", required=True, help="Output directory.")
-    p.add_argument("--lr", default=None, help="Comma-separated LR values to include, e.g. 1,2,4")
-    p.add_argument("--kind", default="both", choices=["in", "out", "both"], help="Which kind(s) to process.")
-    p.add_argument("--pattern", default="*.nc", help="Glob pattern for recursive discovery under input dirs.")
-    p.add_argument("--engine", default=None, help="xarray engine for reading RTE files; DP-SCREAM uses netcdf4.")
-    p.add_argument("--flat-output", action="store_true", help="Write outputs directly in output-dir instead of per-group subdirs.")
-    p.add_argument("--replace-existing", action="store_true", help="Replace existing output NetCDF/Zarr.")
-    p.add_argument("--lock-writes", action="store_true", help="Use mkdir-based lock around initialization/commit.")
-    p.add_argument("--quiet", action="store_true", help="Reduce log output.")
-    p.add_argument("--keep-zarr", action="store_true", help="Keep intermediate Zarr stores.")
-    p.add_argument("--keep-t-index", action="store_true", help="Store integer t_index coordinate/data array.")
-    p.add_argument("--time-chunk", type=int, default=16, help="Chunk size for time dimension.")
-    p.add_argument("--xy-chunk", default=None, help="Chunk size for x and y dimensions, or 'None'.")
-    p.add_argument(
-        "--scheduler",
-        default="single-threaded",
-        choices=["threads", "processes", "single-threaded"],
-        help="Dask scheduler for xarray operations if invoked."
-    )
-    return p.parse_args(argv)
+def parse_args():
+    p = argparse.ArgumentParser(description="Combine Scream timestep NETCDF files by lr.")
+    p.add_argument("--separate-dir", required=True, help="Directory containing timestep files on Lustre.")
+    p.add_argument("--combined-dir", required=True, help="Directory to write combined files on Lustre.")
+    p.add_argument("--dpscream-file", required=True, help="Original DP-SCREAM file containing authoritative time coordinate.")
+    p.add_argument("--lr", required=True, help="Comma-separated lr list, e.g. 64,32,04,01")
+    p.add_argument("--preserve-precision", type=parse_bool, default=True,
+                   help="Preserve original variable dtype if True. Default=True")
+    p.add_argument("--compression-level", type=int, default=0,
+                   help="NETCDF4 zlib compression level [0-9]. Default 0 for fastest wallclock.")
+    p.add_argument("--shuffle", type=parse_bool, default=False,
+                   help="Enable HDF5 shuffle filter. Default False.")
+    p.add_argument("--chunk-time", type=int, default=1,
+                   help="Chunk size along time dimension. Default 1.")
+    p.add_argument("--chunksize-mb", type=float, default=64.0,
+                   help="Target chunk payload size in MB for non-time dims. Default 64.")
+    p.add_argument("--no-fill", type=parse_bool, default=True,
+                   help="Disable prefill on output file. Default True.")
+    p.add_argument("--eta-interval", type=float, default=30.0,
+                   help="Seconds between progress/ETA messages per lr group.")
+    return p.parse_args()
 
 
-# ----------------------------
-# Utility parsing / scheduler
-# ----------------------------
-def parse_lr_filter(lr_str: Optional[str]) -> Optional[set]:
-    if lr_str is None:
-        return None
-    vals = [s.strip() for s in lr_str.split(",") if s.strip()]
-    if not vals:
-        return None
-    return {int(v) for v in vals}
+@dataclass
+class TimeStepFile:
+    path: str
+    tidx: int
+    lr: str
+    prefix: str
+    size_bytes: int
 
 
-def parse_xy_chunk(value: Optional[str]) -> Optional[int]:
-    if value is None:
-        return None
-    if isinstance(value, int):
-        return value
-    s = str(value).strip().lower()
-    if s == "none":
-        return None
-    return int(s)
+@dataclass
+class LRGroup:
+    lr: str
+    files: List[TimeStepFile] = field(default_factory=list)
+    prefix: Optional[str] = None
+    output_path: Optional[str] = None
+    total_input_bytes: int = 0
+    estimated_work: float = 0.0
+    assigned_world_ranks: List[int] = field(default_factory=list)
+
+    def sorted_files(self) -> List[TimeStepFile]:
+        return sorted(self.files, key=lambda x: x.tidx)
 
 
-def barrier() -> None:
-    if HAVE_MPI:
-        _COMM.Barrier()
+def split_list_round_robin(items: List[str], nranks: int, rank: int) -> List[str]:
+    return [v for i, v in enumerate(items) if i % nranks == rank]
 
 
-# ----------------------------
-# DP-SCREAM time mapping
-# ----------------------------
-def load_dpscream_time_map(dpscream_files: Sequence[str], quiet: bool = False) -> Dict[str, np.ndarray]:
-    """
-    Returns map:
-      dp_stem (filename without .nc) -> time_hours np.ndarray
-    """
-    time_map: Dict[str, np.ndarray] = {}
-    for f in dpscream_files:
-        p = Path(f)
-        stem = stem_without_nc(p)
-        if stem in time_map:
-            log(f"Warning: duplicate DP-SCREAM stem '{stem}' encountered, keeping first: {p}", quiet=quiet, rank_only=0)
+def safe_makedirs(path: str) -> None:
+    os.makedirs(path, exist_ok=True)
+
+
+def choose_nonconflicting_output_path(base_path: str) -> str:
+    if not os.path.exists(base_path):
+        return base_path
+    root, ext = os.path.splitext(base_path)  # .nc
+    k = 1
+    while True:
+        candidate = f"{root}_{k}{ext}"
+        if not os.path.exists(candidate):
+            return candidate
+        k += 1
+
+
+def discover_files(separate_dir: str, requested_lrs: List[str]) -> Dict[str, LRGroup]:
+    groups: Dict[str, LRGroup] = {lr: LRGroup(lr=lr) for lr in requested_lrs}
+
+    for entry in os.scandir(separate_dir):
+        if not entry.is_file():
             continue
-        log(f"Reading DP-SCREAM time from {p}", quiet=quiet, rank_only=0)
-        with xr.open_dataset(p, engine="netcdf4", decode_times=False) as ds:
-            if "time" not in ds.variables:
-                raise KeyError(f"DP-SCREAM file missing variable 'time': {p}")
-            time_vals = np.asarray(ds["time"].values)
-            time_hours = time_vals.astype(np.float64) * 24.0
-            if time_hours.ndim != 1:
-                raise ValueError(f"DP-SCREAM time variable is not 1D in {p}")
-            time_map[stem] = time_hours
-    return time_map
-
-
-# ----------------------------
-# Discovery and grouping
-# ----------------------------
-def discover_rte_files(input_dirs: Sequence[str], pattern: str, quiet: bool = False) -> List[ParsedRTEFile]:
-    found: List[ParsedRTEFile] = []
-    for root in input_dirs:
-        rootp = Path(root)
-        if not rootp.exists():
-            log(f"Warning: input dir does not exist: {rootp}", quiet=quiet, rank_only=0)
+        name = entry.name
+        if not name.endswith(".nc"):
             continue
-        for p in rootp.rglob(pattern):
-            if not p.is_file():
-                continue
-            parsed = parse_rte_filename(p)
-            if parsed is not None:
-                found.append(parsed)
-    return found
-
-
-def select_kind(k: str, requested: str) -> bool:
-    if requested == "both":
-        return k in ("in", "out")
-    return k == requested
-
-
-def match_dp_base(base: str, dp_time_map: Dict[str, np.ndarray]) -> Optional[str]:
-    """
-    Match an RTE file base stem to a DP-SCREAM filename stem.
-
-    Conservative strategy:
-    - exact match first
-    - otherwise suffix match either direction if unique
-    """
-    if base in dp_time_map:
-        return base
-
-    candidates = []
-    for stem in dp_time_map.keys():
-        if base.endswith(stem) or stem.endswith(base):
-            candidates.append(stem)
-
-    if len(candidates) == 1:
-        return candidates[0]
-    return None
-
-
-def build_groups(
-    parsed_files: Sequence[ParsedRTEFile],
-    dp_time_map: Dict[str, np.ndarray],
-    lr_filter: Optional[set],
-    kind_filter: str,
-    output_dir: Path,
-    flat_output: bool,
-    quiet: bool = False,
-) -> List[GroupInfo]:
-    by_group: Dict[Tuple[str, int], Dict[int, GroupEntry]] = {}
-
-    for pf in parsed_files:
-        if lr_filter is not None and pf.lr not in lr_filter:
+        m = FILENAME_RE.match(name)
+        if not m:
             continue
-        if not select_kind(pf.kind, kind_filter):
+        lr = m.group("lr")
+        if lr not in groups:
             continue
-
-        matched_dp = match_dp_base(pf.base, dp_time_map)
-        if matched_dp is None:
-            log(f"Warning: could not match DP-SCREAM stem for {pf.filename}; skipping", quiet=quiet, rank_only=0)
-            continue
-
-        time_arr = dp_time_map[matched_dp]
-        if pf.t_index < 0 or pf.t_index >= len(time_arr):
-            log(f"Warning: timestep out of bounds for {pf.filename}: t_index={pf.t_index}, ntime={len(time_arr)}; skipping",
-                quiet=quiet, rank_only=0)
-            continue
-
-        key = (pf.kind, pf.lr)
-        if key not in by_group:
-            by_group[key] = {}
-
-        if pf.t_index in by_group[key]:
-            prev = by_group[key][pf.t_index]
-            log(f"Warning: duplicate timestep in group {key}, t_index={pf.t_index}; keeping first {prev.filename}, skipping {pf.filename}",
-                quiet=quiet, rank_only=0)
-            continue
-
-        by_group[key][pf.t_index] = GroupEntry(
-            path=pf.path,
-            t_index=pf.t_index,
-            time_hours=float(time_arr[pf.t_index]),
-            base=pf.base,
-            time_pos=-1,
-            filename=pf.filename,
+        tidx = int(m.group("tidx"))
+        prefix = m.group("prefix")
+        tsf = TimeStepFile(
+            path=entry.path,
+            tidx=tidx,
+            lr=lr,
+            prefix=prefix,
+            size_bytes=entry.stat().st_size,
         )
+        groups[lr].files.append(tsf)
+        groups[lr].total_input_bytes += tsf.size_bytes
+        if groups[lr].prefix is None:
+            groups[lr].prefix = prefix
 
-    groups: List[GroupInfo] = []
-    for (kind, lr), entries_by_t in sorted(by_group.items(), key=lambda kv: (kv[0][0], kv[0][1])):
-        entries = list(entries_by_t.values())
-        entries.sort(key=lambda e: (e.time_hours, e.t_index, e.filename))
-        for i, e in enumerate(entries):
-            e.time_pos = i
-
-        example_name = remove_timestep_from_filename(entries[0].filename)
-        if flat_output:
-            output_nc = str(output_dir / example_name)
-            zarr_name = re.sub(r"\.nc$", ".zarr", example_name)
-            output_zarr = str(output_dir / zarr_name)
-        else:
-            subdir = output_dir / f"{kind}.lr_{lr}"
-            output_nc = str(subdir / example_name)
-            zarr_name = re.sub(r"\.nc$", ".zarr", example_name)
-            output_zarr = str(subdir / zarr_name)
-
-        groups.append(
-            GroupInfo(
-                key=GroupKey(kind=kind, lr=lr),
-                output_nc=output_nc,
-                output_zarr=output_zarr,
-                entries=entries,
-            )
-        )
+    for lr, g in groups.items():
+        if g.prefix is None and g.files:
+            g.prefix = g.files[0].prefix
 
     return groups
 
 
-# ----------------------------
-# Dataset normalization helpers
-# ----------------------------
-SCALAR_GRID_NAMES = {"ngrid_x", "ngrid_y", "ngrid_z"}
+def estimate_group_work(group: LRGroup) -> float:
+    # Strongly weight bytes; slight weight for file count to reflect metadata/open cost.
+    return float(group.total_input_bytes) + 0.01 * float(len(group.files))
 
 
-def maybe_drop_nondim_time(ds: xr.Dataset) -> xr.Dataset:
-    if "time" in ds.variables and "time" not in ds.dims:
-        ds = ds.drop_vars("time")
-    return ds
+def read_dpscream_times(path: str) -> np.ndarray:
+    with Dataset(path, "r") as ds:
+        if "time" not in ds.variables:
+            raise RuntimeError(f"DP-SCREAM file '{path}' has no variable named 'time'")
+        time_vals = np.array(ds.variables["time"][:], dtype=np.float64)
+    return time_vals * 24.0  # convert days to hours
 
 
-def extract_scalar_grid_vars(ds: xr.Dataset) -> Tuple[Dict[str, xr.DataArray], xr.Dataset]:
-    scalars: Dict[str, xr.DataArray] = {}
-    drop_names = []
-    for name in SCALAR_GRID_NAMES:
-        if name in ds.variables and ds[name].ndim == 0:
-            scalars[name] = ds[name]
-            drop_names.append(name)
-    if drop_names:
-        ds = ds.drop_vars(drop_names)
-    return scalars, ds
+def determine_rank_allocation(active_groups: List[LRGroup], world_size: int) -> Dict[str, List[int]]:
+    if not active_groups:
+        return {}
 
+    for g in active_groups:
+        g.estimated_work = estimate_group_work(g)
 
-def infer_lev_from_z(z_vals: np.ndarray) -> np.ndarray:
-    """
-    Compute staggered interfaces around center coordinate z.
-    For z length n, return lev length n+1.
-    """
-    z = np.asarray(z_vals, dtype=np.float64)
-    n = z.size
-    if n < 1:
-        raise ValueError("Cannot infer lev from empty z")
-    if n == 1:
-        dz = 1.0
-        return np.array([z[0] - 0.5 * dz, z[0] + 0.5 * dz], dtype=np.float64)
-    mid = 0.5 * (z[:-1] + z[1:])
-    lev = np.empty(n + 1, dtype=np.float64)
-    lev[1:-1] = mid
-    lev[0] = z[0] - 0.5 * (z[1] - z[0])
-    lev[-1] = z[-1] + 0.5 * (z[-1] - z[-2])
-    return lev
+    total_work = sum(max(g.estimated_work, 1.0) for g in active_groups)
+    desired = []
+    for g in active_groups:
+        frac = max(g.estimated_work, 1.0) / total_work
+        desired.append((g.lr, frac * world_size))
 
+    # At least 1 rank per active group
+    alloc = {lr: 1 for lr, _ in desired}
+    remaining = world_size - len(active_groups)
 
-def maybe_add_vertical_coords(ds: xr.Dataset) -> xr.Dataset:
-    """
-    If coord z exists and dim lay has same length as z, and lev is absent, compute lev.
-    """
-    if "z" in ds.coords and "lay" in ds.dims:
-        z = ds["z"]
-        if z.ndim == 1 and z.sizes.get(z.dims[0], None) == ds.dims["lay"]:
-            if "lev" not in ds.coords and "lev" not in ds.variables:
-                lev_vals = infer_lev_from_z(np.asarray(z.values))
-                ds = ds.assign_coords({"lev": ("lev", lev_vals)})
-    return ds
+    if remaining > 0:
+        floors = {lr: int(math.floor(val)) for lr, val in desired}
+        for lr, _ in desired:
+            extra = max(floors[lr] - 1, 0)
+            give = min(extra, remaining)
+            alloc[lr] += give
+            remaining -= give
 
+        if remaining > 0:
+            remainders = sorted(
+                ((lr, val - math.floor(val)) for lr, val in desired),
+                key=lambda x: (-x[1], int(x[0]))
+            )
+            idx = 0
+            while remaining > 0:
+                lr = remainders[idx % len(remainders)][0]
+                alloc[lr] += 1
+                remaining -= 1
+                idx += 1
 
-def open_source_dataset(path: str, engine: Optional[str]) -> xr.Dataset:
-    kwargs: Dict[str, Any] = {}
-    if engine is not None:
-        kwargs["engine"] = engine
-    ds = xr.open_dataset(path, decode_times=False, **kwargs)
-    ds = maybe_drop_nondim_time(ds)
-    _, ds = extract_scalar_grid_vars(ds)
-    ds = maybe_add_vertical_coords(ds)
-    return ds
-
-
-# ----------------------------
-# Zarr metadata creation
-# ----------------------------
-def choose_chunks(shape: Tuple[int, ...], dims: Tuple[str, ...], time_chunk: int, xy_chunk: Optional[int]) -> Tuple[int, ...]:
-    chunks: List[int] = []
-    for dim, size in zip(dims, shape):
-        if dim == "time":
-            chunks.append(min(time_chunk, size))
-        elif dim in ("x", "y"):
-            if xy_chunk is None:
-                chunks.append(size)
-            else:
-                chunks.append(min(xy_chunk, size))
-        else:
-            chunks.append(size)
-    return tuple(chunks)
-
-
-def attrs_to_jsonable(attrs: Dict[str, Any]) -> Dict[str, Any]:
+    # Assign contiguous rank blocks to groups in descending work order.
+    ordered = sorted(active_groups, key=lambda g: (g.estimated_work, -int(g.lr)), reverse=True)
     out = {}
-    for k, v in attrs.items():
-        if isinstance(v, (str, int, float, bool)) or v is None:
-            out[k] = v
-        else:
-            try:
-                json.dumps(v)
-                out[k] = v
-            except Exception:
-                out[k] = str(v)
+    r0 = 0
+    for g in ordered:
+        nr = alloc[g.lr]
+        out[g.lr] = list(range(r0, r0 + nr))
+        r0 += nr
     return out
 
 
-def init_group_zarr_metadata_only(
-    sample_file: str,
-    entries: List[GroupEntry],
-    zarr_dir: Path,
-    keep_t_index: bool,
-    time_chunk: int,
-    xy_chunk: Optional[int],
-    engine: Optional[str],
-    quiet: bool = False,
-) -> None:
+def output_name_from_prefix(prefix: str, lr: str) -> str:
+    return f"{prefix}.lr_{lr}.in.nc"
+
+
+def infer_variable_roles(ds: Dataset) -> Tuple[List[str], List[str]]:
+    static_vars = []
+    time_dependent_vars = []
+
+    for vname, var in ds.variables.items():
+        if vname in IGNORE_INPUT_VARS:
+            continue
+        if vname in STATIC_VARS:
+            static_vars.append(vname)
+        else:
+            time_dependent_vars.append(vname)
+
+    return static_vars, time_dependent_vars
+
+
+def choose_output_dtype(var, preserve_precision: bool):
+    if preserve_precision:
+        return var.dtype
+    # Normalize to float64 for floating point; leave ints/strings untouched.
+    dt = np.dtype(var.dtype)
+    if np.issubdtype(dt, np.floating):
+        return np.dtype("f8")
+    return dt
+
+
+def compute_chunksizes(out_dims: Tuple[int, ...],
+                       dtype: np.dtype,
+                       var_dims: Tuple[str, ...],
+                       chunk_time: int,
+                       target_mb: float) -> Optional[Tuple[int, ...]]:
+    if len(out_dims) == 0:
+        return None
+
+    itemsize = np.dtype(dtype).itemsize
+    target_bytes = int(target_mb * 1024 * 1024)
+
+    if len(out_dims) == 1:
+        return (min(out_dims[0], max(1, chunk_time if var_dims[0] == "time" else out_dims[0])),)
+
+    chunks = list(out_dims)
+    start_idx = 0
+    if var_dims[0] == "time":
+        chunks[0] = min(out_dims[0], max(1, chunk_time))
+        start_idx = 1
+
+    # shrink non-time dims proportionally until chunk byte size <= target
+    def chunk_bytes(ch):
+        n = 1
+        for x in ch:
+            n *= max(1, x)
+        return n * itemsize
+
+    while chunk_bytes(chunks) > target_bytes:
+        # halve the largest non-time chunk > 1
+        candidates = [(i, chunks[i]) for i in range(start_idx, len(chunks)) if chunks[i] > 1]
+        if not candidates:
+            break
+        i = max(candidates, key=lambda t: t[1])[0]
+        chunks[i] = max(1, math.ceil(chunks[i] / 2))
+
+    return tuple(int(x) for x in chunks)
+
+
+def create_output_file_parallel(output_path: str,
+                                template_path: str,
+                                times_hours: np.ndarray,
+                                preserve_precision: bool,
+                                compression_level: int,
+                                shuffle: bool,
+                                chunk_time: int,
+                                chunksize_mb: float,
+                                no_fill: bool,
+                                group_comm: MPI.Comm) -> Dict[str, List[str]]:
     """
-    Initialize the target zarr store directly from metadata and static arrays,
-    without constructing a full time-expanded xarray Dataset.
+    Create schema collectively. Returns metadata dict with static/time-dependent variables.
     """
-    ntime = len(entries)
-    if ntime < 1:
-        raise ValueError("Cannot initialize empty group")
+    rank = group_comm.Get_rank()
 
-    sample_path = entries[0].path if sample_file is None else sample_file
-    with open_source_dataset(sample_path, engine=engine) as ds:
-        # Re-extract scalar grid vars from original open to preserve as scalars if present.
-        ds_raw = xr.open_dataset(sample_path, decode_times=False, **({"engine": engine} if engine else {}))
-        scalar_vars, _ = extract_scalar_grid_vars(maybe_drop_nondim_time(ds_raw))
-        ds_raw.close()
+    with Dataset(template_path, "r") as src:
+        static_vars, time_vars = infer_variable_roles(src)
 
-        root = zarr.open_group(str(zarr_dir), mode="w")
+        with Dataset(output_path, "w", format="NETCDF4", parallel=True, comm=group_comm, info=MPI.Info.Create()) as dst:
+            if no_fill:
+                dst.set_fill_off()
 
-        # Root attrs
-        root.attrs.update(attrs_to_jsonable(ds.attrs))
+            # Global attrs
+            dst.setncatts({a: src.getncattr(a) for a in src.ncattrs()})
 
-        # Create dimensions from sample, but output time size is final ntime.
-        source_dims = dict(ds.dims)
+            # Dimensions
+            dst.createDimension("time", None)
+            for dname, dim in src.dimensions.items():
+                if dname == "time":
+                    continue
+                dst.createDimension(dname, len(dim) if not dim.isunlimited() else None)
 
-        # Time coordinate
-        time_vals = np.array([e.time_hours for e in entries], dtype=np.float64)
-        t_chunks = choose_chunks((ntime,), ("time",), time_chunk, xy_chunk)
-        z_time = root.create_dataset(
-            "time",
-            shape=(ntime,),
-            chunks=t_chunks,
-            dtype="f8",
-            overwrite=True,
-        )
-        z_time[:] = time_vals
-        z_time.attrs.update(attrs_to_jsonable(ds["time"].attrs if "time" in ds.coords else {}))
-        z_time.attrs["_ARRAY_DIMENSIONS"] = ["time"]
-        if "units" not in z_time.attrs:
-            z_time.attrs["units"] = "hours"
-
-        # Optional t_index
-        if keep_t_index:
-            t_index_vals = np.array([e.t_index for e in entries], dtype=np.int64)
-            z_tidx = root.create_dataset(
-                "t_index",
-                shape=(ntime,),
-                chunks=t_chunks,
-                dtype="i8",
-                overwrite=True,
+            # Create time variable
+            time_in = src.variables.get("time", None)
+            t_dtype = np.dtype("f8") if not preserve_precision else (time_in.dtype if time_in is not None else np.dtype("f8"))
+            tvar = dst.createVariable(
+                "time",
+                t_dtype,
+                ("time",),
+                zlib=(compression_level > 0),
+                complevel=compression_level,
+                shuffle=shuffle,
+                chunksizes=(min(len(times_hours), max(1, chunk_time)),)
             )
-            z_tidx[:] = t_index_vals
-            z_tidx.attrs["_ARRAY_DIMENSIONS"] = ["time"]
-            z_tidx.attrs["long_name"] = "original timestep index"
+            if time_in is not None:
+                tvar.setncatts({a: time_in.getncattr(a) for a in time_in.ncattrs()})
+            tvar.description = "Time since simulation start"
+            tvar.units = "hours"
 
-        # Static coordinates
-        # Preserve coordinate arrays other than time
-        coord_names = set(ds.coords)
-        for cname in sorted(coord_names):
-            if cname == "time":
-                continue
-            cda = ds[cname]
-            if cda.ndim == 0:
-                zc = root.create_dataset(
-                    cname,
-                    shape=(),
-                    dtype=np.asarray(cda.values).dtype,
-                    overwrite=True,
-                )
-                zc[()] = np.asarray(cda.values)
-                zc.attrs.update(attrs_to_jsonable(cda.attrs))
-                zc.attrs["_ARRAY_DIMENSIONS"] = []
-            else:
-                shape = tuple(cda.shape)
-                dims = tuple(cda.dims)
-                chunks = choose_chunks(shape, dims, time_chunk, xy_chunk)
-                zc = root.create_dataset(
-                    cname,
-                    shape=shape,
-                    chunks=chunks,
-                    dtype=np.asarray(cda.values).dtype,
-                    overwrite=True,
-                )
-                zc[:] = np.asarray(cda.values)
-                zc.attrs.update(attrs_to_jsonable(cda.attrs))
-                zc.attrs["_ARRAY_DIMENSIONS"] = list(dims)
+            # Create static vars
+            for vname in static_vars:
+                vsrc = src.variables[vname]
+                vdtype = choose_output_dtype(vsrc, preserve_precision)
+                dims = vsrc.dimensions
+                shape = tuple(len(dst.dimensions[d]) for d in dims)
+                chunks = compute_chunksizes(shape, vdtype, dims, chunk_time, chunksize_mb)
+                kwargs = {}
+                if vsrc.filters() is not None:
+                    kwargs["zlib"] = (compression_level > 0)
+                    kwargs["complevel"] = compression_level
+                    kwargs["shuffle"] = shuffle
+                if chunks is not None:
+                    kwargs["chunksizes"] = chunks
+                vdst = dst.createVariable(vname, vdtype, dims, **kwargs)
+                vdst.setncatts({a: vsrc.getncattr(a) for a in vsrc.ncattrs()})
 
-        # Scalar grid vars preserved as scalar arrays
-        for sname, sda in scalar_vars.items():
-            zs = root.create_dataset(
-                sname,
-                shape=(),
-                dtype=np.asarray(sda.values).dtype,
-                overwrite=True,
-            )
-            zs[()] = np.asarray(sda.values)
-            zs.attrs.update(attrs_to_jsonable(sda.attrs))
-            zs.attrs["_ARRAY_DIMENSIONS"] = []
+            # Create time-dependent vars with leading time dimension
+            for vname in time_vars:
+                vsrc = src.variables[vname]
+                vdtype = choose_output_dtype(vsrc, preserve_precision)
+                dims = ("time",) + tuple(vsrc.dimensions)
+                shape = tuple(len(times_hours) if d == "time" else len(dst.dimensions[d]) for d in dims)
+                chunks = compute_chunksizes(shape, vdtype, dims, chunk_time, chunksize_mb)
+                kwargs = {}
+                if vsrc.filters() is not None:
+                    kwargs["zlib"] = (compression_level > 0)
+                    kwargs["complevel"] = compression_level
+                    kwargs["shuffle"] = shuffle
+                if chunks is not None:
+                    kwargs["chunksizes"] = chunks
+                vdst = dst.createVariable(vname, vdtype, dims, **kwargs)
+                vdst.setncatts({a: vsrc.getncattr(a) for a in vsrc.ncattrs()})
 
-        # Scalar data variables in sample
-        for vname, vda in ds.data_vars.items():
-            if vname in ("time",):
-                continue
-            if vname in coord_names:
-                continue
-            if vda.ndim == 0:
-                zv = root.create_dataset(
-                    vname,
-                    shape=(),
-                    dtype=np.asarray(vda.values).dtype,
-                    overwrite=True,
-                )
-                zv[()] = np.asarray(vda.values)
-                zv.attrs.update(attrs_to_jsonable(vda.attrs))
-                zv.attrs["_ARRAY_DIMENSIONS"] = []
-                continue
+            # Collectively write time
+            if rank == 0:
+                tvar[:] = times_hours
 
-            src_dims = tuple(vda.dims)
-            src_shape = tuple(vda.shape)
-
-            # If source variable lacks time dim, make it time-dependent by prepending time
-            if "time" in src_dims:
-                out_dims = src_dims
-                out_shape = list(src_shape)
-                time_axis = src_dims.index("time")
-                out_shape[time_axis] = ntime
-            else:
-                out_dims = ("time",) + src_dims
-                out_shape = (ntime,) + src_shape
-
-            chunks = choose_chunks(tuple(out_shape), tuple(out_dims), time_chunk, xy_chunk)
-            fill_value = None
-            encoding = getattr(vda, "encoding", {})
-            if "_FillValue" in encoding:
-                fill_value = encoding["_FillValue"]
-            elif "_FillValue" in vda.attrs:
-                fill_value = vda.attrs["_FillValue"]
-
-            zv = root.create_dataset(
-                vname,
-                shape=tuple(out_shape),
-                chunks=chunks,
-                dtype=np.asarray(vda.values).dtype,
-                overwrite=True,
-                fill_value=fill_value,
-            )
-            zv.attrs.update(attrs_to_jsonable(vda.attrs))
-            zv.attrs["_ARRAY_DIMENSIONS"] = list(out_dims)
-
-        # Add a small manifest for debugging
-        root.attrs["history"] = attrs_to_jsonable(root.attrs).get("history", "")
-        root.attrs["combine_note"] = "Initialized metadata-only store; per-time slice writes performed directly with zarr assignment."
+    return {"static_vars": static_vars, "time_vars": time_vars}
 
 
-# ----------------------------
-# Direct slice writing
-# ----------------------------
-def write_one_time_slice(
-    zarr_dir: Path,
-    entry: GroupEntry,
-    keep_t_index: bool,
-    engine: Optional[str],
-    quiet: bool = False,
-) -> None:
-    """
-    Open one source file and write its contents to the target zarr store at entry.time_pos.
-    """
-    root = zarr.open_group(str(zarr_dir), mode="r+")
-    with xr.open_dataset(entry.path, decode_times=False, **({"engine": engine} if engine else {})) as ds_raw:
-        ds = maybe_drop_nondim_time(ds_raw)
-        _, ds = extract_scalar_grid_vars(ds)
-        ds = maybe_add_vertical_coords(ds)
+def copy_static_variables(output_path: str,
+                          template_path: str,
+                          static_vars: List[str],
+                          preserve_precision: bool,
+                          group_comm: MPI.Comm) -> None:
+    rank = group_comm.Get_rank()
+    nranks = group_comm.Get_size()
+    my_vars = split_list_round_robin(static_vars, nranks, rank)
 
-        # Validate/write static coordinates opportunistically only if missing data would matter.
-        # Since metadata init already wrote coords and scalars, do not rewrite them here.
-
-        for vname, vda in ds.data_vars.items():
-            if vname == "time":
-                continue
-            arr = np.asarray(vda.values)
-
-            if vda.ndim == 0:
-                # scalar; leave as initialized from sample
-                continue
-
-            z = root[vname]
-            z_dims = tuple(z.attrs["_ARRAY_DIMENSIONS"])
-
-            if "time" in vda.dims:
-                # Assume source file has a singleton time dimension if present.
-                # Write one destination time position.
-                src_time_axis = vda.dims.index("time")
-                if arr.shape[src_time_axis] != 1:
-                    raise ValueError(
-                        f"Expected singleton time dimension in source for variable {vname} in file {entry.path}, "
-                        f"got shape {arr.shape} with dims {vda.dims}"
-                    )
-
-                # Remove singleton source time axis and write into destination time_pos.
-                arr_no_time = np.take(arr, indices=0, axis=src_time_axis)
-
-                # Build destination indexing tuple
-                dst_time_axis = z_dims.index("time")
-                idx = [slice(None)] * z.ndim
-                idx[dst_time_axis] = slice(entry.time_pos, entry.time_pos + 1)
-
-                expanded = np.expand_dims(arr_no_time, axis=dst_time_axis)
-                z[tuple(idx)] = expanded
-            else:
-                # Variable without time in source becomes time-dependent in output
-                if z_dims[0] != "time":
-                    raise ValueError(
-                        f"Expected output variable {vname} to have prepended time dim, got dims {z_dims}"
-                    )
-                z[entry.time_pos:entry.time_pos + 1, ...] = np.expand_dims(arr, axis=0)
-
-        if keep_t_index and "t_index" in root:
-            root["t_index"][entry.time_pos] = entry.t_index
-        if "time" in root:
-            root["time"][entry.time_pos] = float(entry.time_hours)
-
-    log(f"Wrote time_pos={entry.time_pos} t_index={entry.t_index} file={entry.filename}", quiet=quiet)
+    with Dataset(template_path, "r") as src, Dataset(output_path, "r+", format="NETCDF4",
+                                                     parallel=True, comm=group_comm, info=MPI.Info.Create()) as dst:
+        for vname in my_vars:
+            try:
+                data = src.variables[vname][:]
+                if not preserve_precision:
+                    dt = np.dtype(dst.variables[vname].dtype)
+                    if np.issubdtype(dt, np.floating):
+                        data = np.asarray(data, dtype=dt)
+                dst.variables[vname][:] = data
+            except Exception as e:
+                log(f"ERROR copying static var '{vname}' from '{template_path}': {e}", root_only=False)
+                raise
+    group_comm.Barrier()
 
 
-# ----------------------------
-# Final export
-# ----------------------------
-def export_zarr_to_netcdf(zarr_dir: Path, output_nc: Path, replace_existing: bool, quiet: bool = False) -> None:
-    if output_nc.exists():
-        if not replace_existing:
-            raise FileExistsError(f"Output NetCDF exists: {output_nc}")
-        output_nc.unlink()
+def process_lr_group(group: LRGroup,
+                     dpscream_times_hours: np.ndarray,
+                     preserve_precision: bool,
+                     compression_level: int,
+                     shuffle: bool,
+                     chunk_time: int,
+                     chunksize_mb: float,
+                     no_fill: bool,
+                     eta_interval: float,
+                     world_group_ranks: List[int]) -> None:
+    world_group = COMM.group.Incl(world_group_ranks)
+    group_comm = COMM.Create_group(world_group)
+    if group_comm == MPI.COMM_NULL:
+        return
 
-    log(f"Exporting Zarr -> NetCDF: {zarr_dir} -> {output_nc}", quiet=quiet, rank_only=0)
-    with xr.open_zarr(str(zarr_dir), consolidated=False) as ds:
-        encoding = {}
-        for name in ds.data_vars:
-            encoding[name] = {"zlib": False}
-        if "time" in ds.variables:
-            encoding["time"] = {"dtype": "f8"}
-        ds.to_netcdf(str(output_nc), encoding=encoding)
-    log(f"Finished NetCDF export: {output_nc}", quiet=quiet, rank_only=0)
+    rank = group_comm.Get_rank()
+    nranks = group_comm.Get_size()
 
-
-# ----------------------------
-# Main workflow
-# ----------------------------
-def main(argv: Optional[Sequence[str]] = None) -> int:
-    args = parse_args(argv)
-    xy_chunk = parse_xy_chunk(args.xy_chunk)
-
-    # Dask scheduler preference if xarray triggers it
     try:
-        import dask  # type: ignore
-        dask.config.set(scheduler=args.scheduler)
-    except Exception:
-        pass
+        sorted_files = group.sorted_files()
+        if not sorted_files:
+            if rank == 0:
+                log(f"lr_{group.lr}: no files found; skipping.", root_only=False)
+            return
 
-    outdir = Path(args.output_dir)
-    if RANK == 0:
-        ensure_dir(outdir)
-    barrier()
+        template_path = sorted_files[0].path
+        valid_pairs: List[Tuple[int, TimeStepFile]] = []
+        missing_tidx = []
+        for f in sorted_files:
+            if f.tidx < 0 or f.tidx >= len(dpscream_times_hours):
+                if rank == 0:
+                    log(f"lr_{group.lr}: file '{f.path}' has tidx={f.tidx}, outside DP-SCREAM time axis; skipping.")
+                continue
+            valid_pairs.append((f.tidx, f))
 
-    # Rank 0: discover and build plan
-    if RANK == 0:
-        t0_all = time.time()
-        dp_time_map = load_dpscream_time_map(args.dpscream_file, quiet=args.quiet)
-        log(f"Loaded {len(dp_time_map)} DP-SCREAM time maps", quiet=args.quiet, rank_only=0)
-        if not dp_time_map:
-            raise RuntimeError("No DP-SCREAM time maps loaded")
+        valid_pairs.sort(key=lambda t: t[0])
 
-        rte_files = discover_rte_files(args.input_dir, args.pattern, quiet=args.quiet)
-        log(f"Discovered {len(rte_files)} RTE candidate files", quiet=args.quiet, rank_only=0)
+        if not valid_pairs:
+            if rank == 0:
+                log(f"lr_{group.lr}: no valid files after filtering; skipping.")
+            return
 
-        groups = build_groups(
-            parsed_files=rte_files,
-            dp_time_map=dp_time_map,
-            lr_filter=parse_lr_filter(args.lr),
-            kind_filter=args.kind,
-            output_dir=outdir,
-            flat_output=args.flat_output,
-            quiet=args.quiet,
+        time_indices = [t for t, _ in valid_pairs]
+        times_hours = np.asarray([dpscream_times_hours[t] for t in time_indices], dtype=np.float64)
+
+        if rank == 0:
+            base_name = output_name_from_prefix(group.prefix, group.lr)
+            base_path = os.path.join(args.combined_dir, base_name)
+            out_path = choose_nonconflicting_output_path(base_path)
+            group.output_path = out_path
+        else:
+            out_path = None
+
+        out_path = group_comm.bcast(out_path, root=0)
+        group.output_path = out_path
+
+        if rank == 0:
+            log(f"lr_{group.lr}: creating output file '{out_path}' with {len(valid_pairs)} times on {nranks} ranks.")
+
+        schema = create_output_file_parallel(
+            output_path=out_path,
+            template_path=template_path,
+            times_hours=times_hours,
+            preserve_precision=preserve_precision,
+            compression_level=compression_level,
+            shuffle=shuffle,
+            chunk_time=chunk_time,
+            chunksize_mb=chunksize_mb,
+            no_fill=no_fill,
+            group_comm=group_comm,
+        )
+        static_vars = schema["static_vars"]
+        time_vars = schema["time_vars"]
+
+        if rank == 0:
+            log(f"lr_{group.lr}: schema created. {len(static_vars)} static vars, {len(time_vars)} time-dependent vars.")
+
+        copy_static_variables(
+            output_path=out_path,
+            template_path=template_path,
+            static_vars=static_vars,
+            preserve_precision=preserve_precision,
+            group_comm=group_comm,
         )
 
-        log(f"Built {len(groups)} final groups", quiet=args.quiet, rank_only=0)
-        for g in groups:
-            log(f"Group {g.key.to_name()}: {len(g.entries)} files -> {g.output_nc}", quiet=args.quiet, rank_only=0)
-    else:
-        groups = None
+        if rank == 0:
+            log(f"lr_{group.lr}: static variables copied.")
 
-    # Broadcast groups
-    if HAVE_MPI:
-        groups = _COMM.bcast(groups, root=0)
+        my_time_vars = split_list_round_robin(time_vars, nranks, rank)
 
-    assert groups is not None
+        start = walltime.time()
+        last_log = start
+        processed = 0
+        total = len(valid_pairs)
+        corrupt_files = 0
 
-    # Process each group
-    for group_idx, group in enumerate(groups):
-        group_start = time.time()
-        zarr_dir = Path(group.output_zarr)
-        output_nc = Path(group.output_nc)
-        zarr_parent = zarr_dir.parent
-        if RANK == 0:
-            ensure_dir(zarr_parent)
+        with Dataset(out_path, "r+", format="NETCDF4", parallel=True, comm=group_comm, info=MPI.Info.Create()) as dst:
+            for it_out, (tidx, infile) in enumerate(valid_pairs):
+                file_ok = True
+                try:
+                    with Dataset(infile.path, "r") as src:
+                        # sanity-check schema lightly on rank 0
+                        if rank == 0 and it_out == 0:
+                            pass
 
-        barrier()
+                        for vname in my_time_vars:
+                            try:
+                                vsrc = src.variables[vname]
+                                data = vsrc[:]
+                                vdst = dst.variables[vname]
+                                if not preserve_precision:
+                                    dt = np.dtype(vdst.dtype)
+                                    if np.issubdtype(dt, np.floating):
+                                        data = np.asarray(data, dtype=dt)
+                                vdst[it_out, ...] = data
+                            except Exception as e:
+                                log(
+                                    f"ERROR lr_{group.lr}: failed variable '{vname}' from file '{infile.path}': {e}",
+                                    root_only=False
+                                )
+                                file_ok = False
+                                raise
+                except Exception as e:
+                    corrupt_files += 1
+                    log(f"ERROR lr_{group.lr}: corrupt/unreadable file '{infile.path}': {e}", root_only=False)
+                    # Leave unwritten timestep data as default/uninitialized if file failed.
+                    # That timestep remains in time axis by design because input file existed.
+                    # If you want to drop corrupt files entirely, pre-validate before schema creation.
+                    # Here, for performance, we log and continue.
+                    file_ok = False
 
-        # Rank 0 initializes metadata-only zarr store
-        if RANK == 0:
-            log(f"Starting group {group_idx+1}/{len(groups)}: {group.key.to_name()} ({len(group.entries)} slices)",
-                quiet=args.quiet, rank_only=0)
+                processed += 1
 
-            if output_nc.exists() and not args.replace_existing:
-                raise FileExistsError(f"Output NetCDF already exists: {output_nc}")
-            if zarr_dir.exists() and not args.replace_existing:
-                raise FileExistsError(f"Output Zarr already exists: {zarr_dir}")
+                now = walltime.time()
+                if rank == 0 and (now - last_log >= eta_interval or processed == total):
+                    elapsed = now - start
+                    rate = processed / elapsed if elapsed > 0 else 0.0
+                    remaining = total - processed
+                    eta_sec = remaining / rate if rate > 0 else float("inf")
+                    eta_str = (
+                        walltime.strftime("%Y-%m-%d %H:%M:%S", walltime.localtime(now + eta_sec))
+                        if np.isfinite(eta_sec) else "unknown"
+                    )
+                    log(
+                        f"lr_{group.lr}: progress {processed}/{total} files "
+                        f"({100.0*processed/total:.1f}%), "
+                        f"elapsed={elapsed/60.0:.1f} min, ETA={eta_str}, corrupt={corrupt_files}"
+                    )
+                    last_log = now
 
-            tmp_zarr = Path(str(zarr_dir) + ".init_tmp")
-            lock_dir = Path(str(zarr_dir) + ".lock")
+        group_comm.Barrier()
+        if rank == 0:
+            elapsed = walltime.time() - start
+            log(f"lr_{group.lr}: COMPLETE in {elapsed/60.0:.2f} min. Output: {out_path}. Corrupt files: {corrupt_files}")
 
-            with mkdir_lock(lock_dir, enabled=args.lock_writes, quiet=args.quiet):
-                if tmp_zarr.exists():
-                    safe_rmtree(tmp_zarr, quiet=args.quiet)
-                if zarr_dir.exists() and args.replace_existing:
-                    safe_rmtree(zarr_dir, quiet=args.quiet)
+    except Exception:
+        err = traceback.format_exc()
+        log(f"FATAL lr_{group.lr}:\n{err}", root_only=False)
+        raise
+    finally:
+        group_comm.Free()
+        world_group.Free()
 
-                init_group_zarr_metadata_only(
-                    sample_file=group.entries[0].path,
-                    entries=group.entries,
-                    zarr_dir=tmp_zarr,
-                    keep_t_index=args.keep_t_index,
-                    time_chunk=args.time_chunk,
-                    xy_chunk=xy_chunk,
-                    engine=args.engine,
-                    quiet=args.quiet,
-                )
-                atomic_commit_dir(tmp_zarr, zarr_dir, replace_existing=args.replace_existing, quiet=args.quiet)
 
-        barrier()
+def scheduler(groups: Dict[str, LRGroup],
+              dpscream_times_hours: np.ndarray,
+              preserve_precision: bool,
+              compression_level: int,
+              shuffle: bool,
+              chunk_time: int,
+              chunksize_mb: float,
+              no_fill: bool,
+              eta_interval: float) -> None:
+    active = [g for g in groups.values() if g.files]
+    inactive = [g for g in groups.values() if not g.files]
 
-        # All ranks write assigned time slices round-robin
-        my_entries = [e for i, e in enumerate(group.entries) if (i % SIZE) == RANK]
-        log(f"Assigned {len(my_entries)} slices for group {group.key.to_name()}", quiet=args.quiet)
+    if WORLD_RANK == 0:
+        for g in inactive:
+            log(f"lr_{g.lr}: no input files discovered; skipping.", root_only=True)
 
-        for j, entry in enumerate(my_entries, start=1):
-            log(f"Writing slice {j}/{len(my_entries)} for group {group.key.to_name()}: {entry.filename}",
-                quiet=args.quiet)
-            write_one_time_slice(
-                zarr_dir=zarr_dir,
-                entry=entry,
-                keep_t_index=args.keep_t_index,
-                engine=args.engine,
-                quiet=args.quiet,
+    # Dynamic wave scheduler:
+    # repeatedly recompute allocations after each wave of concurrently active groups finishes.
+    # Since MPI communicators are static inside each wave, "reallocation while running" is implemented
+    # as wave-based redistribution. This is robust and scales well in practice.
+    #
+    # To bias resources toward coarser groups when a group finishes, each subsequent wave reallocates
+    # ranks to remaining active groups. The "next coarsest still running" rule is approximated by
+    # work-proportional allocation with tie-breaking toward coarser groups.
+
+    remaining = sorted(active, key=lambda g: int(g.lr))
+    wave = 0
+    while remaining:
+        wave += 1
+        alloc = determine_rank_allocation(remaining, WORLD_SIZE)
+
+        # All ranks learn assignment map
+        alloc = COMM.bcast(alloc if WORLD_RANK == 0 else None, root=0)
+
+        my_group_lr = None
+        for lr, ranks in alloc.items():
+            if WORLD_RANK in ranks:
+                my_group_lr = lr
+                break
+
+        if WORLD_RANK == 0:
+            summary = ", ".join([f"lr_{lr}:{len(ranks)}r" for lr, ranks in sorted(alloc.items(), key=lambda x: int(x[0]))])
+            log(f"Starting wave {wave} with allocations: {summary}", root_only=True)
+
+        target_group = None
+        target_ranks = None
+        if my_group_lr is not None:
+            target_group = groups[my_group_lr]
+            target_ranks = alloc[my_group_lr]
+
+        # Each wave processes exactly one lr group per participating rank set.
+        # All groups in this wave run concurrently.
+        # To support concurrency, everyone calls process_lr_group only for their assigned group.
+        if target_group is not None:
+            process_lr_group(
+                group=target_group,
+                dpscream_times_hours=dpscream_times_hours,
+                preserve_precision=preserve_precision,
+                compression_level=compression_level,
+                shuffle=shuffle,
+                chunk_time=chunk_time,
+                chunksize_mb=chunksize_mb,
+                no_fill=no_fill,
+                eta_interval=eta_interval,
+                world_group_ranks=target_ranks,
             )
+        else:
+            # ranks not assigned this wave idle collectively
+            COMM.Barrier()
 
-        barrier()
+        COMM.Barrier()
 
-        # Rank 0 final export
-        if RANK == 0:
-            export_zarr_to_netcdf(
-                zarr_dir=zarr_dir,
-                output_nc=output_nc,
-                replace_existing=args.replace_existing,
-                quiet=args.quiet,
-            )
-            if not args.keep_zarr:
-                safe_rmtree(zarr_dir, quiet=args.quiet)
-            dt = time.time() - group_start
-            log(f"Completed group {group.key.to_name()} in {dt:.1f} s", quiet=args.quiet, rank_only=0)
+        # Remove all groups that were in this wave. This creates wave-based reallocation.
+        # Since all allocated groups are processed to completion in the wave, remove them all.
+        completed_lrs = set(alloc.keys())
+        remaining = [g for g in remaining if g.lr not in completed_lrs]
 
-        barrier()
-
-    if RANK == 0:
-        log("All groups completed", quiet=args.quiet, rank_only=0)
-    return 0
+        COMM.Barrier()
+        if WORLD_RANK == 0:
+            if remaining:
+                rems = ", ".join(f"lr_{g.lr}" for g in sorted(remaining, key=lambda gg: int(gg.lr)))
+                log(f"Wave {wave} complete. Remaining groups: {rems}", root_only=True)
+            else:
+                log(f"All lr groups complete.", root_only=True)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    args = parse_args()
+
+    requested_lrs = [x.strip() for x in args.lr.split(",") if x.strip()]
+    requested_lrs = [lr.zfill(2) for lr in requested_lrs]
+
+    if WORLD_RANK == 0:
+        safe_makedirs(args.combined_dir)
+
+    COMM.Barrier()
+
+    if WORLD_RANK == 0:
+        log("Discovering input files...", root_only=True)
+        groups = discover_files(args.separate_dir, requested_lrs)
+        for g in groups.values():
+            g.estimated_work = estimate_group_work(g)
+            if g.files:
+                log(
+                    f"Discovered lr_{g.lr}: {len(g.files)} files, "
+                    f"{g.total_input_bytes/1024**3:.2f} GiB input, "
+                    f"estimated_work={g.estimated_work:.3e}",
+                    root_only=True
+                )
+        log("Reading DP-SCREAM time coordinate...", root_only=True)
+        dpscream_times_hours = read_dpscream_times(args.dpscream_file)
+        log(f"Loaded {len(dpscream_times_hours)} DP-SCREAM time values.", root_only=True)
+    else:
+        groups = None
+        dpscream_times_hours = None
+
+    groups = COMM.bcast(groups, root=0)
+    dpscream_times_hours = COMM.bcast(dpscream_times_hours, root=0)
+
+    try:
+        scheduler(
+            groups=groups,
+            dpscream_times_hours=dpscream_times_hours,
+            preserve_precision=args.preserve_precision,
+            compression_level=args.compression_level,
+            shuffle=args.shuffle,
+            chunk_time=args.chunk_time,
+            chunksize_mb=args.chunksize_mb,
+            no_fill=args.no_fill,
+            eta_interval=args.eta_interval,
+        )
+    except Exception:
+        err = traceback.format_exc()
+        log(f"FATAL WORLD:\n{err}", root_only=False)
+        COMM.Abort(1)

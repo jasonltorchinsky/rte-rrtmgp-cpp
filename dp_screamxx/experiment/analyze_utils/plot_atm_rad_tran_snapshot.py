@@ -1,6 +1,5 @@
 # Library imports
 import argparse
-import glob
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
 import numpy as np
@@ -10,13 +9,12 @@ import xarray as xr
 
 # Local imports
 from consts import flux_cmap, heating_cmap
-from find_yslice_index import find_yslice_index
 from find_zmax_index import find_zmax_index
 from find_pairs import find_pairs
 from find_mnn_indices import find_mnn_indices
 from calc_abs_flux import calc_abs_flux
 from calc_atm_heating import calc_atm_heating
-from calc_hwp import calc_hwp
+from calc_wc import calc_wc
 
 def main():
     parser = argparse.ArgumentParser()
@@ -34,10 +32,6 @@ def main():
         help = "Resolution factor tag.")
     parser.add_argument("--zmax", nargs = "?", default = 16., type = float,
         help = "Maximum height for calculations [km].")
-    parser.add_argument("--yslice", nargs = "?", default = 132.5, type = float,
-        help = "ycoordinate for XZ-slice [km].")
-    parser.add_argument("--case", nargs = "?", default = "", type = str,
-        help = "Case to determine heating rate calculation parameters.")
     parser.add_argument("--detailed-calc", nargs = "?", default = False, type = bool,
         help = ("True: Compute cloud water mass using VMRs, etc. "
             "False: Compute cloud water mass using standard values."))
@@ -50,8 +44,6 @@ def main():
     recalculate = args.recalculate
     lrs = [str(lr) for lr in args.lr.split(",")]
     zmax = args.zmax
-    yslice = args.yslice
-    case = args.case
     detailed_calc = args.detailed_calc
 
     dirs = [rad_tran_vizdir]
@@ -69,6 +61,8 @@ def main():
     #---------------------------------------------------------------------------
     hwp_cmap = plt.get_cmap("Blues")
     hwp_cmap.set_under("gray")
+
+    p_levels = [100., 300., 500., 750., 1000.]
 
     #---------------------------------------------------------------------------
     # Read files.
@@ -100,7 +94,6 @@ def main():
         y = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["y"].values / 1000 # [km]
         lay = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["lay"].values / 1000 # [km]
 
-        yslice_index = find_yslice_index(y, yslice)
         zmax_index = find_zmax_index(lay, zmax)
         lay = lay[:zmax_index]
 
@@ -131,39 +124,94 @@ def main():
                 mnn_times = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)["time"].isel(time = in_mnn_index).values
 
                 #-------------------------------------------------------------------
-                # Obtain cloud water path
+                # Get YZ-slice at each time using maximal water content
                 #-------------------------------------------------------------------
-                hwp = calc_hwp(rad_tran_infile, in_mnn_index, yslice_index, zmax_index, detailed_calc) # [time, lay, x]
+                wc = calc_wc(rad_tran_infile, in_mnn_index, zmax_index = zmax_index) # [g m^{-3}], [time, lay, y, x]
+                xslice_indexes = wc.argmax(dim = ["lay", "y", "x"])["x"].values
+                xslices = x[xslice_indexes]
+
+                #-------------------------------------------------------------------
+                # Calculate horizontal water path at each YZ-slice
+                #-------------------------------------------------------------------
+                hwp = [((dx * 1.e3) * wc.isel(time = ll, x = xslice_indexes[ll])) for ll in range(3)] # [g m^{-2}], [3][lay, y]
+
+                #-------------------------------------------------------------------
+                # Obtain plotting bounds
+                #-------------------------------------------------------------------
+                hlim_loc = np.zeros([3,2], dtype = np.float64) # Limits for horizontal plotting axis (called xlim in matplotlib)
+                yslice_indexes = [np.zeros([2], dtype = np.int32) for _ in range(3)]
+                for ll in range(3):
+                    hwp_max_index = np.unravel_index(hwp[ll].argmax(), hwp[ll].shape) # [lay_index, y_index]
+                    y_loc = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
+                    hlim_loc[ll,:] = [y_loc - 16., y_loc + 16]
+
+                    if hlim_loc[ll,0] < y.min():
+                        hlim_loc[ll,:] += y.min() - hlim_loc[ll,0]
+                    if hlim_loc[ll,1] > y.max():
+                        hlim_loc[ll,:] += y.max() - hlim_loc[ll,1]
+
+                    breakpoint()
+                    # THERE'S A BUG HERE TO DIAGNOSE
+                    yslice_indexes[ll][0] = y[(y - hlim_loc[ll,0]) <= 0].argmax()
+                    yslice_indexes[ll][1] = y[(hlim_loc[ll,1] - y) <= 0].argmax()
+                yslices = [y[yslice_indexes[ll]] for ll in range(3)]
+
+                #-------------------------------------------------------------------
+                # Trim hwp to the yslice
+                #-------------------------------------------------------------------
+                breakpoint()
+                hwp = [hwp[ll].isel(y = slice(yslice_indexes[ll][0], yslice_indexes[ll][1])) for ll in range(3)]
 
                 #-------------------------------------------------------------------
                 # Obtain two-stream (ts) and ray-tracer (rt) data
                 #-------------------------------------------------------------------
+                ts_field = [[] for _ in range(3)]
+                rt_field = [[] for _ in range(3)]
+
                 if field_key == "atm_heating":
-                    [ts_field, rt_field] = calc_atm_heating(rad_tran_infile, rad_tran_outfile, in_mnn_index, out_mnn_index, 
-                        yslice_index, zmax_index, detailed_calc = False) # [K d^{-1}], [time, lay, x]
+                    for ll in range(3):
+                        [ts_field[ll], rt_field[ll]] = calc_atm_heating(rad_tran_infile, 
+                            rad_tran_outfile, in_mnn_index[ll], out_mnn_index[ll], 
+                            x_index = xslice_indexes[ll], y_index = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]),
+                            zmax_index = zmax_index, detailed_calc = False) # [K d^{-1}], [lay, y]
                 elif field_key == "abs_flux":
-                    [ts_field, rt_field] = calc_abs_flux(rad_tran_outfile, out_mnn_index, 
-                        yslice_index, zmax_index) # [W m^{-3}], [time, lay, x]
+                    for ll in range(3):
+                        [ts_field[ll], rt_field[ll]] = calc_abs_flux(rad_tran_outfile, 
+                            out_mnn_index[ll], x_index = xslice_indexes[ll], 
+                            y_index = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]),
+                            zmax_index = zmax_index) # [W m^{-3}], [time, lay, y]
 
                 #-------------------------------------------------------------------
                 # Prepare data for plotting
                 #-------------------------------------------------------------------
-                hwp = hwp.values # [g m^{-3}], [time, lay, x]
-                ts_field = ts_field.values # [time, lay, y]
-                rt_field = rt_field.values # [time, lay, y]
-                diff_field = rt_field - ts_field
+                hwp = [hwp[ll].values for ll in range(3)] # [3][lay, y]
+                ts_field = [ts_field[ll].values for ll in range(3)] # [3][lay, y]
+                rt_field = [rt_field[ll].values for ll in range(3)] # [3][lay, y]
+                diff_field = [rt_field[ll] - ts_field[ll] for ll in range(3)] # [3][lay, y]
 
                 #-------------------------------------------------------------------
                 # Obtain data bounds
                 #-------------------------------------------------------------------
-                hwp_max = np.max(hwp, axis = (1, 2))
-                hwp_min = np.min(hwp, axis = (1, 2))
+                breakpoint()
+                hwp_max = [hwp[ll].max() for ll in range(3)]
+                hwp_min = [hwp[ll].min() for ll in range(3)]
 
-                rad_tran_max = np.max(np.stack([np.max(ts_field, axis = (1, 2)), np.max(rt_field, axis = (1, 2))]), axis = 0)
-                rad_tran_min = np.min(np.stack([np.min(ts_field, axis = (1, 2)), np.min(rt_field, axis = (1, 2))]), axis = 0)
+                rad_tran_max = [max(ts_field[ll].max(), rt_field[ll].max()) for ll in range(3)]
+                rad_tran_min = [min(ts_field[ll].min(), rt_field[ll].min()) for ll in range(3)]
 
-                diff_max = np.max(np.abs(diff_field), axis = (1, 2))
-                diff_min = -diff_max
+                diff_max = [np.abs(diff_field[ll]).max() for ll in range(3)]
+                diff_min = [-diff_max[ll] for ll in range(3)]
+
+                #-------------------------------------------------------------------
+                # Obtain information for plotting pressure contours
+                #-------------------------------------------------------------------
+                p_lay = [[] for _ in range(3)]
+                rad_tran_inds = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)
+                for ll in range(3):
+                    p_lay[ll] = rad_tran_inds["p_lay"].isel(time = in_mnn_index[ll],
+                        lay = slice(0, zmax_index), 
+                        y = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]), x = xslice_indexes[ll]).values / 100. # [hPa], [3][lay, y]
+                rad_tran_inds.close()
 
                 #-------------------------------------------------------------------
                 # Set case-dependent visualization options
@@ -176,37 +224,40 @@ def main():
                 #-------------------------------------------------------------------
                 # Plot the data
                 #-------------------------------------------------------------------
+                fig_base_size = np.array([10.5, 5.25])
                 fig, axs = plt.subplots(nrows = 4, ncols = 3,
-                    sharex = True, sharey = True,
+                    sharex = "col", sharey = True,
                     constrained_layout = True,
-                    figsize = (14, 14))
+                    figsize = 3. * fig_base_size)
 
-                # Row 1: Horizontal Water Path
-                hwp_pcm = [[] for ll in range(3)]
+                # Row 0: Horizontal Water Path
+                hwp_pcm = [[] for _ in range(3)]
                 for ll in range(3):
-                    hwp_pcm[ll] = axs[0, ll].pcolormesh(x, lay, hwp[ll,...],
+                    hwp_pcm[ll] = axs[0, ll].pcolormesh(yslices[ll], lay, hwp[ll],
                         vmin = hwp_min[ll], vmax = hwp_max[ll],
                         cmap = hwp_cmap)
-                    
+                    p_contour = axs[0, ll].contour(yslices[ll], lay, p_lay[ll],
+                        levels = p_levels, colors = "#000000", linewidths = 2.)
+                    axs[0,ll].clabel(p_contour)
 
                 # Row 1: Two-Stream
-                ts_pcm = [[] for ll in range(3)]
+                ts_pcm = [[] for _ in range(3)]
                 for ll in range(3):
-                    ts_pcm[ll] = axs[1, ll].pcolormesh(x, lay, ts_field[ll,...],
+                    ts_pcm[ll] = axs[1, ll].pcolormesh(yslices[ll], lay, ts_field[ll],
                         norm = colors.LogNorm(vmin = rad_tran_min[ll], vmax = rad_tran_max[ll]),
                         cmap = rad_tran_cmap)
 
                 # Row 2: Ray-Tracer
-                rt_pcm = [[] for ll in range(3)]
+                rt_pcm = [[] for _ in range(3)]
                 for ll in range(3):
-                    rt_pcm[ll] = axs[2, ll].pcolormesh(x, lay, rt_field[ll,...],
+                    rt_pcm[ll] = axs[2, ll].pcolormesh(yslices[ll], lay, rt_field[ll],
                         norm = colors.LogNorm(vmin = rad_tran_min[ll], vmax = rad_tran_max[ll]),
                         cmap = rad_tran_cmap)
 
-                # Row 2: Ray-Tracer - Two-Stream
-                diff_pcm = [[] for ll in range(3)]
+                # Row 3: Ray-Tracer - Two-Stream
+                diff_pcm = [[] for _ in range(3)]
                 for ll in range(3):
-                    diff_pcm[ll] = axs[3, ll].pcolormesh(x, lay, diff_field[ll,:],
+                    diff_pcm[ll] = axs[3, ll].pcolormesh(yslices[ll], lay, diff_field[ll],
                         vmin = diff_min[ll], vmax = diff_max[ll],
                         cmap = "RdBu")
 
@@ -219,18 +270,28 @@ def main():
                 # Labels
                 lr_label = r"{:0.0f} $m$".format(dx * 1000.) if dx < 1.0 else r"{:0.2f} $km$".format(dx)
                 fig.suptitle("Horizontal Resolution - {}".format(lr_label))
-                fig.supxlabel(r"x $\left[ km \right]$")
+                fig.supxlabel(r"y $\left[ km \right]$")
                 fig.supylabel(r"z $\left[ km \right]$")
 
                 for ll in range(3):
-                    axs[0,ll].set_title(r"{:.2f} Hours - Solar Zenith Angle {:.1f}$^{{\circ}}$".format(mnn_times[ll], mnn_szas[ll]))
+                    axs[0,ll].set_title(r"{:.2f} Hours - Solar Zenith Angle {:.1f}$^{{\circ}}$ - $x$ = {:.2f} $\left[ km \right]$".format(mnn_times[ll], mnn_szas[ll], xslices[ll]))
                 axs[1,0].set_ylabel("Two-Stream")
                 axs[2,0].set_ylabel("Ray-Tracer")
                 axs[3,0].set_ylabel("Ray-Tracer - Two-Stream")
 
-                hwp_cbar.ax.set_ylabel(r"Horizontal Water Path $\left[ g\,m^{-2} \right]$")
+                hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
                 rt_cbar.ax.set_ylabel(rad_tran_label)
                 diff_cbar.ax.set_ylabel(rad_tran_label)
+
+                # Set horizontal limits
+                for ll in range(4):
+                    for mm in range(3):
+                        axs[ll,mm].set_xlim(hlim[mm,:])
+
+                # Aspect ratio
+                for ll in range(4):
+                    for mm in range(3):
+                        axs[ll,mm].set_aspect("equal")
 
                 #-------------------------------------------------------------------
                 # Save the plot to file

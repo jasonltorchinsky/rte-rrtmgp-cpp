@@ -5,6 +5,7 @@ import re
 def find_pairs(input_dir, output_dir, lrs):
     infiles = sorted(glob.glob(os.path.join(input_dir, "*.in.nc")), reverse = True)
     outfiles = sorted(glob.glob(os.path.join(output_dir, "*.out.nc")), reverse = True)
+    lrs_to_check = sorted(lrs, reverse = True)
 
     paired_infiles = []
     paired_outfiles = []
@@ -15,7 +16,7 @@ def find_pairs(input_dir, output_dir, lrs):
         infile_base = re.sub(ext_re, "", infile_name)
 
         for lr in lrs:
-            if lr in infile_base:
+            if ("lr_" + lr) in infile_base:
                 for jj in range(len(outfiles)):
                     if infile_base in outfiles[jj]:
                         paired_infiles += [infiles[ii]]

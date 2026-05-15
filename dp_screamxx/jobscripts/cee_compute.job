@@ -73,7 +73,7 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 #STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
 #echo "Beginning ${STAGE_NAME}..."
-
+#
 #python run_rte_rrtmgp_cpp_timeslices_multi_gpu_new.py \
 #  --rte-rrtmgp-cpp-input-dir ${RTE_RRTMGP_CPP_INPUT_DIR} \
 #  --rte-rrtmgp-cpp-executable-dir ${RTE_RRTMGP_CPP_BUILD_DIR} \
@@ -82,9 +82,9 @@ echo "CASE NAME: ${CASE_NAME}"
 #  --rte-data-dir ${RTE_DATA_DIR} \
 #  --work-dir ${RTE_RRTMGP_CPP_INPUT_DIR}/.rte_rrtmgp_work \
 #  --raytracing 16384 \
-#  --gpus "[3,4,5,6,7,8,9,10,11,12,13,14,15]" \
+#  --gpus "[3,4]" \
 #  --missing-output-list /ascldap/users/jltorch/codes/rte-rrtmgp-cpp/jasonltorchinsky/timeseries-analysis/dp_screamxx/jobscripts/missing_files.txt
-
+#
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
@@ -113,19 +113,39 @@ echo "CASE NAME: ${CASE_NAME}"
 #echo "${STAGE_NAME} complete!"
 
 #-------------------------------------------------------------------------------
+#STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
+#echo "Beginning ${STAGE_NAME}..."
+
+#echo "Solar Zenith Angle:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
+#  --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}
+
+#echo "${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
-echo "Atmosphere Radiative Transfer:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
+echo "Atmosphere Radiative Transfer Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_snapshot.py \
   --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
   --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_snapshot \
   --detailed-calc true \
   --zmax 16 \
-  --yslice 132.5 \
-  --case ${CASE_NAME} \
   --lr 64
+
+#echo "Atmosphere Radiative Transfer Z-Profile:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_zprofile.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_zprofile \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --lr 64
 
 #echo "Surface Radiative Transfer:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_rad_tran.py \

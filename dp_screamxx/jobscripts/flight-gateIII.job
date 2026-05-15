@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --time=0-18:00:00
+#SBATCH --time=0-02:00:00
 #SBATCH --nodes=1
 #SBATCH --ntasks-per-node=1
 #SBATCH --cpus-per-task=1
@@ -121,15 +121,21 @@ echo "CASE NAME: ${CASE_NAME}"
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
-echo "Atmosphere Radiative Transfer:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran.py \
+echo "Atmosphere Radiative Transfer Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_snapshot.py \
   --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
   --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran \
+  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_snapshot \
   --detailed-calc true \
-  --zmax 16 \
-  --yslice 132.5 \
-  --case ${CASE_NAME}
+  --zmax 16
+
+#echo "Atmosphere Radiative Transfer Z-Profile:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_zprofile.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_zprofile \
+#  --detailed-calc true \
+#  --zmax 16
 
 #echo "Surface Radiative Transfer:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_sfc_rad_tran.py \

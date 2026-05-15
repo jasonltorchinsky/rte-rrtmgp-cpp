@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --time=0-18:00:00
-#SBATCH --nodes=1
+#SBATCH --nodes=8
 #SBATCH --ntasks-per-node=8
 #SBATCH --cpus-per-task=1
 #SBATCH --account=fy260144
@@ -40,6 +40,8 @@ EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
 # Set Case - for Python Scripts
 CASE_NAME="COMBLE"
+
+flight-env
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
@@ -95,17 +97,17 @@ echo "DP_SCREAM FILE: ${DP_SCREAMXX_OUTPUT_FILE_PATH}"
 
 srun --mpi=pmi2 -n ${SLURM_NTASKS} \
   python ${EXPERIMENT_DIR}/combine_rte_rrtmgp_cpp_files_new.py \
-    --input-dir ${SEPARATE_DIR} \
-    --output-dir ${COMBINED_DIR} \
-    --dpscream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-    --kind in \
-    --engine netcdf4 \
-    --scheduler single-threaded \
-    --replace-existing \
-    --lock-writes \
-    --keep-t-index \
-    --time-chunk 1 \
-    --xy-chunk 128
+    --separate-dir "${SEPARATE_DIR}" \
+    --combined-dir "${COMBINED_DIR}" \
+    --dpscream-file "${DP_SCREAMXX_OUTPUT_FILE_PATH}" \
+    --lr 08,16,32,64 \
+    --preserve-precision True \
+    --compression-level 0 \
+    --shuffle False \
+    --chunk-time 1 \
+    --chunksize-mb 64 \
+    --no-fill True \
+    --eta-interval 30
 
 echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------

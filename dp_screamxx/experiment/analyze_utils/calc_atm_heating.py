@@ -4,9 +4,9 @@ from calc_abs_flux import calc_abs_flux
 from consts import g, R_d, cp_d, cp_iw, cp_lw, sec_per_day
 
 def calc_atm_heating(rad_tran_infile, rad_tran_outfile, in_time_index, out_time_index, 
-    y_index = slice(0, None), zmax_index = None, detailed_calc = False):
+    x_index = slice(0, None), y_index = slice(0, None), zmax_index = None, detailed_calc = False):
     [ts_abs_flux, rt_abs_flux] = calc_abs_flux(rad_tran_outfile, out_time_index,
-        y_index, zmax_index)
+        x_index = x_index, y_index = y_index, zmax_index = zmax_index)
 
     levmax_index = zmax_index
     laymax_index = zmax_index
@@ -15,12 +15,22 @@ def calc_atm_heating(rad_tran_infile, rad_tran_outfile, in_time_index, out_time_
 
     rad_tran_inds = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)
 
-    lwp = rad_tran_inds["lwp"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, x]
-    iwp = rad_tran_inds["iwp"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, x]
+    lwp = rad_tran_inds["lwp"].isel(
+        time = in_time_index, lay = slice(0, laymax_index),
+        y = y_index, x = x_index) # [kg m^{-2}], [time, lay, y]
+    iwp = rad_tran_inds["iwp"].isel(
+        time = in_time_index, lay = slice(0, laymax_index),
+        y = y_index, x = x_index) # [kg m^{-2}], [time, lay, y]
 
-    p_lev = rad_tran_inds["p_lev"].isel(time = in_time_index, y = y_index, lev = slice(0, levmax_index)) # [Pa], [time, lev, x]
-    p_lay = rad_tran_inds["p_lay"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [Pa], [time, lay, x]
-    t_lay = rad_tran_inds["t_lay"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [K], [time, lay, x]
+    p_lev = rad_tran_inds["p_lev"].isel(
+        time = in_time_index, lev = slice(0, levmax_index),
+        y = y_index, x = x_index) # [Pa], [time, lev, y]
+    p_lay = rad_tran_inds["p_lay"].isel(
+        time = in_time_index, lay = slice(0, laymax_index),
+        y = y_index, x = x_index) # [Pa], [time, lay, y]
+    t_lay = rad_tran_inds["t_lay"].isel(
+        time = in_time_index, lay = slice(0, laymax_index),
+        y = y_index, x = x_index) # [K], [time, lay, y]
 
     x = rad_tran_inds["x"].isel(x = [0, 1]).values # [m]
     lev = rad_tran_inds["lev"].isel(lev = [0, 1]).values # [m]

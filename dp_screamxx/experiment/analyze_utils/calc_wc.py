@@ -1,8 +1,9 @@
 import xarray as xr
 
 from consts import g, R_d
+from calc_mass_air import calc_mass_air
 
-def calc_wc(rad_tran_infile, in_time_index, y_index = slice(0, None), zmax_index = None, detailed_calc = False):
+def calc_wc(rad_tran_infile, in_time_index, x_index = slice(0, None), zmax_index = None, detailed_calc = False):
     levmax_index = zmax_index
     laymax_index = zmax_index
     if zmax_index is not None:
@@ -10,12 +11,10 @@ def calc_wc(rad_tran_infile, in_time_index, y_index = slice(0, None), zmax_index
 
     rad_tran_inds = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)
 
-    lwp = rad_tran_inds["lwp"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, x]
-    iwp = rad_tran_inds["iwp"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, x]
+    lwp = rad_tran_inds["lwp"].isel(time = in_time_index, x = x_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, y]
+    iwp = rad_tran_inds["iwp"].isel(time = in_time_index, x = x_index, lay = slice(0, laymax_index)) # [kg m^{-2}], [time, lay, y]
 
-    p_lev = rad_tran_inds["p_lev"].isel(time = in_time_index, y = y_index, lev = slice(0, levmax_index)) # [Pa], [time, lev, x]
-    p_lay = rad_tran_inds["p_lay"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [Pa], [time, lay, x]
-    t_lay = rad_tran_inds["t_lay"].isel(time = in_time_index, y = y_index, lay = slice(0, laymax_index)) # [K], [time, lay, x]
+    p_lev = rad_tran_inds["p_lev"].isel(time = in_time_index, x = x_index, lev = slice(0, levmax_index)) # [Pa], [time, lev, y]
 
     x = rad_tran_inds["x"].isel(x = [0, 1]).values # [m]
     lev = rad_tran_inds["lev"].isel(lev = [0, 1]).values # [m]
@@ -31,9 +30,8 @@ def calc_wc(rad_tran_infile, in_time_index, y_index = slice(0, None), zmax_index
     dz = lev[1] - lev[0] # [m]
     vol = dx**2 * dz # [m^{3}]
 
-    # TO-DO: Get specific gas constant.
-    R = R_d
-    mass_air = (p_lay * vol) / (R * t_lay) # [kg], [time, lay, y, x]
+    mass_air = calc_mass_air(rad_tran_infile, in_time_index, 
+        x_index = x_index, zmax_index = zmax_index, detailed_calc = detailed_calc) # [kg], [time, lay, y, x]
 
     lwc = qc * mass_air / vol # [kg m^{-3}], [time, lay, y, x]
     iwc = qi * mass_air / vol # [kg m^{-3}], [time, lay, y, x]

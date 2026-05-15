@@ -181,7 +181,7 @@ def main():
                 elif field_key == "atm_heating":
                     [ts_field, rt_field] = calc_atm_heating(rad_tran_infile,
                         rad_tran_outfile, in_daytime_slice, out_daytime_slice, 
-                        zmax_index = zmax_index, detailed_calc = detailed_calc) # [K d^{-1}], [time, lay, x]
+                        zmax_index = zmax_index, detailed_calc = False) # [K d^{-1}], [time, lay, x]
                 elif field_key == "net_sfc_flux":
                     [ts_field, rt_field] = calc_sfc_net(rad_tran_outfile, 
                         out_daytime_slice) # [W m^{-2}], [time, y, x]

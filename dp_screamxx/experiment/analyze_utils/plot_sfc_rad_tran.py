@@ -130,12 +130,15 @@ def main():
                     ts_field = ts_sfc_net # [W m^{-2}], [time, y, x]
                     rt_field = rt_sfc_net # [W m^{-2}], [time, y, x]
 
+                # BUG: It seems like the x and y coordinates are transposed when compared to the absorbed fluxes.
+                # We adjust here by not transposing.
+
                 #-------------------------------------------------------------------
                 # Prepare data for plotting
                 #-------------------------------------------------------------------
-                vwp = np.transpose(vwp.values, axes = [0, 2, 1]) # [g m^{-2}], [time, x, y]
-                ts_field = np.transpose(ts_sfc_net.values, axes = [0, 2, 1]) # [time, x, y]
-                rt_field = np.transpose(rt_sfc_net.values, axes = [0, 2, 1]) # [time, x, y]
+                vwp = vwp.values # [g m^{-2}], [time, x, y]
+                ts_field = ts_sfc_net.values # [time, x, y]
+                rt_field = rt_sfc_net.values # [time, x, y]
                 diff_field = rt_field - ts_field # [time, x, y]
 
                 #-------------------------------------------------------------------
@@ -169,28 +172,28 @@ def main():
                 # Row 1: Vertical Water Path
                 vwp_pcm = [[] for ll in range(3)]
                 for ll in range(3):
-                    vwp_pcm[ll] = axs[0, ll].pcolormesh(x, y, vwp[ll,:],
+                    vwp_pcm[ll] = axs[0, ll].pcolormesh(x, y, vwp[ll,...],
                         vmin = vwp_min[ll], vmax = vwp_max[ll],
                         cmap = "Blues")
 
                 # Row 1: Two-Stream
                 ts_pcm = [[] for ll in range(3)]
                 for ll in range(3):
-                    ts_pcm[ll] = axs[1, ll].pcolormesh(x, y, ts_field[ll,:],
+                    ts_pcm[ll] = axs[1, ll].pcolormesh(x, y, ts_field[ll,...],
                         vmin = rad_tran_min[ll], vmax = rad_tran_max[ll],
                         cmap = rad_tran_cmap)
 
                 # Row 2: Ray-Tracer
                 rt_pcm = [[] for ll in range(3)]
                 for ll in range(3):
-                    rt_pcm[ll] = axs[2, ll].pcolormesh(x, y, rt_field[ll,:],
+                    rt_pcm[ll] = axs[2, ll].pcolormesh(x, y, rt_field[ll,...],
                         vmin = rad_tran_min[ll], vmax = rad_tran_max[ll],
                         cmap = rad_tran_cmap)
 
                 # Row 2: Ray-Tracer - Two-Stream
                 diff_pcm = [[] for ll in range(3)]
                 for ll in range(3):
-                    diff_pcm[ll] = axs[3, ll].pcolormesh(x, y, diff_field[ll,:],
+                    diff_pcm[ll] = axs[3, ll].pcolormesh(x, y, diff_field[ll,...],
                         vmin = diff_min[ll], vmax = diff_max[ll],
                         cmap = "RdBu")
 
@@ -212,7 +215,7 @@ def main():
                 axs[2,0].set_ylabel("Ray-Tracer")
                 axs[3,0].set_ylabel("Ray-Tracer - Two-Stream")
 
-                vwp_cbar.ax.set_ylabel(r"Vertical Water Path $\left[ g\,m^{-2} \right]$")
+                vwp_cbar.ax.set_ylabel(r"Vertical Cloud Water Path $\left[ g\,m^{-2} \right]$")
                 rt_cbar.ax.set_ylabel(rad_tran_label)
                 diff_cbar.ax.set_ylabel(rad_tran_label)
 
