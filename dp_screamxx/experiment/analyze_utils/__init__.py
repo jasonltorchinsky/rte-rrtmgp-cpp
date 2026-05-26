@@ -13,4 +13,4 @@ if src_dir not in sys.path:
 
 # Import from source files
 from .consts import *
-from .rte_rrtmgp_cpp_fields import *
+from .find_daytime_slices import find_daytime_slices

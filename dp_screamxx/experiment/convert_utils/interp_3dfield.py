@@ -152,7 +152,7 @@ def interp_3dfield(xr_dpscream: XR_DATASET, dpscream_field_key: str,
             z_tgt = g_grids["01"]["z"] # ASSUME VERTICAL GRID IS SAME FOR SRC, TGT, AND ALL COARSENINGS
         elif tgt_data_at_layers and not tgt_data_at_levels:
             z_tgt = g_grids["01"]["z_lay"] # ASSUME VERTICAL GRID IS SAME FOR SRC, TGT, AND ALL COARSENINGS
-        elif not_tgt_data_at_layers and tgt_data_at_levels:
+        elif not tgt_data_at_layers and tgt_data_at_levels:
             z_tgt = g_grids["01"]["z_lev"] # ASSUME VERTICAL GRID IS SAME FOR SRC, TGT, AND ALL COARSENINGS
 
     g_nx = comm.bcast(g_nx, root = MPI_ROOT)

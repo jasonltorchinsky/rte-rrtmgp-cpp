@@ -44,8 +44,8 @@ ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
 CASE_NAME="GATEIII"
 
 # Set SZAs, times, and coarsening factors
-SZAS_PYTHON="[]"
-COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
+SZAS=0,80
+COARSE_FACTORS=1,2,4,8
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
@@ -62,11 +62,12 @@ echo "CASE NAME: ${CASE_NAME}"
 #echo "Beginning ${STAGE_NAME}..."
 
 #mpirun -np 256 \
-#  python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --coarse_factors "${COARSE_FACTORS_PYTHON}"
-
+  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
+    --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
+    --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+    --coarse-factors ${COARSE_FACTORS} \
+    --szas ${SZAS}
+    
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
@@ -129,14 +130,14 @@ echo "CASE NAME: ${CASE_NAME}"
 #STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 #echo "Beginning ${STAGE_NAME}..."
 
-echo "Atmosphere Radiative Transfer Snapshot:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_snapshot.py \
-  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_snapshot \
-  --detailed-calc true \
-  --zmax 16 \
-  --lr 64
+#echo "Atmosphere Radiative Transfer Snapshot:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_snapshot.py \
+#  --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+#  --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_VIZ_DIR}/atm_rad_tran_snapshot \
+#  --detailed-calc true \
+#  --zmax 16 \
+#  --lr 64
 
 #echo "Atmosphere Radiative Transfer Z-Profile:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_zprofile.py \

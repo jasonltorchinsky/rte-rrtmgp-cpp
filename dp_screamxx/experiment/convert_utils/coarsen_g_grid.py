@@ -5,7 +5,6 @@ import numpy as np
 
 # Local Library Imports
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY
-from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
 
 def coarsen_g_grid(g_grid: dict, coarse_factor: NP_INT) -> dict:
     nx_fine: NP_INT = g_grid["nx"]
