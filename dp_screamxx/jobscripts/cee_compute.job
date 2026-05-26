@@ -3,14 +3,15 @@ export CUDA_VISIBLE_DEVICES=0
 
 # Machine-specific DP-SCREAMXX directories
 DP_SCREAMXX_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
-DP_SCREAMXX_RUN_NAME=scream_dpxx_GATEIII_300x300
+DP_SCREAMXX_RUN_NAME=scream_dpxx_RICO_50x50
 DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
 DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.1974-08-30-00000
 DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
+DP_SCREAMXX_OUTPUT_FILE_PATH=/projects/ml3drt/dpxx/scream_dpxx_RICO_50x50_extraDiag/run/scream_dpxx_RICO_50x50.scream.INSTANT.nhours_x1.2004-12-16-00000.nc
 
 # Machine-specific RTE-RRTMGP-CPP I/O directories
 RTE_RRTMGP_CPP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
-RTE_RRTMGP_CPP_RUN_NAME=1974-08-30
+RTE_RRTMGP_CPP_RUN_NAME=test
 RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
 RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
 RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
@@ -41,7 +42,7 @@ ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
 ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
 
 # Set Case - for Python Scripts
-CASE_NAME="GATEIII"
+CASE_NAME="RICO"
 
 # Set SZAs, times, and coarsening factors
 SZAS=0,80
@@ -61,13 +62,13 @@ echo "CASE NAME: ${CASE_NAME}"
 #STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
 #echo "Beginning ${STAGE_NAME}..."
 
-#mpirun -np 256 \
+mpirun -np 2 \
   python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
     --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
     --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
     --coarse-factors ${COARSE_FACTORS} \
     --szas ${SZAS}
-    
+
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 

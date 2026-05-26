@@ -18,7 +18,7 @@ from .get_g_grid_01 import get_g_grid_01
 from .get_sort_mask import get_sort_mask
 from .grids_to_coords import grids_to_coords
 from .interp_2dfield import interp_2dfield
-from .interp_3dfield import interp_3dfield
+from .interp_3dfield_new import interp_3dfield
 from .save_rte_rrtmgp_cpp_input import save_rte_rrtmgp_cpp_input
 from .scatterv_g_grids import scatterv_g_grids
 from .set_unspecified_vals import set_unspecified_vals

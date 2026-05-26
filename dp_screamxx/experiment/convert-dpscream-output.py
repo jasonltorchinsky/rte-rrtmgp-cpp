@@ -111,6 +111,7 @@ def main():
     else:
         end_time_idx = xr.open_dataset(dp_scream_file, engine = "netcdf4")["time"].size
         time_idxs = np.arange(end_time_idx)
+    nt: NP_INT = NP_INT(time_idxs.size)
 
     #---------------------------------------------------------------------------
     # Set variables used throughout the script
@@ -131,43 +132,52 @@ def main():
         msg: str = "Opening DP-SCREAM file: {}...".format(dp_scream_file)
         print(msg, flush = True)
 
-        xr_dp_scream = xr.open_dataset(dp_scream_file, engine = "netcdf4",
-            decode_timedelta = False).isel(time = time_idxs)
+        #-------------------------------------------------------------------
+        # Extract hours since simulation start
+        #-------------------------------------------------------------------
+        xr_dp_scream: XR_DATASET
+        with xr.open_dataset(dp_scream_file, engine = "netcdf4",
+            decode_timedelta = False).isel(time = time_idxs) as xr_dp_scream:
         
-        #-----------------------------------------------------------------------
-        # Get hours since first time
-        #-----------------------------------------------------------------------
-        times = (xr_dp_scream["time"] - xr_dp_scream["time"][0]).values.astype(NP_REAL) / (3600.e9) # [ns] => [h]
+            times = (xr_dp_scream["time"] - xr_dp_scream["time"][0]).to_numpy() / (3600.e9) # [ns] => [h]
 
         #-----------------------------------------------------------------------
         # Coarsen original horizontal grid - force us to keep finest (original) grid
         #-----------------------------------------------------------------------
-        sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(xr_dp_scream)
+        sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(dp_scream_file)
         g_grids = {}
-        g_grids["01"] = get_g_grid_01(xr_dp_scream, sort_mask)
+        g_grids["01"] = get_g_grid_01(dp_scream_file, sort_mask)
 
         coarse_factor: NP_INT
         for coarse_factor in coarse_factors:
-            coarse_factor_str: str = "{:02}".format(coarse_factor)
-            g_grids[coarse_factor_str] = coarsen_g_grid(g_grids["01"], coarse_factor)
+            if coarse_factor != 1: # Covered above
+                coarse_factor_str: str = "{:02}".format(coarse_factor)
+                g_grids[coarse_factor_str] = coarsen_g_grid(g_grids["01"], coarse_factor)
 
     #---------------------------------------------------------------------------
     # Prepare grid information for RTE-RRTMGP-CPP+RT input (coord)
     #---------------------------------------------------------------------------
-    g_coords: Optional[list] = grids_to_coords(xr_dp_scream, g_grids, comm)
+    #g_coords: Optional[list] = grids_to_coords(xr_dp_scream, g_grids, comm)
 
     #---------------------------------------------------------------------------
-    # Scatter grids to other processes
+    # Scatter sort_mask, grids to other processes
     #---------------------------------------------------------------------------
+    sort_mask = comm.bcast(sort_mask, root = MPI_ROOT)
     l_grid_src: dict
     l_grids_tgt: dict
     [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, comm)
 
     #---------------------------------------------------------------------------
+    # Coarsen the fields from DP-SCREAM to RTE-RRTMGP-CPP
+    #---------------------------------------------------------------------------
+    interp_3dfield(dp_scream_file, time_idxs, sort_mask, l_grid_src, l_grids_tgt,
+        comm, interp_method = interp_method)
+
+    #---------------------------------------------------------------------------
     # Loop through time-steps
     #---------------------------------------------------------------------------
     tt: NP_INT
-    for tt in time_idxs:
+    for tt in range(0, nt):
         #-----------------------------------------------------------------------
         # Set up global (g_) values for xarray to write to netcdf file
         #-----------------------------------------------------------------------
