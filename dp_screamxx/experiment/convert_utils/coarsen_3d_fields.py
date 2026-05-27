@@ -9,9 +9,9 @@ from datetime import datetime
 from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.consts import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
-    R_d, R_v
+    R_d, R_v, mu_d
 from consts.dp_screamxx_fields import dpscream_3dfield_keys
 from consts.rte_rrtmgp_cpp_fields import rte_3dfield_keys
 
@@ -66,6 +66,30 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
         l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
         l_y_src: NP_ARRAY[NP_REAL] = l_grid_src["y"]
 
+        # ASSUME: Constant spacing in x- and y-.
+        l_dx_src: NP_REAL = l_x_src[1] - l_x_src[0]
+        l_dy_src: NP_REAL = l_y_src[1] - l_y_src[0]
+
+        #-----------------------------------------------------------------------
+        # All mixing ratios are moist mixing ratios. 
+        # To calculate LWP, IWP later, we want mass of cloud liquid/ice
+        # water in each cell. For this, we need mass of moist air first.
+        #-----------------------------------------------------------------------
+        l_p_src: NP_ARRAY[NP_REAL] # Pressure [Pa], [nt, l_nx, ny, nlay]
+        l_T_src: NP_ARRAY[NP_REAL] # Temperature [K], [nt, l_nx, ny, nlay]
+        l_qv_src: NP_ARRAY[NP_REAL] # Specific Humidity [kg kg^{-1}], [nt, l_nx, ny, nlay]
+        l_z_lev_src: NP_ARRAY[NP_REAL]  # Level height [m], [nt, l_nx, ny, nlev]
+        [_, l_p_src] = extract_dp_scream_field(xr_dp_scream, "p_mid") 
+        [_, l_T_src] = extract_dp_scream_field(xr_dp_scream, "T_mid")
+        [_, l_qv_src] = extract_dp_scream_field(xr_dp_scream, "qv")
+        [_, l_z_lev_src] = extract_dp_scream_field(xr_dp_scream, "z_int")
+                
+        l_dz_src: NP_ARRAY[NP_REAL] = l_z_lev_src[:,:,:,1:] - l_z_lev_src[:,:,:,:-1] # Layer thickness [m], [nt, l_nx, ny, nlay]
+        l_V_src: NP_ARRAY[NP_REAL] = l_dx_src * l_dy_src * l_dz_src # Cell volume [m^{3}], [nt, l_nx, ny, nlay]
+
+        l_M_src: NP_ARRAY[NP_REAL] = (l_p_src * l_V_src) / (R_d * l_T_src * (1. + l_qv_src * ((R_v / R_d) - 1.))) # Moist air mass [kg], [nt, l_nx, ny, nlay]
+        l_nd_src: NP_ARRAY[NP_REAL] = l_M_src * (1. - l_qv_src) / mu_d # Moles of dry air [mol], [nt, l_nx, ny, nz]
+
         #-----------------------------------------------------------------------
         # Loop through RTE-RRTMGP-CPP+RT fields, remap verticaly
         #-----------------------------------------------------------------------
@@ -77,47 +101,35 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
             #-------------------------------------------------------------------
             # Extract relevant fields from DP-SCREAM file
             #-------------------------------------------------------------------
-            # TO-DO: HANDLE LWP, IWP
-            if rad_tran_key in ["p", "t", "rh", "rel", "dei", "vmr_ch4", "vmr_co", 
-                    "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", "vmr_o2", 
-                    "vmr_o3"]:
-                if rad_tran_key in ["p", "t"]:
-                    dp_scream_key = rad_tran_key
-                elif rad_tran_key == "rh":
-                    dp_scream_key = "RelativeHumidity"
-                elif rad_tran_key == "rel":
-                    dp_scream_key = "eff_radius_qc"
-                elif rad_tran_key == "dei":
-                    dp_scream_key = "eff_radius_qi"
-                elif "vmr_" in rad_tran_key:
-                    dp_scream_key = rad_tran_key[4:] + "_volume_mix_ratio"
+            if rad_tran_key in ["p", "t"]:
+                dp_scream_key = rad_tran_key
+            elif rad_tran_key == "rh":
+                dp_scream_key = "RelativeHumidity"
+            elif rad_tran_key == "rel":
+                dp_scream_key = "eff_radius_qc"
+            elif rad_tran_key == "dei":
+                dp_scream_key = "eff_radius_qi"
+            elif rad_tran_key == "lwp":
+                dp_scream_key = "qc"
+            elif rad_tran_key == "iwp":
+                dp_scream_key = "qi"
+            elif "vmr_" in rad_tran_key:
+                dp_scream_key = rad_tran_key[4:] + "_volume_mix_ratio"
 
-                l_z_src: NP_ARRAY[NP_REAL] # [nt, nz, ny, l_nx]
-                l_field_src: NP_ARRAY[NP_REAL] # [nt, nz, ny, l_nx]
-                [l_z_src, l_field_src] = extract_dp_scream_field(xr_dp_scream, dp_scream_key)
+            l_z_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+            l_field_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+            [l_z_src, l_field_src] = extract_dp_scream_field(xr_dp_scream, dp_scream_key)
 
-                # DP-SCREAM uses ice-water effective radius
-                # RAT-RRTMGP-CPP+RT use ice-water effective diameter
-                if rad_tran_key == "dei":
-                    l_field_src *= 2.
+            # DP-SCREAM uses ice-water effective radius
+            # RT-RRTMGP-CPP+RT use ice-water effective diameter
+            if rad_tran_key == "dei":
+                l_field_src *= 2.
+            # Mixing ratios to masses/moles for proportional split
             elif rad_tran_key in ["lwp", "iwp"]:
-                #---------------------------------------------------------------
-                # All mixing ratios are moist mixing ratios. 
-                # To calculate LWP, IWP later, we want mass of cloud liquid/ice
-                # water in each cell. For this, we need mass of moist air first.
-                #---------------------------------------------------------------
-                [l_z_src, l_p_src] = extract_dp_scream_field(xr_dp_scream, "p_mid") # Pressure [Pa], [nt, nx, ny, nlay]
-                [_, l_T_src] = extract_dp_scream_field(xr_dp_scream, "T_mid") # Temperature [K], [nt, nx, ny, nlay]
-                [_, l_qv_src] = extract_dp_scream_field(xr_dp_scream, "qv") # Specific Humidity [kg kg^{-1}], [nt, nx, ny, nlay]
-                if l_rank == MPI_ROOT:
-                    breakpoint()
-                comm.barrier()
-
-                if rad_tran_key == "lwp":
-                    [l_z_src, l_q_src] = extract_dp_scream_field(xr_dp_scream, "qc")
-                elif rad_tran_key == "iwp":
-                    [l_z_src, l_q_src] = extract_dp_scream_field(xr_dp_scream, "qi")
-                
+                l_field_src = l_field_src * l_M_src # Mass [kg], [nt, l_nx, ny, nz]
+            elif rad_tran_key in ["vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o",
+                "vmr_n2", "vmr_n2o", "vmr_o2", "vmr_o3"]:
+                l_field_src = l_field_src * l_nd_src # Moles of gas [mole], [nt, l_nx, ny, nz]
 
             #-------------------------------------------------------------------
             # Obtain target vertical grid
@@ -142,6 +154,7 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
             elif tgt_data_at_layers and not tgt_data_at_levels:
                 l_nz_tgt = l_grids_tgt["01"]["nlay"]
                 z_tgt = l_grids_tgt["01"]["z_lay"]
+            z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt["01"]["z_lev"]
 
             #-------------------------------------------------------------------
             # Remap field values vertically
@@ -158,11 +171,17 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
             l_nz_src: NP_INT
             [l_nt, l_nx_src, l_ny_src, l_nz_src] = NP_INT(l_field_src.shape)
             l_field_vremap: NP_ARRAY[NP_REAL] = np.empty([l_nt, l_nx_src, l_ny_src, l_nz_src], dtype = NP_REAL)
-            for tt in range(0, l_nt):
-                for ii in range(0, l_nx_src):
-                    for jj in range(0, l_ny_src):
-                        l_field_vremap[tt, ii, jj, :] = np.interp(z_tgt, l_z_src[tt, ii, jj, :], l_field_src[tt, ii, jj, :])
-
+            if rad_tran_key in ["p", "t", "rh", "rel", "dei"]:
+                for tt in range(0, l_nt):
+                    for ii in range(0, l_nx_src):
+                        for jj in range(0, l_ny_src):
+                            l_field_vremap[tt, ii, jj, :] = np.interp(z_tgt, l_z_src[tt, ii, jj, :], l_field_src[tt, ii, jj, :])
+            elif rad_tran_key in ["lwp", "iwp", "vmr_ch4", "vmr_co", "vmr_co2",
+                "vmr_h2o", "vmr_n2", "vmr_n2o", "vmr_o2", "vmr_o3"]:
+                if l_rank == MPI_ROOT:
+                    l_field_vremap = remap_layer_mass(z_lev_tgt, l_z_lev_src, l_field_src)
+                comm.barrier()
+                
             #-------------------------------------------------------------------
             # Store vertically-remapped field values
             #-------------------------------------------------------------------
@@ -247,108 +266,6 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
 
         return fields_tgt
 """
-    #---------------------------------------------------------------------------
-    # Open the relevant part of the DP-SCREAM file
-    #---------------------------------------------------------------------------
-
-    field_out: dict = {}
-
-    src_data_at_layers: Optional[bool] = None
-    src_data_at_levels: Optional[bool] = None
-    tgt_data_at_layers: Optional[bool] = None
-    tgt_data_at_levels: Optional[bool] = None
-
-    g_nx: Optional[NP_INT] = None
-    g_ny: Optional[NP_INT] = None
-    g_nlay: Optional[NP_INT] = None
-    g_nlev: Optional[NP_INT] = None
-    g_nz: Optional[NP_INT] = None
-    z_src: Optional[NP_ARRAY[NP_REAL]] = None
-    z_tgt: Optional[NP_ARRAY[NP_REAL]] = None
-    field_src: Optional[NP_ARRAY[NP_REAL]] = None
-    field_min: Optional[NP_REAL] = None
-    field_max: Optional[NP_REAL] = None
-    # Root Rank reads input file, constructs full field and Scatterv
-    if l_rank == MPI_ROOT:
-        g_nx = g_grids["01"]["nx"]
-        g_ny = g_grids["01"]["ny"]
-        g_nlay = g_grids["01"]["nlay"]
-        g_nlev = g_grids["01"]["nlev"]
-
-        ncol: NP_INT = NP_INT(xr_dpscream.sizes["ncol"])
-
-        # Get src_data information
-        if dpscream_field_key in xr_dpscream.keys():
-            src_data_at_layers = True
-            src_data_at_levels = False
-
-            z_lay_src: NP_ARRAY[NP_REAL] = \
-                xr_dpscream["z_mid"].isel(time = tt, ncol = sort_mask, lev = slice(None, None, -1)).values.astype(NP_REAL) # Layer midpoints [m]; (ncol, n_lay_z)
-            
-            field_lay_src: NP_ARRAY[NP_REAL] = \
-                xr_dpscream[dpscream_field_key].isel(time = tt, ncol = sort_mask, lev = slice(None, None, -1)).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
-        else:
-            dpscream_field_key_mid: str = dpscream_field_key + "_mid"
-            dpscream_field_key_int: str = dpscream_field_key + "_int"
-
-            assert((dpscream_field_key_mid in xr_dpscream.keys()) or 
-                (dpscream_field_key_int in xr_dpscream.keys()))
-
-            if dpscream_field_key_mid in xr_dpscream.keys():
-                src_data_at_layers = True
-
-                z_lay_src: NP_ARRAY[NP_REAL] = \
-                    xr_dpscream["z_mid"].isel(time = tt, ncol = sort_mask, lev = slice(None, None, -1)).values.astype(NP_REAL) # Layer midpoints [m]; (ncol, n_lay_z)
-
-                field_lay_src: NP_ARRAY[NP_REAL] = \
-                    xr_dpscream[dpscream_field_key_mid].isel(time = tt, ncol = sort_mask, lev = slice(None, None, -1)).values.astype(NP_REAL) # Field at layer midpoints; (ncol, n_lay_z)
-            else:
-                src_data_at_layers = False
-            if dpscream_field_key_int in xr_dpscream.keys():
-                src_data_at_levels = True
-
-                z_lev_src: NP_ARRAY[NP_REAL] = \
-                    xr_dpscream["z_int"].isel(time = tt, ncol = sort_mask, ilev = slice(None, None, -1)).values.astype(NP_REAL) # Layer interfaces [m]; (ncol, n_lev_z)
-
-                field_lev_src: NP_ARRAY[NP_REAL] = \
-                    xr_dpscream[dpscream_field_key_int].isel(time = tt, ncol = sort_mask, ilev = slice(None, None, -1)).values.astype(NP_REAL) # Field at layer interfaces; (ncol, n_lev_z)
-            else:
-                src_data_at_levels = False
-
-        assert(src_data_at_layers or src_data_at_levels)
-        if src_data_at_layers and src_data_at_levels:
-            g_nz = g_nlay + g_nlev
-
-            z_src: NP_ARRAY[NP_REAL] = np.empty([ncol, g_nz], dtype = NP_REAL)
-            z_src[:, 0::2] = z_lev_src
-            z_src[:, 1::2] = z_lay_src
-
-            field_src: NP_ARRAY[NP_REAL] = np.empty([ncol, g_nz], dtype = NP_REAL)
-            field_src[:, 0::2] = field_lev_src
-            field_src[:, 1::2] = field_lay_src
-        elif src_data_at_layers and not src_data_at_levels:
-            g_nz = g_nlay
-
-            z_src: NP_ARRAY[NP_REAL] = z_lay_src
-            field_src: NP_ARRAY[NP_REAL] = field_lay_src
-        elif not src_data_at_layers and src_data_at_levels:
-            g_nz = g_nlev
-
-            z_src: NP_ARRAY[NP_REAL] = z_lev_src
-            field_src: NP_ARRAY[NP_REAL] = field_lev_src
-
-        np.nan_to_num(field_src, NP_REAL(0.))
-        
-        ## Exceptions - Do in serial on MPI_ROOT for now
-        if rte_field_key in ["dei"]: # DP-SCREAM has rei, RTE-RRTMGP-CPP has dei
-            field_src = 2. * field_src
-        elif rte_field_key in ["lwp", "iwp"]: # Derived from multiple quantities
-            p_int: NP_ARRAY[NP_REAL] = \
-                xr_dpscream["p_int"].isel(time = tt, ncol = sort_mask).values.astype(NP_REAL) # Pressure at layer interfaces [Pa]; (ncol, n_lev_z)
-            dp: NP_ARRAY[NP_REAL] = p_int[:,1:] - p_int[:,:-1] # Layer pressure thickness [Pa]; (ncol, n_lay_z)
-
-            field_src = field_src * dp / g
-
         ## Get field min and max
         ## Exceptions
         if rte_field_key in ["rel"]: # Between 2.5 μm and 21.5 μm
@@ -512,7 +429,7 @@ def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
     return field_out
 """
 
-def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
+def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str) -> tuple[NP_ARRAY[NP_REAL]]:
     #-------------------------------------------------------------------
     # Get field information - at levels (int), layers (mid), or both
     #-------------------------------------------------------------------
@@ -593,3 +510,60 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
     field_src = np.transpose(field_src, axes = [0, 3, 2, 1]) # [nt, nx, ny, nz]
 
     return [z_src[:,:,:,::-1], field_src[:,:,:,::-1]] # Flip to increasing z
+
+def remap_layer_mass(l_z_lev_tgt: NP_ARRAY[NP_REAL], l_z_lev_src: NP_ARRAY[NP_REAL],
+    l_mass_src: NP_ARRAY[NP_REAL]) -> NP_ARRAY[NP_REAL]:
+
+    #---------------------------------------------------------------------------
+    # Get dimensions
+    #---------------------------------------------------------------------------
+    nt: NP_INT
+    l_nx: NP_INT
+    ny: NP_INT
+    nlay: NP_INT
+    [nt, l_nx, ny, nlay] = NP_INT(l_mass_src.shape)
+
+    breakpoint()
+
+    #---------------------------------------------------------------------------
+    # Compute source/target layer lower/upper bounds, get lay thicknesses
+    #---------------------------------------------------------------------------
+    l_z_lo_src: NP_ARRAY[NP_REAL] = l_z_lev_src[:,:,:,:-1] # [nt, l_nx, ny, nlay]
+    l_z_hi_src: NP_ARRAY[NP_REAL] = l_z_lev_src[:,:,:,1:] # [nt, l_nx, ny, nlay]
+
+    l_z_lo_tgt: NP_ARRAY[NP_REAL] = l_z_lev_tgt[:-1] # [nlay]
+    l_z_hi_tgt: NP_ARRAY[NP_REAL] = l_z_lev_tgt[1:]  # [nlay]
+
+    l_dz_src: NP_ARRAY[NP_REAL] = l_z_hi_src - l_z_lo_src # [nt, l_nx, ny, nlay]
+
+    #---------------------------------------------------------------------------
+    # Expand source arrays for pairwise source-target overlap
+    #---------------------------------------------------------------------------
+    l_z_lo_src_2d: NP_ARRAY[NP_REAL] = l_z_lo_src[:,:,:,:,None] # [nt, nx, ny, nlay, 1]
+    l_z_hi_src_2d: NP_ARRAY[NP_REAL] = l_z_hi_src[:,:,:,:,None] # [nt, nx, ny, nlay, 1]
+    l_dz_src_2d: NP_ARRAY[NP_REAL] = l_dz_src[:,:,:,:,None]     # [nt, nx, ny, nlay, 1]
+
+    #---------------------------------------------------------------------------
+    # Compute overlap thickness between every source layer and target layer
+    # overlap = max(0, min(src_hi, tgt_hi) - max(src_lo, tgt_lo))
+    #---------------------------------------------------------------------------
+    l_overlap_lo: NP_ARRAY[NP_REAL] = np.maximum(l_z_lo_src_2d, l_z_lo_tgt)
+    l_overlap_hi: NP_ARRAY[NP_REAL] = np.minimum(l_z_hi_src_2d, l_z_hi_tgt)
+
+    l_overlap: NP_ARRAY[NP_REAL] = np.maximum(NP_REAL(0.), l_overlap_hi - l_overlap_lo) # [nt, nx, ny, nlay, nlay]
+
+    #---------------------------------------------------------------------------
+    # Compute fraction of each source layer contributing to each target layer
+    #---------------------------------------------------------------------------
+    l_frac: NP_ARRAY[NP_REAL] = np.zeros([nt, l_nx, ny, nlay, nlay], dtype = NP_REAL)
+
+    l_mask_nonzero: NP_ARRAY[NP_BOOL] = (l_dz_src_2d > NP_REAL(0.))
+    l_frac[l_mask_nonzero] = l_overlap[l_mask_nonzero] / l_dz_src_2d[l_mask_nonzero]
+
+    #---------------------------------------------------------------------------
+    # Distribute source mass into target layers
+    #---------------------------------------------------------------------------
+    l_mass_contrib: NP_ARRAY[NP_REAL] = l_mass_src[:,:,:,:,None] * l_frac
+    l_mass_tgt: NP_ARRAY[NP_REAL] = np.sum(l_mass_contrib, axis = 3) # [nt, l_nx, ny, nlay]
+
+    return l_mass_tgt
