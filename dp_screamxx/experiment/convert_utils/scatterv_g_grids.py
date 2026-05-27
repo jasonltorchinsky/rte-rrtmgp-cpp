@@ -8,7 +8,7 @@ import numpy as np
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT
 
-def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
+def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], comm: MPI_COMM) -> [dict, dict]:
     #---------------------------------------------------------------------------
     # Get MPI communicator information
     #---------------------------------------------------------------------------
@@ -49,21 +49,50 @@ def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
     l_nx: NP_INT = NP_INT(l_x.size)
 
     #---------------------------------------------------------------------------
-    # Store sorce grid info in dict
+    # Broadcast y-, z- source grid info, which is the same across all grid resolutions
+    #---------------------------------------------------------------------------
+    ny_src: Optional[NP_INT] = None
+    y_src: Optional[NP_ARRAY[NP_REAL]] = None
+    nlay: Optional[NP_INT] = None
+    z_lay: Optional[NP_ARRAY[NP_REAL]] = None
+    nlev: Optional[NP_INT] = None
+    z_lev: Optional[NP_ARRAY[NP_REAL]] = None
+    nz: Optional[NP_INT] = None
+    z: Optional[NP_ARRAY[NP_REAL]] = None
+    if l_rank == MPI_ROOT:
+        ny_src = g_grids["01"]["ny"]
+        y_src = np.copy(g_grids["01"]["y"])
+        nlay = g_grids["01"]["nlay"]
+        z_lay = np.copy(g_grids["01"]["z_lay"])
+        nlev = g_grids["01"]["nlev"]
+        z_lev = np.copy(g_grids["01"]["z_lev"])
+        nz = g_grids["01"]["nz"]
+        z = np.copy(g_grids["01"]["z"])
+    ny_src = comm.bcast(ny_src, root = MPI_ROOT)
+    y_src = comm.bcast(y_src, root = MPI_ROOT)
+    nlay = comm.bcast(nlay, root = MPI_ROOT)
+    z_lay = comm.bcast(z_lay, root = MPI_ROOT)
+    nlev = comm.bcast(nlev, root = MPI_ROOT)
+    z_lev = comm.bcast(z_lev, root = MPI_ROOT)
+    nz = comm.bcast(nz, root = MPI_ROOT)
+    z = comm.bcast(z, root = MPI_ROOT)
+
+    #---------------------------------------------------------------------------
+    # Store source grid info in dict
     #---------------------------------------------------------------------------
     l_grid_src: dict = dict()
     l_grid_src["nx"] = l_nx
     l_grid_src["x"] = l_x
 
-    l_grid_src["ny"] = g_grids[coarse_str]["ny"]
-    l_grid_src["y"] = np.copy(g_grids[coarse_str]["y"])
+    l_grid_src["ny"] = ny_src
+    l_grid_src["y"] = y_src
 
-    l_grid_src[coarse_str]["nlay"] = g_grids["01"]["nlay"]
-    l_grid_src[coarse_str]["z_lay"] = np.copy(g_grids["01"]["z_lay"])
-    l_grid_src[coarse_str]["nlev"] = g_grids["01"]["nlev"]
-    l_grid_src[coarse_str]["z_lev"] = np.copy(g_grids["01"]["z_lev"])
-    l_grid_src[coarse_str]["nz"] = g_grids["01"]["nz"]
-    l_grid_src[coarse_str]["z"] = np.copy(g_grids["01"]["z"])
+    l_grid_src["nlay"] = nlay
+    l_grid_src["z_lay"] = z_lay
+    l_grid_src["nlev"] = nlev
+    l_grid_src["z_lev"] = z_lev
+    l_grid_src["nz"] = nz
+    l_grid_src["z"] = z
 
     l_grid_src["l_counts_x"] = l_counts
     l_grid_src["l_displs_x"] = l_displs
@@ -73,42 +102,13 @@ def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
     # process based on the intersection of l_grids_src with the coarsened grid
     #---------------------------------------------------------------------------
     l_grids_tgt: dict = dict()
-
-    # Broadcast coarse_strs to setup l_grids
-    coarse_strs: Optional[list[str]] = None
-    if l_rank == MPI_ROOT:
-        coarse_strs = sorted(list(g_grids.keys()))
-    coarse_strs = comm.bcast(coarse_strs, root = MPI_ROOT)
-    
-    #---------------------------------------------------------------------------
-    # Broadcast z-grid info, which is the same across all grid resolutions
-    #---------------------------------------------------------------------------
-    nlay: Optional[NP_INT] = None
-    z_lay: Optional[NP_ARRAY[NP_REAL]] = None
-    nlev: Optional[NP_INT] = None
-    z_lev: Optional[NP_ARRAY[NP_REAL]] = None
-    nz: Optional[NP_INT] = None
-    z: Optional[NP_ARRAY[NP_REAL]] = None
-    if l_rank == MPI_ROOT:
-        nlay = g_grids["01"]["nlay"]
-        z_lay = np.copy(g_grids["01"]["z_lay"])
-        nlev = g_grids["01"]["nlev"]
-        z_lev = np.copy(g_grids["01"]["z_lev"])
-        nz = g_grids["01"]["nz"]
-        z = np.copy(g_grids["01"]["z"])
-    nlay = comm.bcast(nlay, root = MPI_ROOT)
-    z_lay = comm.bcast(z_lay, root = MPI_ROOT)
-    nlev = comm.bcast(nlev, root = MPI_ROOT)
-    z_lev = comm.bcast(z_lev, root = MPI_ROOT)
-    nz = comm.bcast(nz, root = MPI_ROOT)
-    z = comm.bcast(z, root = MPI_ROOT)
     
     #---------------------------------------------------------------------------
     # Get the coarsened l_grids based on the intersection of the finest l_grids
     # and the coarsened g_grid
     #---------------------------------------------------------------------------
-    coarse_str: str
-    for coarse_str in coarse_strs:
+    for coarse_factor in coarse_factors:
+        coarse_str: str = "{:02}".format(coarse_factor)
         l_grids_tgt[coarse_str]: dict = dict()
 
         #-----------------------------------------------------------------------
@@ -181,6 +181,8 @@ def scatterv_g_grids(g_grids: Optional[dict], comm: MPI_COMM) -> [dict, dict]:
         l_grids_tgt[coarse_str]["z_lay"] = z_lay
         l_grids_tgt[coarse_str]["nlev"] = nlev
         l_grids_tgt[coarse_str]["z_lev"] = z_lev
+        l_grids_tgt[coarse_str]["nz"] = nz
+        l_grids_tgt[coarse_str]["z"] = z
 
         # Store communication values in each local grid
         l_grids_tgt[coarse_str]["l_counts_x"] = l_counts

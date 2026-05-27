@@ -6,11 +6,11 @@ M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 """
 
 # Standard Library Imports
-import ast
 import os
 import re
 
 from argparse import ArgumentParser, Namespace
+from datetime import datetime
 from typing import Optional
 
 # Third-Party Library Imports
@@ -24,7 +24,7 @@ from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
 from consts.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
 from consts.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
 from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
-    interp_2dfield, interp_3dfield, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
+    interp_2dfield, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
     vals_to_fields
 from analyze_utils import find_daytime_slices
 
@@ -90,8 +90,6 @@ def main():
         coarse_factors = np.array([1], dtype = NP_INT)
     else:
         coarse_factors = np.sort(np.array(args.coarse_factors.split(","), dtype = NP_INT))[::-1]
-        if not np.any(coarse_factors == NP_INT(1)):
-            coarse_factors = np.append(coarse_factors, NP_INT(1))
 
     szas: Optional[NP_ARRAY[NP_REAL]] = None
     if args.szas is not None:
@@ -122,6 +120,15 @@ def main():
     rad_tran_file_name_root: str = file_ext.sub("", os.path.basename(dp_scream_file))
     rad_tran_file_path_root: str = os.path.join(rad_tran_indir, rad_tran_file_name_root)
 
+    g_fields_tgt: Optional[dict] = None
+    if l_rank == MPI_ROOT:
+        g_fields_tgt = {}
+        coarse_factor: NP_INT
+        for coarse_factor in coarse_factors:
+            coarse_factor_str: str = "{:02}".format(coarse_factor)
+            g_fields_tgt[coarse_factor_str] = {}
+
+
     #---------------------------------------------------------------------------
     # Root rank gets original horizontal grid
     #---------------------------------------------------------------------------
@@ -129,7 +136,8 @@ def main():
     sort_mask: Optional[NP_ARRAY[NP_INT]] = None
     g_grids: Optional[dict] = None
     if l_rank == MPI_ROOT:
-        msg: str = "Opening DP-SCREAM file: {}...".format(dp_scream_file)
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Opening DP-SCREAM file: {}...".format(current_time, dp_scream_file)
         print(msg, flush = True)
 
         #-------------------------------------------------------------------
@@ -144,6 +152,10 @@ def main():
         #-----------------------------------------------------------------------
         # Coarsen original horizontal grid - force us to keep finest (original) grid
         #-----------------------------------------------------------------------
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Coarsening horizontal grid...".format(current_time)
+        print(msg, flush = True)
+
         sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(dp_scream_file)
         g_grids = {}
         g_grids["01"] = get_g_grid_01(dp_scream_file, sort_mask)
@@ -162,16 +174,43 @@ def main():
     #---------------------------------------------------------------------------
     # Scatter sort_mask, grids to other processes
     #---------------------------------------------------------------------------
+    if l_rank == MPI_ROOT:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Scattering horizontal grid...".format(current_time)
+        print(msg, flush = True)
     sort_mask = comm.bcast(sort_mask, root = MPI_ROOT)
     l_grid_src: dict
     l_grids_tgt: dict
-    [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, comm)
+    [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, coarse_factors, comm)
 
     #---------------------------------------------------------------------------
-    # Coarsen the fields from DP-SCREAM to RTE-RRTMGP-CPP
+    # Coarsen 3-D fields from DP-SCREAM to RTE-RRTMGP-CPP
     #---------------------------------------------------------------------------
-    interp_3dfield(dp_scream_file, time_idxs, sort_mask, l_grid_src, l_grids_tgt,
-        comm, interp_method = interp_method)
+    if l_rank == MPI_ROOT:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Initiating 3-D field coarsening...".format(current_time)
+        print(msg, flush = True)
+    
+    g_3dfields_tgt: dict = coarsen_3d_fields(dp_scream_file, time_idxs, sort_mask,
+        g_grids, l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
+    
+    if l_rank == MPI_ROOT:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Storing coarsened 3-D fields...".format(current_time)
+        print(msg, flush = True)
+
+        coarse_factor: NP_INT
+        for coarse_factor in coarse_factors:
+            coarse_factor_str: str = "{:02}".format(coarse_factor)
+            g_fields_tgt[coarse_factor_str] = {**g_fields_tgt[coarse_factor_str], **g_3dfields_tgt[coarse_factor_str]}
+
+    #---------------------------------------------------------------------------
+    # Coarsen 2-D fields from DP-SCREAM to RTE-RRTMGP-CPP
+    #---------------------------------------------------------------------------
+
+    if l_rank == MPI_ROOT:
+        breakpoint()
+    comm.barrier()
 
     #---------------------------------------------------------------------------
     # Loop through time-steps

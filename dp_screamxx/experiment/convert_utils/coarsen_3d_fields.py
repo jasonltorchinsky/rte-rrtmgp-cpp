@@ -4,17 +4,19 @@ from typing import Optional
 # Third-Party Library Imports
 import numpy as np
 import xarray as xr
+
+from datetime import datetime
 from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
-    g
+    R_d, R_v
 from consts.dp_screamxx_fields import dpscream_3dfield_keys
 from consts.rte_rrtmgp_cpp_fields import rte_3dfield_keys
 
-def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
-    sort_mask: NP_ARRAY[NP_INT], l_grid_src: dict, l_grids_tgt: dict, 
+def coarsen_3d_fields(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
+    sort_mask: NP_ARRAY[NP_INT], g_grids: dict, l_grid_src: dict, l_grids_tgt: dict, 
     comm: MPI_COMM, interp_method: str = "nearest") -> dict:
     #---------------------------------------------------------------------------
     # Get MPI communicator information
@@ -25,7 +27,18 @@ def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
     #---------------------------------------------------------------------------
     # Each rank opens the DP-SCREAM file and extract their relevant part
     #---------------------------------------------------------------------------
+    if l_rank == MPI_ROOT:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Opening and reformatting DP-SCREAM dataset...".format(current_time)
+        print(msg, flush = True)
+
     l_x_src = l_grid_src["x"]
+    fields_tgt: Optional[dict] = None
+    if l_rank == MPI_ROOT:
+        fields_tgt = {}
+        for coarse_str in l_grids_tgt.keys():
+            fields_tgt[coarse_str] = {}
+
     with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
         decode_timedelta = False)
         .isel(time = time_idxs, ncol = sort_mask)
@@ -36,9 +49,31 @@ def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
         .sel(x = slice(l_x_src.min(), l_x_src.max()))) as xr_dp_scream:
 
         #-----------------------------------------------------------------------
-        # Loop through RTE-RRTMGP-CPP+RT fields
+        # Set up dict for holding vertically-remapped field values
         #-----------------------------------------------------------------------
-        for rad_tran_key in rte_3dfield_keys:
+        l_fields_vremap: dict = {}
+
+        #-----------------------------------------------------------------------
+        # Set up dict for holding horizontally coarsened (i.e., tgt) field values
+        #-----------------------------------------------------------------------
+        l_fields_tgt: dict = {}
+        for coarse_str in l_grids_tgt.keys():
+            l_fields_tgt[coarse_str] = {}
+
+        #-----------------------------------------------------------------------
+        # Get source grid information for horizontal coarsening
+        #-----------------------------------------------------------------------
+        l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+        l_y_src: NP_ARRAY[NP_REAL] = l_grid_src["y"]
+
+        #-----------------------------------------------------------------------
+        # Loop through RTE-RRTMGP-CPP+RT fields, remap verticaly
+        #-----------------------------------------------------------------------
+        for rad_tran_key in ["lwp"]:#rte_3dfield_keys:
+            if l_rank == MPI_ROOT:
+                current_time = datetime.now().strftime("%H:%M:%S")
+                msg: str = "[{}]: Extracting DP-SCREAM field(s) for {}...".format(current_time, rad_tran_key)
+                print(msg, flush = True)
             #-------------------------------------------------------------------
             # Extract relevant fields from DP-SCREAM file
             #-------------------------------------------------------------------
@@ -57,12 +92,32 @@ def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
                 elif "vmr_" in rad_tran_key:
                     dp_scream_key = rad_tran_key[4:] + "_volume_mix_ratio"
 
+                l_z_src: NP_ARRAY[NP_REAL] # [nt, nz, ny, l_nx]
+                l_field_src: NP_ARRAY[NP_REAL] # [nt, nz, ny, l_nx]
                 [l_z_src, l_field_src] = extract_dp_scream_field(xr_dp_scream, dp_scream_key)
 
                 # DP-SCREAM uses ice-water effective radius
                 # RAT-RRTMGP-CPP+RT use ice-water effective diameter
                 if rad_tran_key == "dei":
                     l_field_src *= 2.
+            elif rad_tran_key in ["lwp", "iwp"]:
+                #---------------------------------------------------------------
+                # All mixing ratios are moist mixing ratios. 
+                # To calculate LWP, IWP later, we want mass of cloud liquid/ice
+                # water in each cell. For this, we need mass of moist air first.
+                #---------------------------------------------------------------
+                [l_z_src, l_p_src] = extract_dp_scream_field(xr_dp_scream, "p_mid") # Pressure [Pa], [nt, nx, ny, nlay]
+                [_, l_T_src] = extract_dp_scream_field(xr_dp_scream, "T_mid") # Temperature [K], [nt, nx, ny, nlay]
+                [_, l_qv_src] = extract_dp_scream_field(xr_dp_scream, "qv") # Specific Humidity [kg kg^{-1}], [nt, nx, ny, nlay]
+                if l_rank == MPI_ROOT:
+                    breakpoint()
+                comm.barrier()
+
+                if rad_tran_key == "lwp":
+                    [l_z_src, l_q_src] = extract_dp_scream_field(xr_dp_scream, "qc")
+                elif rad_tran_key == "iwp":
+                    [l_z_src, l_q_src] = extract_dp_scream_field(xr_dp_scream, "qi")
+                
 
             #-------------------------------------------------------------------
             # Obtain target vertical grid
@@ -91,19 +146,107 @@ def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
             #-------------------------------------------------------------------
             # Remap field values vertically
             #-------------------------------------------------------------------
-            # TO-DO: HANDLE LWP, IWP
-            l_nx_src: NP_INT = l_grid_src["nx"]
-            l_ny_src: NP_INT = l_grid_src["ny"]
-            l_field_vremap: NP_ARRAY[NP_REAL] = np.empty([l_nx_src, l_ny_src, l_nz_tgt], dtype = NP_REAL)
-            for ii in range(0, l_nx_src):
-                for jj in range(0, l_ny_src):
-                    l_field_vremap[ii, jj, :] = np.interp(z_tgt, l_z_src[ii, jj, :], l_field_src[ii, jj, :])
-            
             if l_rank == MPI_ROOT:
-                    breakpoint()
-            comm.barrier()
+                current_time = datetime.now().strftime("%H:%M:%S")
+                msg: str = "[{}]: Vertically remapping {}...".format(current_time, rad_tran_key)
+                print(msg, flush = True)
+            # TO-DO: HANDLE LWP, IWP, VMR
+            # TO-DO: ENSURE THAT TIME_DIMENSION IS ACCOUNTED FOR
+            l_nt: NP_INT
+            l_nx_src: NP_INT
+            l_ny_src: NP_INT
+            l_nz_src: NP_INT
+            [l_nt, l_nx_src, l_ny_src, l_nz_src] = NP_INT(l_field_src.shape)
+            l_field_vremap: NP_ARRAY[NP_REAL] = np.empty([l_nt, l_nx_src, l_ny_src, l_nz_src], dtype = NP_REAL)
+            for tt in range(0, l_nt):
+                for ii in range(0, l_nx_src):
+                    for jj in range(0, l_ny_src):
+                        l_field_vremap[tt, ii, jj, :] = np.interp(z_tgt, l_z_src[tt, ii, jj, :], l_field_src[tt, ii, jj, :])
 
-            # CONTINUE FROM HERE
+            #-------------------------------------------------------------------
+            # Store vertically-remapped field values
+            #-------------------------------------------------------------------
+            l_fields_vremap[rad_tran_key] = l_field_vremap
+
+            #-------------------------------------------------------------------
+            # Coarsen field values horizontally
+            #-------------------------------------------------------------------
+            l_horz_coarsener: list[RegularGridInterpolator] = \
+                [[RegularGridInterpolator((l_x_src, l_y_src), l_field_vremap[tt,:,:,kk], method = interp_method)
+                    for kk in range(0, l_nz_src)] for tt in range(0, l_nt)]
+            for coarse_str in l_grids_tgt.keys():
+                if l_rank == MPI_ROOT:
+                    current_time = datetime.now().strftime("%H:%M:%S")
+                    msg: str = "[{}]: Coarsening {} to lr_{}...".format(current_time, rad_tran_key, coarse_str)
+                    print(msg, flush = True)
+                #---------------------------------------------------------------
+                # Get target horizontal grid and communication parameters
+                #---------------------------------------------------------------
+                l_nx_tgt: NP_INT = l_grids_tgt[coarse_str]["nx"]
+                l_ny_tgt: NP_INT = l_grids_tgt[coarse_str]["ny"]
+
+                l_x_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["x"]
+                l_y_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["y"]
+
+                l_XX_tgt, l_YY_tgt = \
+                    np.meshgrid(l_x_tgt, l_y_tgt, indexing = "ij")
+                l_pts_tgt: NP_ARRAY[NP_REAL] = \
+                    np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], 
+                        axis = 1)
+
+                l_counts_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_counts_x"]
+                l_displs_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_displs_x"]
+
+                l_counts_tgt: NP_ARRAY[NP_INT] = l_nt * l_nz_tgt * l_ny_tgt * l_counts_x
+                l_displs_tgt: NP_ARRAY[NP_INT] = l_nt * l_nz_tgt * l_ny_tgt * l_displs_x
+
+                #---------------------------------------------------------------
+                # Horizontally coarsen the field
+                #---------------------------------------------------------------
+                l_field_tgt: NP_ARRAY[NP_REAL] = \
+                    np.empty([l_nt, l_nx_tgt, l_ny_tgt, l_nz_tgt], dtype = NP_REAL)
+                for tt in range(0, l_nt):
+                    for kk in range(0, l_nz_src):
+                        l_field_tgt[tt,:,:,kk] = l_horz_coarsener[tt][kk](l_pts_tgt).reshape(l_nx_tgt, l_ny_tgt)
+
+                #---------------------------------------------------------------
+                # Store horizontally-coarsened field values
+                #---------------------------------------------------------------
+                l_fields_tgt[coarse_str][rad_tran_key] = l_field_tgt
+
+                #---------------------------------------------------------------
+                # Gatherv the whole field onto MPI_ROOT
+                #---------------------------------------------------------------
+                # Reshape l_field_tgt for easier Gatherv
+                l_field_tgt = np.ascontiguousarray(np.transpose(l_field_tgt, axes = [1, 0, 2, 3])) # [nx, nt, ny, nz]
+                field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
+                if l_rank == MPI_ROOT:
+                    nt_tgt: NP_INT = l_nt
+                    nx_tgt: NP_INT = g_grids[coarse_str]["nx"]
+                    ny_tgt: NP_INT = l_ny_tgt
+                    nz_tgt: NP_INT = l_nz_tgt
+        
+                    field_tgt = np.empty(nt_tgt * nx_tgt * ny_tgt * nz_tgt, dtype = NP_REAL)
+
+                comm.Gatherv(l_field_tgt, 
+                    [field_tgt, l_counts_tgt, l_displs_tgt, MPI_REAL],
+                    root = MPI_ROOT)
+
+                # At this point, field_tgt is a concatenation of comm_size
+                # arrays of length nt * l_nx * ny * nz. 
+                if l_rank == MPI_ROOT:
+                    field_tgt = np.ascontiguousarray(
+                        np.transpose(field_tgt.reshape(nx_tgt, nt_tgt, ny_tgt, nz_tgt), 
+                            axes = [1, 3, 2, 0])) # [nt, nz, ny, nx]
+
+                    if rad_tran_key in ["p", "t"]:
+                        fields_tgt[coarse_str][rad_tran_key + "_lay"] = field_tgt[:,:,:,1::2]
+                        fields_tgt[coarse_str][rad_tran_key + "_lev"] = field_tgt[:,:,:,0::2]
+                    else:
+                        fields_tgt[coarse_str][rad_tran_key] = field_tgt
+
+        return fields_tgt
+"""
     #---------------------------------------------------------------------------
     # Open the relevant part of the DP-SCREAM file
     #---------------------------------------------------------------------------
@@ -367,6 +510,7 @@ def interp_3dfield(dp_scream_file: str, time_idxs: NP_ARRAY[NP_INT],
                     field_out[coarse_str][rte_field_key_lev] = field_lev_tgt
 
     return field_out
+"""
 
 def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
     #-------------------------------------------------------------------
@@ -400,14 +544,14 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
         else:
             src_data_at_layers = False
 
-            # Field values at levels available
-            if dp_scream_key_int in xr_dp_scream.keys():
-                src_data_at_levels = True
+        # Field values at levels available
+        if dp_scream_key_int in xr_dp_scream.keys():
+            src_data_at_levels = True
 
-                z_lev_src: NP_ARRAY[NP_REAL] = xr_dp_scream["z_int"].to_numpy().astype(NP_REAL) # Layer interfaces [m]; (ncol, n_lev_z)
-                field_lev_src: NP_ARRAY[NP_REAL] = xr_dp_scream[dp_scream_key_int].to_numpy().astype(NP_REAL) # Field at layer interfaces; (ncol, n_lev_z)
-            else:
-                src_data_at_levels = False
+            z_lev_src: NP_ARRAY[NP_REAL] = xr_dp_scream["z_int"].to_numpy().astype(NP_REAL) # Layer interfaces [m]; (ncol, n_lev_z)
+            field_lev_src: NP_ARRAY[NP_REAL] = xr_dp_scream[dp_scream_key_int].to_numpy().astype(NP_REAL) # Field at layer interfaces; (ncol, n_lev_z)
+        else:
+            src_data_at_levels = False
     
     #---------------------------------------------------------------------------
     # Interleave field values
@@ -421,8 +565,8 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
     g_nz: NP_INT
     
     if src_data_at_layers and src_data_at_levels:
-        [g_nt, g_nlay, g_ny, l_nx] = z_lay_src.shape
-        [_,    g_nlev, _,    _]    = z_lev_src.shape
+        [g_nt, g_nlay, g_ny, l_nx] = NP_INT(z_lay_src.shape)
+        [_,    g_nlev, _,    _]    = NP_INT(z_lev_src.shape)
         g_nz = g_nlay + g_nlev
 
         z_src: NP_ARRAY[NP_REAL] = np.empty([g_nt, g_nz, g_ny, l_nx], dtype = NP_REAL)
@@ -433,16 +577,19 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str):
         field_src[:, 0::2, :, :] = field_lev_src
         field_src[:, 1::2, :, :] = field_lay_src
     elif src_data_at_layers and not src_data_at_levels:
-        [g_nt, g_nz, g_ny, l_nx] = z_lay_src.shape
+        [g_nt, g_nz, g_ny, l_nx] = NP_INT(z_lay_src.shape)
 
         z_src: NP_ARRAY[NP_REAL] = z_lay_src
         field_src: NP_ARRAY[NP_REAL] = field_lay_src
     elif not src_data_at_layers and src_data_at_levels:
-        [g_nt, g_nz, g_ny, l_nx] = z_lev_src.shape
+        [g_nt, g_nz, g_ny, l_nx] = NP_INT(z_lev_src.shape)
 
         z_src: NP_ARRAY[NP_REAL] = z_lev_src
         field_src: NP_ARRAY[NP_REAL] = field_lev_src
 
     np.nan_to_num(field_src, NP_REAL(0.))
-    
-    return [z_src, field_src]
+
+    z_src = np.transpose(z_src, axes = [0, 3, 2, 1]) # [nt, nx, ny, nz]
+    field_src = np.transpose(field_src, axes = [0, 3, 2, 1]) # [nt, nx, ny, nz]
+
+    return [z_src[:,:,:,::-1], field_src[:,:,:,::-1]] # Flip to increasing z

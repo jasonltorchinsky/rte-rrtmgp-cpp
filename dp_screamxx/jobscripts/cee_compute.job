@@ -46,7 +46,7 @@ CASE_NAME="RICO"
 
 # Set SZAs, times, and coarsening factors
 SZAS=0,80
-COARSE_FACTORS=1,2,4,8
+COARSE_FACTORS=1,8
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
