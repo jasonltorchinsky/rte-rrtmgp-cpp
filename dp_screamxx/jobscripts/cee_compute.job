@@ -46,7 +46,7 @@ CASE_NAME="RICO"
 
 # Set SZAs, times, and coarsening factors
 SZAS=0,80
-COARSE_FACTORS=1,8
+COARSE_FACTORS=16
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
@@ -62,7 +62,7 @@ echo "CASE NAME: ${CASE_NAME}"
 #STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
 #echo "Beginning ${STAGE_NAME}..."
 
-mpirun -np 2 \
+mpirun -np 32 \
   python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
     --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
     --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \

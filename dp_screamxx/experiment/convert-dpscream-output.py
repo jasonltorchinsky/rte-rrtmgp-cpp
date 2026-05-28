@@ -21,10 +21,10 @@ import xarray as xr
 # Local Library Imports
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET
-from consts.dp_screamxx_fields import dpscream_3dfield_keys, dpscream_2dfield_keys
-from consts.rte_rrtmgp_cpp_fields import rte_3dfield_keys, rte_2dfield_keys
-from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
-    interp_2dfield, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_vals, \
+from consts.dp_screamxx_fields import dpscream_3d_field_keys, dpscream_2d_field_keys
+from consts.rte_rrtmgp_cpp_fields import rte_3d_field_keys, rte_2d_field_keys
+from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, \
+    coarsen_2d_fields, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_fields, \
     vals_to_fields
 from analyze_utils import find_daytime_slices
 
@@ -137,7 +137,7 @@ def main():
     g_grids: Optional[dict] = None
     if l_rank == MPI_ROOT:
         current_time = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Opening DP-SCREAM file: {}...".format(current_time, dp_scream_file)
+        msg: str = "[{}]: Initial parsing of DP-SCREAM file: {}...".format(current_time, dp_scream_file)
         print(msg, flush = True)
 
         #-------------------------------------------------------------------
@@ -178,125 +178,107 @@ def main():
         current_time = datetime.now().strftime("%H:%M:%S")
         msg: str = "[{}]: Scattering horizontal grid...".format(current_time)
         print(msg, flush = True)
+
     sort_mask = comm.bcast(sort_mask, root = MPI_ROOT)
     l_grid_src: dict
     l_grids_tgt: dict
     [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, coarse_factors, comm)
 
-    #---------------------------------------------------------------------------
-    # Coarsen 3-D fields from DP-SCREAM to RTE-RRTMGP-CPP
-    #---------------------------------------------------------------------------
+    #-----------------------------------------------------------------------
+    # Set fields that tend to be unspecified in the DP-SCREAM output file
+    #-----------------------------------------------------------------------
     if l_rank == MPI_ROOT:
         current_time = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Initiating 3-D field coarsening...".format(current_time)
+        msg: str = "[{}]: Setting unspecified fields...".format(current_time)
         print(msg, flush = True)
     
-    g_3dfields_tgt: dict = coarsen_3d_fields(dp_scream_file, time_idxs, sort_mask,
-        g_grids, l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
-    
-    if l_rank == MPI_ROOT:
-        current_time = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Storing coarsened 3-D fields...".format(current_time)
-        print(msg, flush = True)
+    with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
+        decode_timedelta = False)) as xr_dp_scream:
+        g_unspecified_fields_tgt: dict = set_unspecified_fields(xr_dp_scream,
+            g_grids, comm)
 
-        coarse_factor: NP_INT
-        for coarse_factor in coarse_factors:
-            coarse_factor_str: str = "{:02}".format(coarse_factor)
-            g_fields_tgt[coarse_factor_str] = {**g_fields_tgt[coarse_factor_str], **g_3dfields_tgt[coarse_factor_str]}
-
-    #---------------------------------------------------------------------------
-    # Coarsen 2-D fields from DP-SCREAM to RTE-RRTMGP-CPP
-    #---------------------------------------------------------------------------
-
-    if l_rank == MPI_ROOT:
-        breakpoint()
-    comm.barrier()
-
-    #---------------------------------------------------------------------------
-    # Loop through time-steps
-    #---------------------------------------------------------------------------
-    tt: NP_INT
-    for tt in range(0, nt):
-        #-----------------------------------------------------------------------
-        # Set up global (g_) values for xarray to write to netcdf file
-        #-----------------------------------------------------------------------
-        g_vals: Optional[dict] = None
         if l_rank == MPI_ROOT:
-            msg: str = "Converting time-step {}".format(tt)
+            current_time = datetime.now().strftime("%H:%M:%S")
+            msg: str = "[{}]: Storing unspecified fields...".format(current_time)
             print(msg, flush = True)
 
-            time: NP_REAL = times[tt]
-
-            g_vals = dict()
             coarse_factor: NP_INT
             for coarse_factor in coarse_factors:
                 coarse_factor_str: str = "{:02}".format(coarse_factor)
-                g_vals[coarse_factor_str] = {"time" : time}
+                g_fields_tgt[coarse_factor_str] = {**g_fields_tgt[coarse_factor_str], **g_unspecified_fields_tgt[coarse_factor_str]}
 
-        #-----------------------------------------------------------------------
-        # Root process sets default values for those not specified in DP-SCREAM output
-        #-----------------------------------------------------------------------
-        g_unspecified_vals: dict = set_unspecified_vals(xr_dp_scream, g_grids, comm)
         if l_rank == MPI_ROOT:
-            msg: str = "  Setting unspecified fields..."
-            print(msg, flush = True)
+            breakpoint()
+        comm.barrier()
 
-            coarse_factor_str: str
-            for coarse_factor_str in g_vals.keys():
-                g_vals[coarse_factor_str] = {**g_vals[coarse_factor_str], **g_unspecified_vals[coarse_factor_str]}
+    #---------------------------------------------------------------------------
+    # Each rank opens the DP-SCREAM file and extract their relevant part
+    #---------------------------------------------------------------------------
+    if l_rank == MPI_ROOT:
+        current_time = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Opening and reformatting DP-SCREAM dataset...".format(current_time)
+        print(msg, flush = True)
 
-        #-----------------------------------------------------------------------
-        # Processes cooperate to interpolate (x,y,z) values to target grids
-        #-----------------------------------------------------------------------
-        ii: int
-        for ii in range(0, len(dpscream_3dfield_keys)):
-            dpscream_field_key: str = dpscream_3dfield_keys[ii]
-            rte_field_key: str = rte_3dfield_keys[ii]
-
-            if l_rank == MPI_ROOT:
-                msg: str = "  Interpolating {}...".format(rte_field_key)
-                print(msg, flush = True)
-
-            val_dict: dict = interp_3dfield(xr_dp_scream, dpscream_field_key, rte_field_key,
-                sort_mask, g_grids, l_grid_src, l_grids_tgt, tt, comm, interp_method = interp_method)
-
-            if l_rank == MPI_ROOT:
-                coarse_factor_str: str
-                for coarse_factor_str in val_dict.keys():
-                    vals: dict = val_dict[coarse_factor_str]
-                    for val_key in vals.keys():
-                        g_vals[coarse_factor_str][val_key] = vals[val_key]
+    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+#    with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
+#        decode_timedelta = False)
+#        .isel(time = time_idxs, ncol = sort_mask)
+#        .rename({"lat": "y", "lon": "x"})
+#        .set_index(ncol = ["y", "x"])
+#        .unstack("ncol")
+#        .transpose(..., "y", "x")
+#        .sel(x = slice(l_x_src.min(), l_x_src.max()))) as xr_dp_scream:
 
         #-----------------------------------------------------------------------
-        # Processes cooperate to interpolate (x,y) values to target grids
+        # Coarsen 3-D fields from DP-SCREAM to RTE-RRTMGP-CPP
         #-----------------------------------------------------------------------
-        ii: int
-        for ii in range(0, len(dpscream_2dfield_keys)):
-            dpscream_field_key: str = dpscream_2dfield_keys[ii]
-            rte_field_key: str = rte_2dfield_keys[ii]
-
-            if l_rank == MPI_ROOT:
-                msg: str = "  Interpolating {}...".format(rte_field_key)
-                print(msg, flush = True)
-
-            val_dict: dict = interp_2dfield(xr_dp_scream, dpscream_field_key, rte_field_key,
-                sort_mask, g_grids, l_grid_src, l_grids_tgt, tt, comm, interp_method = interp_method)
-
-            if l_rank == MPI_ROOT:
-                coarse_factor_str: str
-                for coarse_factor_str in val_dict.keys():
-                    vals: dict = val_dict[coarse_factor_str]
-                    for val_key in vals.keys():
-                        g_vals[coarse_factor_str][val_key] = vals[val_key]
+#        if l_rank == MPI_ROOT:
+#            current_time = datetime.now().strftime("%H:%M:%S")
+#            msg: str = "[{}]: Initiating 3-D field coarsening...".format(current_time)
+#            print(msg, flush = True)
+#
+#        g_3d_fields_tgt: dict = coarsen_3d_fields(xr_dp_scream, g_grids,
+#            l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
+#
+#        if l_rank == MPI_ROOT:
+#            current_time = datetime.now().strftime("%H:%M:%S")
+#            msg: str = "[{}]: Storing coarsened 3-D fields...".format(current_time)
+#            print(msg, flush = True)
+#
+#            coarse_factor: NP_INT
+#            for coarse_factor in coarse_factors:
+#                coarse_factor_str: str = "{:02}".format(coarse_factor)
+#                g_fields_tgt[coarse_factor_str] = {**g_fields_tgt[coarse_factor_str], **g_3d_fields_tgt[coarse_factor_str]}
 
         #-----------------------------------------------------------------------
-        # Root process saves values to file
+        # Coarsen 2-D fields from DP-SCREAM to RTE-RRTMGP-CPP
         #-----------------------------------------------------------------------
-        if l_rank == MPI_ROOT:
-            msg: str = "Writing RTE_RRTMGP_CPP input...".format(rte_field_key)
-            print(msg, flush = True)
-        g_fields: dict = vals_to_fields(g_vals, comm)
-        save_rte_rrtmgp_cpp_input(g_coords, g_fields, tt, rad_tran_file_path_root, comm, szas)
+#        if l_rank == MPI_ROOT:
+#            current_time = datetime.now().strftime("%H:%M:%S")
+#            msg: str = "[{}]: Initiating 2-D field coarsening...".format(current_time)
+#            print(msg, flush = True)
+#
+#        g_2d_fields_tgt: dict = coarsen_2d_fields(xr_dp_scream, g_grids,
+#            l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
+#
+#        if l_rank == MPI_ROOT:
+#            current_time = datetime.now().strftime("%H:%M:%S")
+#            msg: str = "[{}]: Storing coarsened 2-D fields...".format(current_time)
+#            print(msg, flush = True)
+#
+#            coarse_factor: NP_INT
+#            for coarse_factor in coarse_factors:
+#                coarse_factor_str: str = "{:02}".format(coarse_factor)
+#                g_fields_tgt[coarse_factor_str] = {**g_fields_tgt[coarse_factor_str], **g_2d_fields_tgt[coarse_factor_str]}
+
+    #-----------------------------------------------------------------------
+    # Root process saves values to file
+    #-----------------------------------------------------------------------
+#    if l_rank == MPI_ROOT:
+#        msg: str = "Writing RTE_RRTMGP_CPP input...".format(rte_field_key)
+#        print(msg, flush = True)
+#    g_fields: dict = vals_to_fields(g_vals, comm)
+#    save_rte_rrtmgp_cpp_input(g_coords, g_fields, tt, rad_tran_file_path_root, comm, szas)
 
 if __name__ == "__main__":
     main()

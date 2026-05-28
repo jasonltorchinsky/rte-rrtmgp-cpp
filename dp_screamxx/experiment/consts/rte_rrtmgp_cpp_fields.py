@@ -6,11 +6,11 @@
 
 from .consts import NC_INT, NC_REAL
 
-rte_3dfield_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
+rte_3d_field_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
     "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 
     "vmr_o2", "vmr_o3"]
 
-rte_2dfield_keys: list[str] = ["t_sfc", "mu0"]
+rte_2d_field_keys: list[str] = ["t_sfc", "mu0"]
 
 grid_dimensions: dict = {
     "ngrid_x" : "scalar",
