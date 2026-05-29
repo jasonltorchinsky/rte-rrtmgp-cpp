@@ -22,4 +22,4 @@ from .coarsen_3d_fields import coarsen_3d_fields
 from .save_rte_rrtmgp_cpp_input import save_rte_rrtmgp_cpp_input
 from .scatterv_g_grids import scatterv_g_grids
 from .set_unspecified_fields import set_unspecified_fields
-from .vals_to_fields import vals_to_fields
+from .fields_to_dataset import fields_to_dataset

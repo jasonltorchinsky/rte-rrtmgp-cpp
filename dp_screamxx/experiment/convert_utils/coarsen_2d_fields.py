@@ -46,7 +46,7 @@ def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
     #---------------------------------------------------------------------------
     # Loop through RTE-RRTMGP-CPP+RT fields
     #---------------------------------------------------------------------------
-    for rad_tran_key in ["t_sfc"]:#rte_2d_field_keys:
+    for rad_tran_key in rte_2d_field_keys:
         if l_rank == MPI_ROOT:
             current_time = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Extracting DP-SCREAM field(s) for {}...".format(current_time, rad_tran_key)

@@ -25,8 +25,9 @@ def set_unspecified_fields(xr_dp_scream: XR_DATASET, g_grids: dict,
     #---------------------------------------------------------------------------
     if l_rank == MPI_ROOT:
         #-----------------------------------------------------------------------
-        # Wavelength info
+        # Dimension info
         #-----------------------------------------------------------------------
+        nt: NP_INT = NP_INT(xr_dp_scream.sizes["time"])
         n_bnd_sw: NP_INT = NP_INT(xr_dp_scream.sizes["swband"])
         n_bnd_lw: NP_INT = NP_INT(xr_dp_scream.sizes["lwband"])
 
@@ -50,24 +51,24 @@ def set_unspecified_fields(xr_dp_scream: XR_DATASET, g_grids: dict,
             # Longwave boundary conditions
             #-------------------------------------------------------------------
             emis_sfc: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx, n_bnd_lw), dtype = NP_REAL)
+                np.ones((nt, ny, nx, n_bnd_lw), dtype = NP_REAL)
             
             #-------------------------------------------------------------------
             # Surface albedo
             #-------------------------------------------------------------------
             sfc_alb_dir: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
+                np.ones((nt, ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
             sfc_alb_dif: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
+                np.ones((nt, ny, nx, n_bnd_sw), dtype = NP_REAL) * 0.07
 
             #-------------------------------------------------------------------
             # Incoming solar radiation information
             #-------------------------------------------------------------------
             tsi: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx), dtype = NP_REAL) * 1361.841
+                np.ones((nt, ny, nx), dtype = NP_REAL) * 1361.841
 
             azi: NP_ARRAY[NP_REAL] = \
-                np.ones((ny, nx), dtype = NP_REAL) * 0.0
+                np.ones((nt, ny, nx), dtype = NP_REAL) * 0.0
             
             #-------------------------------------------------------------------
             # Store values into a single dict
