@@ -13,8 +13,8 @@ from consts.consts import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, \
     R_d, R_v, mu_d
 from consts.rte_rrtmgp_cpp_fields import rte_3d_field_keys
 
-def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict, 
-    l_grids_tgt: dict, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
+def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vremap: dict, 
+    g_grids_tgt: dict, l_grids_tgt: dict, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
     #---------------------------------------------------------------------------
     # Get MPI communicator information
     #---------------------------------------------------------------------------
@@ -23,21 +23,19 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
     #---------------------------------------------------------------------------
     # Common variables throuhgout script
     #---------------------------------------------------------------------------
-    tgt_def_key: str = list(l_grids_tgt.keys())[0] # Default key to use for l_grids_tgt
-    # ASSUME: All target grids have same vertical grid
     l_nt: NP_INT = NP_INT(xr_dp_scream["time"].size)
     
     #---------------------------------------------------------------------------
-    # Extract source grid information - as derived from DP-SCREAM grid
+    # Extract vremap grid information
     #---------------------------------------------------------------------------
-    l_nx_src: NP_INT = l_grid_src["nx"]
-    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+    l_nx_vremap: NP_INT = l_grid_vremap["nx"]
+    l_x_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["x"]
 
-    l_ny_src: NP_INT = l_grid_src["ny"]
-    l_y_src: NP_ARRAY[NP_REAL] = l_grid_src["y"]
+    l_ny_vremap: NP_INT = l_grid_vremap["ny"]
+    l_y_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["y"]
 
     # The number of vertical layers/levels matches between source grid and DP-SCREAM grid
-    l_nz_src: NP_INT = l_grid_src["nz"]
+    l_nz_vremap: NP_INT = l_grid_vremap["nz"]
 
     #---------------------------------------------------------------------------
     # Extract DP-SCREAM grid information - that differs from source grid
@@ -48,7 +46,8 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
     #---------------------------------------------------------------------------
     # Extract vertical target grid infromation - ASSUME: Common across all target grids
     #---------------------------------------------------------------------------
-    z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[tgt_def_key]["z_lev"] # ASSUME: Same vertical grid target
+    key: NP_INT = list(l_grids_tgt.keys())[0]
+    z_lev_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[key]["z_lev"] # ASSUME: Same vertical grid target
 
     #---------------------------------------------------------------------------
     # Derive source/target grid information for vertical remapping and horizontal coarsening
@@ -69,24 +68,16 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
         print(msg, flush = True)
 
     l_M_src: NP_ARRAY[NP_REAL]
+    l_M_tgts: dict
     l_nd_src: NP_ARRAY[NP_REAL]
     l_nd_tgts: dict
 
-    [l_M_src, l_nd_src, l_nd_tgts] = calc_air_mass_moles(xr_dp_scream, l_grid_src,
-        l_grids_tgt, interp_method)
-
-    #---------------------------------------------------------------------------
-    # Set up dict for holding vertically-remapped field values
-    #---------------------------------------------------------------------------
-    l_fields_vremap: dict = {}
+    [l_M_src, l_M_tgts, l_nd_src, l_nd_tgts] = calc_air_mass_moles(xr_dp_scream,
+        l_grid_vremap, l_grids_tgt, interp_method)
 
     #---------------------------------------------------------------------------
     # Set up dict for holding horizontally coarsened (i.e., tgt) field values
     #---------------------------------------------------------------------------
-    l_fields_tgt: dict = {}
-    for coarse_str in l_grids_tgt.keys():
-        l_fields_tgt[coarse_str] = {}
-
     fields_tgt: Optional[dict] = None
     if l_rank == MPI_ROOT:
         fields_tgt = {}
@@ -96,67 +87,29 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
     #---------------------------------------------------------------------------
     # Loop through RTE-RRTMGP-CPP+RT fields
     #---------------------------------------------------------------------------
-    for rad_tran_key in ["p","lwp"]:#rte_3d_field_keys:
+    for rad_tran_key in rte_3d_field_keys:
+        #-----------------------------------------------------------------------
+        # Extract relevant fields from DP-SCREAM for RTE-RRTMGP-CPP+RT field
+        #-----------------------------------------------------------------------
         if l_rank == MPI_ROOT:
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Extracting DP-SCREAM field(s) for {}...".format(current_time, rad_tran_key)
             print(msg, flush = True)
-        #-----------------------------------------------------------------------
-        # Extract relevant fields from DP-SCREAM file
-        #-----------------------------------------------------------------------
-        if rad_tran_key in ["p", "t"]:
-            dp_scream_key = rad_tran_key
-        elif rad_tran_key == "rh":
-            dp_scream_key = "RelativeHumidity"
-        elif rad_tran_key == "rel":
-            dp_scream_key = "eff_radius_qc"
-        elif rad_tran_key == "dei":
-            dp_scream_key = "eff_radius_qi"
-        elif rad_tran_key == "lwp":
-            dp_scream_key = "qc"
-        elif rad_tran_key == "iwp":
-            dp_scream_key = "qi"
-        elif "vmr_" in rad_tran_key:
-            dp_scream_key = rad_tran_key[4:] + "_volume_mix_ratio"
-
+        
+        # Most fields can be extracted directly from the file and vertically
+        # remapped, possibly with a key change and a minor modification
         l_z_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
-        l_field_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
-        [l_z_src, l_field_src] = extract_dp_scream_field(xr_dp_scream, dp_scream_key)
+        l_field_src: list[NP_ARRAY[NP_REAL]] # [nt, l_nx, ny, nz]
 
-        # DP-SCREAM uses ice-water effective radius
-        # RT-RRTMGP-CPP+RT use ice-water effective diameter
-        if rad_tran_key == "dei":
-            l_field_src *= 2.
-        # Mixing ratios to masses/moles for proportional split
-        elif rad_tran_key in ["lwp", "iwp"]:
-            l_field_src = l_field_src * l_M_src # Mass [kg], [nt, l_nx, ny, nz]
-        elif rad_tran_key in ["vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o",
-            "vmr_n2", "vmr_n2o", "vmr_o2", "vmr_o3"]:
-            l_field_src = l_field_src * l_nd_src # Moles of gas [mole], [nt, l_nx, ny, nz]
+        [l_z_src, l_field_src] = get_l_field_src(xr_dp_scream, rad_tran_key, l_M_src, l_nd_src)
 
         #-----------------------------------------------------------------------
-        # Obtain target vertical grid
-        # ASSUME VERTICAL GRID IS SAME FOR SRC, TGT, AND ALL COARSENINGS
+        # Obtain vertical remap grid
+        # ASSUME VERTICAL GRID IS SAME FOR ALL COARSENINGS
         #-----------------------------------------------------------------------
-        if rad_tran_key in ["p", "t"]:
-            tgt_data_at_layers = True
-            tgt_data_at_levels = True
-        else:
-            tgt_data_at_layers = True
-            tgt_data_at_levels = False
-
-        assert(tgt_data_at_layers or tgt_data_at_levels)
-        l_nz_tgt: NP_INT
-        z_tgt: NP_ARRAY[NP_REAL]
-        if tgt_data_at_layers and tgt_data_at_levels:
-            l_nz_tgt = l_grids_tgt[tgt_def_key]["nz"]
-            z_tgt = l_grids_tgt[tgt_def_key]["z"]
-        elif not tgt_data_at_layers and tgt_data_at_levels:
-            l_nz_tgt = l_grids_tgt[tgt_def_key]["nlev"]
-            z_tgt = l_grids_tgt[tgt_def_key]["z_lev"]
-        elif tgt_data_at_layers and not tgt_data_at_levels:
-            l_nz_tgt = l_grids_tgt[tgt_def_key]["nlay"]
-            z_tgt = l_grids_tgt[tgt_def_key]["z_lay"]
+        l_nz_vremap: NP_INT
+        l_z_vremap: NP_ARRAY[NP_REAL]
+        [l_nz_vremap, l_z_vremap] = get_vertical_grid(l_grid_vremap, rad_tran_key)
 
         #-----------------------------------------------------------------------
         # Remap field values vertically
@@ -166,41 +119,39 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             msg: str = "[{}]: Vertically remapping {}...".format(current_time, rad_tran_key)
             print(msg, flush = True)
 
-        l_nx_src: NP_INT
-        l_ny_src: NP_INT
-        l_nz_src: NP_INT
-        [_, l_nx_src, l_ny_src, l_nz_src] = NP_INT(l_field_src.shape)
-        l_field_vremap: NP_ARRAY[NP_REAL] = np.empty([l_nt, l_nx_src, l_ny_src, l_nz_src], dtype = NP_REAL)
-        if rad_tran_key in ["p", "t", "rh", "rel", "dei"]:
+        l_field_vremap: list[NP_ARRAY[NP_REAL]]
+        if rad_tran_key in ["p", "t", "rel", "dei"]:
             # TO-DO: Consider vectorizing with SciPy instead of nested for loops
             # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#tutorial-interpolate-1dsection
+            l_field_vremap = [np.empty([l_nt, l_nx_vremap, l_ny_vremap, l_nz_vremap], dtype = NP_REAL)]
             for tt in range(0, l_nt):
-                for ii in range(0, l_nx_src):
-                    for jj in range(0, l_ny_src):
-                        l_field_vremap[tt, ii, jj, :] = np.interp(z_tgt, l_z_src[tt, ii, jj, :], l_field_src[tt, ii, jj, :])
-        elif rad_tran_key in ["lwp", "iwp", "vmr_ch4", "vmr_co", "vmr_co2",
-            "vmr_h2o", "vmr_n2", "vmr_n2o", "vmr_o2", "vmr_o3"]:
+                for ii in range(0, l_nx_vremap):
+                    for jj in range(0, l_ny_vremap):
+                        l_field_vremap[0][tt, ii, jj, :] = np.interp(l_z_vremap, l_z_src[tt, ii, jj, :], l_field_src[0][tt, ii, jj, :])
+        elif rad_tran_key in (["lwp", "iwp"]) or ("vmr_" in rad_tran_key):
             # This is currently mass or number of moles. Change after coarsening.
-            l_field_vremap = remap_layer_mass(z_lev_tgt, l_z_lev_src, l_field_src) 
-            
-        #-----------------------------------------------------------------------
-        # Store vertically-remapped field values
-        #-----------------------------------------------------------------------
-        l_fields_vremap[rad_tran_key] = l_field_vremap
+            l_field_vremap = [remap_layer_mass(l_z_vremap, l_z_lev_src, l_field_src[0])]
+        elif rad_tran_key == "rh":
+            # Remap water vapor mass and saturation water vapor mass. Change after coarsening
+            l_field_vremap = [remap_layer_mass(l_z_vremap, l_z_lev_src, l_field_src[0]),
+                remap_layer_mass(l_z_vremap, l_z_lev_src, l_field_src[1])]
 
         #-----------------------------------------------------------------------
         # Coarsen field values horizontally
         #-----------------------------------------------------------------------
+        nfields: NP_INT = NP_INT(len(l_field_vremap))
+
         l_horz_coarsener: list[RegularGridInterpolator] = \
-            [[RegularGridInterpolator((l_x_src, l_y_src), l_field_vremap[tt,:,:,kk], method = interp_method)
-                for kk in range(0, l_nz_src)] for tt in range(0, l_nt)]
+            [[[RegularGridInterpolator((l_x_vremap, l_y_vremap), l_field_vremap[ll][tt,:,:,kk], method = interp_method)
+                for kk in range(0, l_nz_vremap)] for tt in range(0, l_nt)] for ll in range(0, nfields)]
         for coarse_str in l_grids_tgt.keys():
             if l_rank == MPI_ROOT:
                 current_time: str = datetime.now().strftime("%H:%M:%S")
                 msg: str = "[{}]: Coarsening {} to lr_{}...".format(current_time, rad_tran_key, coarse_str)
                 print(msg, flush = True)
+
             #-------------------------------------------------------------------
-            # Get target horizontal grid and communication parameters
+            # Get target grid information
             #-------------------------------------------------------------------
             l_nx_tgt: NP_INT = l_grids_tgt[coarse_str]["nx"]
             l_ny_tgt: NP_INT = l_grids_tgt[coarse_str]["ny"]
@@ -208,12 +159,16 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             l_x_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["x"]
             l_y_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["y"]
 
-            l_XX_tgt, l_YY_tgt = \
-                np.meshgrid(l_x_tgt, l_y_tgt, indexing = "ij")
-            l_pts_tgt: NP_ARRAY[NP_REAL] = \
-                np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], 
-                    axis = 1)
+            l_XX_tgt: NP_ARRAY[NP_REAL]
+            l_YY_tgt: NP_ARRAY[NP_REAL]
+            l_XX_tgt, l_YY_tgt = np.meshgrid(l_x_tgt, l_y_tgt, indexing = "ij")
+            l_pts_tgt: NP_ARRAY[NP_REAL] = np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], axis = 1)
 
+            [l_nz_tgt, _] = get_vertical_grid(l_grids_tgt[coarse_str], rad_tran_key)
+
+            #-------------------------------------------------------------------
+            # Calculate communication parameters
+            #-------------------------------------------------------------------
             l_counts_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_counts_x"]
             l_displs_x: NP_ARRAY[NP_INT] = l_grids_tgt[coarse_str]["l_displs_x"]
 
@@ -223,26 +178,35 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             #-------------------------------------------------------------------
             # Horizontally coarsen the field
             #-------------------------------------------------------------------
-            l_field_tgt: NP_ARRAY[NP_REAL] = \
-                np.empty([l_nt, l_nx_tgt, l_ny_tgt, l_nz_tgt], dtype = NP_REAL)
-            for tt in range(0, l_nt):
-                for kk in range(0, l_nz_src):
-                    l_field_tgt[tt,:,:,kk] = l_horz_coarsener[tt][kk](l_pts_tgt).reshape(l_nx_tgt, l_ny_tgt)
+            l_field_tgt_pre: list[NP_ARRAY[NP_REAL]]
+            l_field_tgt_pre: NP_ARRAY[NP_REAL] = \
+                [np.empty([l_nt, l_nx_tgt, l_ny_tgt, l_nz_tgt], dtype = NP_REAL) for _ in range(0, nfields)]
+            for ll in range(0, nfields):
+                for tt in range(0, l_nt):
+                    for kk in range(0, l_nz_vremap):
+                        l_field_tgt_pre[ll][tt,:,:,kk] = l_horz_coarsener[ll][tt][kk](l_pts_tgt).reshape(l_nx_tgt, l_ny_tgt)
 
             #-------------------------------------------------------------------
             # Final calculations on coarsened field
             #-------------------------------------------------------------------
-            if rad_tran_key in ["lwp", "iwp"]:
+            l_field_tgt: NP_ARRAY[NP_REAL]
+            if rad_tran_key in ["p", "t", "rel", "dei"]:
+                # Simply extract the field
+                l_field_tgt = l_field_tgt_pre[0]
+            elif rad_tran_key in ["lwp", "iwp"]:
                 # Have cloud liquid/ice water mass, integrate vertical for water path
-                l_field_tgt = dz_tgt * l_field_tgt
-            elif rad_tran_key in ["vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", 
-                "vmr_n2", "vmr_n2o", "vmr_o2", "vmr_o3"]:
+                l_field_tgt = dz_tgt * l_field_tgt_pre[0]
+            elif ("vmr_" in rad_tran_key):
                 # Needs to be divided by number of dry air moles
-                l_field_tgt = l_field_tgt / l_nd_tgts[coarse_str]
-            #-------------------------------------------------------------------
-            # Store horizontally-coarsened field values
-            #-------------------------------------------------------------------
-            l_fields_tgt[coarse_str][rad_tran_key] = l_field_tgt
+                l_field_tgt = l_field_tgt_pre[0] / l_nd_tgts[coarse_str]
+            elif rad_tran_key == "rh":
+                # Needs to be derived from the two remapped fields
+                eps: NP_REAL = R_d / R_v
+                l_qv_tgt: NP_ARRAY[NP_REAL] = l_field_tgt_pre[0] / l_M_tgts[coarse_str]
+                l_qvs_tgt: NP_ARRAY[NP_REAL] = l_field_tgt_pre[1] / l_M_tgts[coarse_str]
+
+                term0: NP_ARRAY[NP_REAL] = (1. - eps) * l_qv_tgt * l_qvs_tgt
+                l_field_tgt: NP_ARRAY[NP_REAL] = (term0 + eps * l_qv_tgt) / (term0 + eps * l_qvs_tgt)
 
             #-------------------------------------------------------------------
             # Gatherv the whole field onto MPI_ROOT
@@ -252,7 +216,7 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
             if l_rank == MPI_ROOT:
                 nt_tgt: NP_INT = l_nt
-                nx_tgt: NP_INT = g_grids[coarse_str]["nx"]
+                nx_tgt: NP_INT = g_grids_tgt[coarse_str]["nx"]
                 ny_tgt: NP_INT = l_ny_tgt
                 nz_tgt: NP_INT = l_nz_tgt
     
@@ -335,12 +299,12 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str) -> tup
         g_nz = g_nlay + g_nlev
 
         z_src: NP_ARRAY[NP_REAL] = np.empty([g_nt, g_nz, g_ny, l_nx], dtype = NP_REAL)
-        z_src[:,0::2,:,:] = z_lev_src
-        z_src[:,1::2,:,:] = z_lay_src
+        z_src[:,0::2,...] = z_lev_src
+        z_src[:,1::2,...] = z_lay_src
 
         field_src: NP_ARRAY[NP_REAL] = np.empty([g_nt, g_nz, g_ny, l_nx], dtype = NP_REAL)
-        field_src[:,0::2,:,:] = field_lev_src
-        field_src[:,1::2,:,:] = field_lay_src
+        field_src[:,0::2,...] = field_lev_src
+        field_src[:,1::2,...] = field_lay_src
     elif src_data_at_layers and not src_data_at_levels:
         [g_nt, g_nz, g_ny, l_nx] = NP_INT(z_lay_src.shape)
 
@@ -359,9 +323,81 @@ def extract_dp_scream_field(xr_dp_scream: XR_DATASET, dp_scream_key: str) -> tup
 
     return [z_src[...,::-1], field_src[...,::-1]] # Flip to increasing z
 
+def get_l_field_src(xr_dp_scream: XR_DATASET, rad_tran_key: str,
+    l_M_src: NP_ARRAY[NP_REAL], l_nd_src: NP_ARRAY[NP_REAL]) -> list[NP_ARRAY[NP_REAL]]:
+
+    l_z_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+    l_field_src: list[NP_ARRAY[NP_REAL]] = [] # [nt, l_nx, ny, nz]
+
+    if rad_tran_key in (["p", "t", "rel", "dei", "lwp", "iwp"]) or ("vmr_" in rad_tran_key):
+        if rad_tran_key == "p":
+            dp_scream_key = rad_tran_key
+        elif rad_tran_key == "t":
+            dp_scream_key = rad_tran_key.upper()
+        elif rad_tran_key == "rel":
+            dp_scream_key = "eff_radius_qc"
+        elif rad_tran_key == "dei":
+            dp_scream_key = "eff_radius_qi"
+        elif rad_tran_key == "lwp":
+            dp_scream_key = "qc"
+        elif rad_tran_key == "iwp":
+            dp_scream_key = "qi"
+        elif "vmr_" in rad_tran_key:
+            dp_scream_key = rad_tran_key[4:] + "_volume_mix_ratio"
+
+        [l_z_src, l_field_src_pre] = extract_dp_scream_field(xr_dp_scream, dp_scream_key)
+        l_field_src += [l_field_src_pre]
+
+        # DP-SCREAM uses ice-water effective radius
+        # RT-RRTMGP-CPP+RT use ice-water effective diameter
+        if rad_tran_key == "dei":
+            l_field_src[0] *= 2.
+        # Mixing ratios to masses/moles for proportional split
+        elif rad_tran_key in ["lwp", "iwp"]:
+            l_field_src[0] = l_field_src[0] * l_M_src # Mass [kg], [nt, l_nx, ny, nz]
+        elif "vmr_" in rad_tran_key:
+            l_field_src[0] = l_field_src[0] * l_nd_src # Moles of gas [mole], [nt, l_nx, ny, nz]
+    # For relative humidity, we will remap both the water vapor mass and the
+    # and the saturation water vapor mass ratio as calculated by DP-SCREAM
+    elif rad_tran_key in ["rh"]:
+        if rad_tran_key == "rh":
+            dp_scream_key = "RelativeHumidity"
+
+        l_z_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+        l_rh_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+        l_qv_src: NP_ARRAY[NP_REAL] # [nt, l_nx, ny, nz]
+        [l_z_src, l_rh_src] = extract_dp_scream_field(xr_dp_scream, "RelativeHumidity")
+        [_, l_qv_src] = extract_dp_scream_field(xr_dp_scream, "qv")
+
+        eps: NP_REAL = R_d / R_v
+        l_qvs_src: NP_ARRAY[NP_REAL] = (-eps * l_qv_src) /  (1. - eps - l_rh_src * (l_qv_src - eps * (1. - l_qv_src)))
+
+        l_mv_src: NP_ARRAY[NP_REAL] = l_qv_src * l_M_src # Mass of water vapor [kg], [nt, l_nx, ny, nz]
+        l_mvs_src: NP_ARRAY[NP_REAL] = l_qvs_src * l_M_src # Mass of saturation water vapor [kg], [nt, l_nx, ny, nz]
+
+        l_field_src: list[NP_ARRAY[NP_REAL]] = [l_mv_src, l_mvs_src]
+
+    return [l_z_src, l_field_src]
+
+def get_vertical_grid(l_grid: dict, rad_tran_key: str) -> list[NP_INT, NP_ARRAY[NP_REAL]]:
+    l_nz: NP_INT
+    l_z: NP_ARRAY[NP_REAL]
+    
+    if rad_tran_key in ["p", "t"]:
+        l_nz = l_grid["nz"]
+        l_z = l_grid["z"]
+    elif rad_tran_key in (["rh", "lwp", "iwp"]) or ("vmr_" in rad_tran_key):
+        # Remapping masses requires levels and returns values at layers
+        l_nz = l_grid["nlay"]
+        l_z = l_grid["z_lev"]
+    else:
+        l_nz = l_grid["nlay"]
+        l_z = l_grid["z_lay"]
+
+    return [l_nz, l_z]
+
 def remap_layer_mass(z_lev_tgt: NP_ARRAY[NP_REAL], z_lev_src: NP_ARRAY[NP_REAL],
     mass_src: NP_ARRAY[NP_REAL]) -> NP_ARRAY[NP_REAL]:
-
     #---------------------------------------------------------------------------
     # Get dimensions
     #---------------------------------------------------------------------------
@@ -418,7 +454,7 @@ def remap_layer_mass(z_lev_tgt: NP_ARRAY[NP_REAL], z_lev_src: NP_ARRAY[NP_REAL],
 
     return mass_tgt
 
-def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt: dict,
+def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_vremap: dict, l_grids_tgt: dict,
     interp_method: str = "nearest"):
     # Returns three quantities needed later:
     # 1) Moist air mass on source grid [kg]
@@ -435,11 +471,11 @@ def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt:
     #---------------------------------------------------------------------------
     # Extract source grid information - as derived from DP-SCREAM grid
     #---------------------------------------------------------------------------
-    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
-    l_y_src: NP_ARRAY[NP_REAL] = l_grid_src["y"]
+    l_x_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["x"]
+    l_y_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["y"]
 
     # The number of vertical layers/levels matches between source grid and DP-SCREAM grid
-    l_nlay_src: NP_INT = l_grid_src["nlay"]
+    l_nlay_src: NP_INT = l_grid_vremap["nlay"]
 
     #---------------------------------------------------------------------------
     # Extract DP-SCREAM grid information - that differs from source grid
@@ -456,8 +492,8 @@ def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt:
     # Derive source/target grid information for vertical remapping and horizontal coarsening
     #---------------------------------------------------------------------------
     # ASSUME: Constant spacing in x- and y-.
-    l_dx_src: NP_REAL = l_x_src[1] - l_x_src[0]
-    l_dy_src: NP_REAL = l_y_src[1] - l_y_src[0]
+    l_dx_src: NP_REAL = l_x_vremap[1] - l_x_vremap[0]
+    l_dy_src: NP_REAL = l_y_vremap[1] - l_y_vremap[0]
 
     #---------------------------------------------------------------------------
     # Get the soruce grid values and vertically remap moles of dry air
@@ -475,12 +511,18 @@ def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt:
     l_M_src: NP_ARRAY[NP_REAL] = (l_p_src * l_V_src) / (R_d * l_T_src * (1. + l_qv_src * ((R_v / R_d) - 1.))) # Moist air mass [kg], [nt, l_nx, ny, nlay]
     l_nd_src: NP_ARRAY[NP_REAL] = l_M_src * (1. - l_qv_src) / mu_d # Moles of dry air [mol], [nt, l_nx, ny, nz]
 
+    l_M_vremap: NP_ARRAY[NP_REAL] = remap_layer_mass(z_lev_tgt, l_z_lev_src, l_M_src)
     l_nd_vremap: NP_ARRAY[NP_REAL] = remap_layer_mass(z_lev_tgt, l_z_lev_src, l_nd_src)
 
+    l_M_tgts: dict = {}
     l_nd_tgts: dict = {}
 
+    l_M_coarsener: list[RegularGridInterpolator] = \
+        [[RegularGridInterpolator((l_x_vremap, l_y_vremap), l_M_vremap[tt,:,:,kk], method = interp_method)
+            for kk in range(0, l_nlay_src)] for tt in range(0, l_nt)]
+
     l_nd_coarsener: list[RegularGridInterpolator] = \
-        [[RegularGridInterpolator((l_x_src, l_y_src), l_nd_vremap[tt,:,:,kk], method = interp_method)
+        [[RegularGridInterpolator((l_x_vremap, l_y_vremap), l_nd_vremap[tt,:,:,kk], method = interp_method)
             for kk in range(0, l_nlay_src)] for tt in range(0, l_nt)]
     for coarse_str in l_grids_tgt.keys():
         #-----------------------------------------------------------------------
@@ -497,6 +539,16 @@ def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt:
         l_pts_tgt: NP_ARRAY[NP_REAL] = np.stack([l_XX_tgt.flatten(), l_YY_tgt.flatten()], axis = 1)
 
         #-----------------------------------------------------------------------
+        # Horizontally coarsen moist air mass
+        #-----------------------------------------------------------------------
+        l_M_tgt: NP_ARRAY[NP_REAL] = np.empty([l_nt, l_nx_tgt, l_ny_tgt, l_nz_tgt], dtype = NP_REAL)
+        for tt in range(0, l_nt):
+            for kk in range(0, l_nlay_src):
+                l_M_tgt[tt,:,:,kk] = l_M_coarsener[tt][kk](l_pts_tgt).reshape(l_nx_tgt, l_ny_tgt)
+
+        l_M_tgts[coarse_str] = l_M_tgt
+
+        #-----------------------------------------------------------------------
         # Horizontally coarsen dry air moles
         #-----------------------------------------------------------------------
         l_nd_tgt: NP_ARRAY[NP_REAL] = np.empty([l_nt, l_nx_tgt, l_ny_tgt, l_nz_tgt], dtype = NP_REAL)
@@ -506,4 +558,4 @@ def calc_air_mass_moles(xr_dp_scream: XR_DATASET, l_grid_src: dict, l_grids_tgt:
 
         l_nd_tgts[coarse_str] = l_nd_tgt
 
-    return [l_M_src, l_nd_src, l_nd_tgts]
+    return [l_M_src, l_M_tgts, l_nd_src, l_nd_tgts]

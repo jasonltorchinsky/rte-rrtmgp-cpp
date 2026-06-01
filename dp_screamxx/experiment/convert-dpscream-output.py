@@ -23,8 +23,8 @@ from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET
 from consts.dp_screamxx_fields import dpscream_3d_field_keys, dpscream_2d_field_keys
 from consts.rte_rrtmgp_cpp_fields import rte_3d_field_keys, rte_2d_field_keys
-from convert_utils import coarsen_g_grid, get_g_grid_01, get_sort_mask, grids_to_coords, \
-    coarsen_2d_fields, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, scatterv_g_grids, set_unspecified_fields, \
+from convert_utils import get_g_grid_vremap, coarsen_g_grid_vremap, scatterv_g_grids, get_sort_mask, grids_to_coords, \
+    coarsen_2d_fields, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, set_unspecified_fields, \
     fields_to_dataset
 from analyze_utils import find_daytime_slices
 
@@ -109,7 +109,6 @@ def main():
     else:
         end_time_idx = xr.open_dataset(dp_scream_file, engine = "netcdf4")["time"].size
         time_idxs = np.arange(end_time_idx)
-    nt: NP_INT = NP_INT(time_idxs.size)
 
     #---------------------------------------------------------------------------
     # Set variables used throughout the script
@@ -128,14 +127,14 @@ def main():
             coarse_factor_str: str = "{:02}".format(coarse_factor)
             g_fields_tgt[coarse_factor_str] = {}
 
-
     #---------------------------------------------------------------------------
     # Root rank gets original horizontal grid
     #---------------------------------------------------------------------------
     xr_dp_scream: Optional[XR_DATASET] = None
     times: Optional[NP_ARRAY[NP_REAL]] = None
     sort_mask: Optional[NP_ARRAY[NP_INT]] = None
-    g_grids: Optional[dict] = None
+    g_grid_vremap: Optional[dict] = None
+    g_grids_tgt: Optional[dict] = None
     if l_rank == MPI_ROOT:
         current_time = datetime.now().strftime("%H:%M:%S")
         msg: str = "[{}]: Initial parsing of DP-SCREAM file: {}...".format(current_time, dp_scream_file)
@@ -159,14 +158,13 @@ def main():
         print(msg, flush = True)
 
         sort_mask: Optional[NP_ARRAY[NP_INT]] = get_sort_mask(dp_scream_file)
-        g_grids = {}
-        g_grids["01"] = get_g_grid_01(dp_scream_file, sort_mask)
+        g_grid_vremap = get_g_grid_vremap(dp_scream_file, sort_mask)
 
+        g_grids_tgt = {}
         coarse_factor: NP_INT
         for coarse_factor in coarse_factors:
-            if coarse_factor != 1: # Covered above
-                coarse_factor_str: str = "{:02}".format(coarse_factor)
-                g_grids[coarse_factor_str] = coarsen_g_grid(g_grids["01"], coarse_factor)
+            coarse_factor_str: str = "{:02}".format(coarse_factor)
+            g_grids_tgt[coarse_factor_str] = coarsen_g_grid_vremap(g_grid_vremap, coarse_factor)
 
     #---------------------------------------------------------------------------
     # Broadcast sort_mask and scatter grids to other processes
@@ -177,9 +175,10 @@ def main():
         print(msg, flush = True)
 
     sort_mask = comm.bcast(sort_mask, root = MPI_ROOT)
-    l_grid_src: dict
+    l_grid_vremap: dict
     l_grids_tgt: dict
-    [l_grid_src, l_grids_tgt] = scatterv_g_grids(g_grids, coarse_factors, comm)
+    [l_grid_vremap, l_grids_tgt] = scatterv_g_grids(g_grid_vremap, g_grids_tgt,
+        coarse_factors, comm)
 
     #-----------------------------------------------------------------------
     # Set fields that tend to be unspecified in the DP-SCREAM output file
@@ -192,7 +191,7 @@ def main():
     with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
         decode_timedelta = False)) as xr_dp_scream:
         g_unspecified_fields_tgt: dict = set_unspecified_fields(xr_dp_scream,
-            g_grids, comm)
+            g_grids_tgt, comm)
 
         if l_rank == MPI_ROOT:
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -212,7 +211,7 @@ def main():
         msg: str = "[{}]: Opening and reformatting DP-SCREAM dataset...".format(current_time)
         print(msg, flush = True)
 
-    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
+    l_x_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["x"]
     with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
         decode_timedelta = False)
         .isel(time = time_idxs, ncol = sort_mask)
@@ -220,7 +219,7 @@ def main():
         .set_index(ncol = ["y", "x"])
         .unstack("ncol")
         .transpose(..., "y", "x")
-        .sel(x = slice(l_x_src.min(), l_x_src.max()))) as xr_dp_scream:
+        .sel(x = slice(l_x_vremap.min(), l_x_vremap.max()))) as xr_dp_scream:
 
         #-----------------------------------------------------------------------
         # Coarsen 3-D fields from DP-SCREAM to RTE-RRTMGP-CPP
@@ -230,8 +229,8 @@ def main():
             msg: str = "[{}]: Initiating 3-D field coarsening...".format(current_time)
             print(msg, flush = True)
 
-        g_3d_fields_tgt: dict = coarsen_3d_fields(xr_dp_scream, g_grids,
-            l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
+        g_3d_fields_tgt: dict = coarsen_3d_fields(xr_dp_scream, g_grid_vremap,
+            l_grid_vremap, g_grids_tgt, l_grids_tgt, comm, interp_method = interp_method)
 
         if l_rank == MPI_ROOT:
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -251,8 +250,8 @@ def main():
             msg: str = "[{}]: Initiating 2-D field coarsening...".format(current_time)
             print(msg, flush = True)
 
-        g_2d_fields_tgt: dict = coarsen_2d_fields(xr_dp_scream, g_grids,
-            l_grid_src, l_grids_tgt, comm, interp_method = interp_method)
+        g_2d_fields_tgt: dict = coarsen_2d_fields(xr_dp_scream, g_grid_vremap,
+            l_grid_vremap, g_grids_tgt, l_grids_tgt, comm, interp_method = interp_method)
 
         if l_rank == MPI_ROOT:
             current_time = datetime.now().strftime("%H:%M:%S")
@@ -271,7 +270,7 @@ def main():
         current_time = datetime.now().strftime("%H:%M:%S")
         msg: str = "[{}]: Writing to RTE-RRTMGP-CPP+RT input...".format(current_time)
         print(msg, flush = True)
-    g_coords: Optional[list] = grids_to_coords(g_grids, times, coarse_factors, comm)
+    g_coords: Optional[list] = grids_to_coords(g_vremap_grids, times, coarse_factors, comm)
     xr_rte_rrtmgp_dict: dict = fields_to_dataset(g_fields_tgt, comm)
     save_rte_rrtmgp_cpp_input(g_coords, xr_rte_rrtmgp_dict, rad_tran_file_path_root,
         comm, szas)

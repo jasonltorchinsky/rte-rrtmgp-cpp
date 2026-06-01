@@ -6,7 +6,7 @@ import numpy as np
 # Local Library Imports
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY
 
-def coarsen_g_grid(g_grid: dict, coarse_factor: NP_INT) -> dict:
+def coarsen_g_grid_vremap(g_grid: dict, coarse_factor: NP_INT) -> dict:
     #---------------------------------------------------------------------------
     # Coarsen x-grid
     #---------------------------------------------------------------------------

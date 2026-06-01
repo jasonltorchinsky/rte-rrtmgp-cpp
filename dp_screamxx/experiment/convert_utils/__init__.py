@@ -12,9 +12,8 @@ if src_dir not in sys.path:
 # Local Library Imports
 
 # Import from source files
-from .bcast_coords import bcast_coords
-from .coarsen_g_grid import coarsen_g_grid
-from .get_g_grid_01 import get_g_grid_01
+from .coarsen_g_grid_vremap import coarsen_g_grid_vremap
+from .get_g_grid_vremap import get_g_grid_vremap
 from .get_sort_mask import get_sort_mask
 from .grids_to_coords import grids_to_coords
 from .coarsen_2d_fields import coarsen_2d_fields

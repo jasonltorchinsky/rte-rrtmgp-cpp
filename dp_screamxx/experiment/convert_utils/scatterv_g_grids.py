@@ -8,7 +8,8 @@ import numpy as np
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT
 
-def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], comm: MPI_COMM) -> [dict, dict]:
+def scatterv_g_grids(g_grid_vremap: Optional[dict], g_grids_tgt: Optional[dict],
+    coarse_factors: NP_ARRAY[NP_INT], comm: MPI_COMM) -> [dict, dict]:
     #---------------------------------------------------------------------------
     # Get MPI communicator information
     #---------------------------------------------------------------------------
@@ -16,15 +17,19 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
     comm_size: NP_INT = NP_INT(comm.Get_size())
 
     #---------------------------------------------------------------------------
-    # Construct the local source grid
+    # Declare dict to store local vremap, tgt grid
+    #---------------------------------------------------------------------------
+    l_grid_vremap: dict = dict()
+    l_grids_tgt: dict = dict()
+
+    #---------------------------------------------------------------------------
+    # Construct the local source grid.
     # We have overlap in the x-dimension, each rank contains all of y- and z-,
     # e.g., [0., 10., 20.], [20., 30.].
     #---------------------------------------------------------------------------
-    l_grid_src: dict = dict()
-
     g_nx: Optional[NP_INT] = None
     if l_rank == MPI_ROOT:
-        g_nx = g_grids["01"]["nx"]
+        g_nx = g_grid_vremap["nx"]
     g_nx = comm.bcast(g_nx, root = MPI_ROOT)
 
     g_count_x: NP_INT = g_nx + (comm_size - 1) # Include overlap for each process
@@ -40,7 +45,7 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
 
     # Global x-grid
     if l_rank == MPI_ROOT:
-        g_x: NP_ARRAY[NP_REAL] = np.copy(g_grids["01"]["x"])
+        g_x: NP_ARRAY[NP_REAL] = np.copy(g_grid_vremap["x"])
     else:
         g_x: NP_ARRAY[NP_REAL] = None
     l_x: NP_ARRAY[NP_REAL] = np.empty(l_counts[l_rank], dtype = NP_REAL) # Local x-grid
@@ -60,14 +65,14 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
     nz: Optional[NP_INT] = None
     z: Optional[NP_ARRAY[NP_REAL]] = None
     if l_rank == MPI_ROOT:
-        ny_src = g_grids["01"]["ny"]
-        y_src = np.copy(g_grids["01"]["y"])
-        nlay = g_grids["01"]["nlay"]
-        z_lay = np.copy(g_grids["01"]["z_lay"])
-        nlev = g_grids["01"]["nlev"]
-        z_lev = np.copy(g_grids["01"]["z_lev"])
-        nz = g_grids["01"]["nz"]
-        z = np.copy(g_grids["01"]["z"])
+        ny_src = g_grid_vremap["ny"]
+        y_src = np.copy(g_grid_vremap["y"])
+        nlay = g_grid_vremap["nlay"]
+        z_lay = np.copy(g_grid_vremap["z_lay"])
+        nlev = g_grid_vremap["nlev"]
+        z_lev = np.copy(g_grid_vremap["z_lev"])
+        nz = g_grid_vremap["nz"]
+        z = np.copy(g_grid_vremap["z"])
     ny_src = comm.bcast(ny_src, root = MPI_ROOT)
     y_src = comm.bcast(y_src, root = MPI_ROOT)
     nlay = comm.bcast(nlay, root = MPI_ROOT)
@@ -80,28 +85,22 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
     #---------------------------------------------------------------------------
     # Store source grid info in dict
     #---------------------------------------------------------------------------
-    l_grid_src: dict = dict()
-    l_grid_src["nx"] = l_nx
-    l_grid_src["x"] = l_x
+    l_grid_vremap: dict = dict()
+    l_grid_vremap["nx"] = l_nx
+    l_grid_vremap["x"] = l_x
 
-    l_grid_src["ny"] = ny_src
-    l_grid_src["y"] = y_src
+    l_grid_vremap["ny"] = ny_src
+    l_grid_vremap["y"] = y_src
 
-    l_grid_src["nlay"] = nlay
-    l_grid_src["z_lay"] = z_lay
-    l_grid_src["nlev"] = nlev
-    l_grid_src["z_lev"] = z_lev
-    l_grid_src["nz"] = nz
-    l_grid_src["z"] = z
+    l_grid_vremap["nlay"] = nlay
+    l_grid_vremap["z_lay"] = z_lay
+    l_grid_vremap["nlev"] = nlev
+    l_grid_vremap["z_lev"] = z_lev
+    l_grid_vremap["nz"] = nz
+    l_grid_vremap["z"] = z
 
-    l_grid_src["l_counts_x"] = l_counts
-    l_grid_src["l_displs_x"] = l_displs
-
-    #---------------------------------------------------------------------------
-    # Construct the local target grid, which is the coarsened grid on each
-    # process based on the intersection of l_grids_src with the coarsened grid
-    #---------------------------------------------------------------------------
-    l_grids_tgt: dict = dict()
+    l_grid_vremap["l_counts_x"] = l_counts
+    l_grid_vremap["l_displs_x"] = l_displs
     
     #---------------------------------------------------------------------------
     # Get the coarsened l_grids based on the intersection of the finest l_grids
@@ -116,7 +115,7 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
         #-----------------------------------------------------------------------
         coarse_g_grid: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            coarse_g_grid = g_grids[coarse_str]
+            coarse_g_grid = g_grids_tgt[coarse_str]
         coarse_g_grid = comm.bcast(coarse_g_grid, root = MPI_ROOT)
 
         #-----------------------------------------------------------------------
@@ -126,13 +125,13 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
         # allgathervs the counts and displs
         if l_rank < comm_size - 1: # Use [x0, xf)
             coarse_idxs: NP_ARRAY[NP_INT] = np.where(
-                (coarse_g_grid["x"] >= l_grid_src["x"].min())
-                & (coarse_g_grid["x"] < l_grid_src["x"].max())
+                (coarse_g_grid["x"] >= l_grid_vremap["x"].min())
+                & (coarse_g_grid["x"] < l_grid_vremap["x"].max())
                 )[0]
         else: # Use [x0, xf]
             coarse_idxs: NP_ARRAY[NP_INT] = np.where(
-                (coarse_g_grid["x"] >= l_grid_src["x"].min())
-                & (coarse_g_grid["x"] <= l_grid_src["x"].max())
+                (coarse_g_grid["x"] >= l_grid_vremap["x"].min())
+                & (coarse_g_grid["x"] <= l_grid_vremap["x"].max())
                 )[0]
         l_counts: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
         l_displs: NP_ARRAY[NP_INT] = np.zeros(comm_size, dtype = NP_INT)
@@ -163,8 +162,8 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
         ny: Optional[NP_INT] = None
         y: Optional[NP_ARRAY[NP_REAL]] = None
         if l_rank == MPI_ROOT:
-            ny = g_grids[coarse_str]["ny"]
-            y = np.copy(g_grids[coarse_str]["y"])
+            ny = g_grids_tgt[coarse_str]["ny"]
+            y = np.copy(g_grids_tgt[coarse_str]["y"])
         ny = comm.bcast(ny, root = MPI_ROOT)
         y = comm.bcast(y, root = MPI_ROOT)
 
@@ -188,4 +187,4 @@ def scatterv_g_grids(g_grids: Optional[dict], coarse_factors: NP_ARRAY[NP_INT], 
         l_grids_tgt[coarse_str]["l_counts_x"] = l_counts
         l_grids_tgt[coarse_str]["l_displs_x"] = l_displs
 
-    return [l_grid_src, l_grids_tgt]
+    return [l_grid_vremap, l_grids_tgt]

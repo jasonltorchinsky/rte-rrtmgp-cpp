@@ -7,7 +7,7 @@ import xarray as xr
 # Local Library Imports
 from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
-def get_g_grid_01(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT]) -> dict:
+def get_g_grid_vremap(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
         #-----------------------------------------------------------------------

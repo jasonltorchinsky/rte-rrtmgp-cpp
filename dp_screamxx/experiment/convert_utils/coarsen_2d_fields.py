@@ -12,8 +12,8 @@ from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET
 from consts.rte_rrtmgp_cpp_fields import rte_2d_field_keys
 
-def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict, 
-    l_grids_tgt: dict, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
+def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vremap: dict, 
+    g_grids_tgt: dict, l_grids_tgt: dict, comm: MPI_COMM, interp_method: str = "nearest") -> dict:
     #---------------------------------------------------------------------------
     # Get MPI communicator information
     #---------------------------------------------------------------------------
@@ -38,10 +38,13 @@ def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             fields_tgt[coarse_str] = {}
 
     #---------------------------------------------------------------------------
-    # Get source grid information for horizontal coarsening
+    # Extract vremap grid information
     #---------------------------------------------------------------------------
-    l_x_src: NP_ARRAY[NP_REAL] = l_grid_src["x"]
-    l_y_src: NP_ARRAY[NP_REAL] = l_grid_src["y"]
+    l_nx_vremap: NP_INT = l_grid_vremap["nx"]
+    l_x_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["x"]
+
+    l_ny_vremap: NP_INT = l_grid_vremap["ny"]
+    l_y_vremap: NP_ARRAY[NP_REAL] = l_grid_vremap["y"]
 
     #---------------------------------------------------------------------------
     # Loop through RTE-RRTMGP-CPP+RT fields
@@ -65,7 +68,7 @@ def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
         # Coarsen field values horizontally
         #-----------------------------------------------------------------------
         l_horz_coarsener: list[RegularGridInterpolator] = \
-            [RegularGridInterpolator((l_x_src, l_y_src), l_field_src[tt,...], method = interp_method)
+            [RegularGridInterpolator((l_x_vremap, l_y_vremap), l_field_src[tt,...], method = interp_method)
                 for tt in range(0, l_nt)]
         for coarse_str in l_grids_tgt.keys():
             if l_rank == MPI_ROOT:
@@ -113,7 +116,7 @@ def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grids: dict, l_grid_src: dict,
             field_tgt: Optional[NP_ARRAY[NP_REAL]] = None
             if l_rank == MPI_ROOT:
                 nt_tgt: NP_INT = l_nt
-                nx_tgt: NP_INT = g_grids[coarse_str]["nx"]
+                nx_tgt: NP_INT = g_grids_tgt[coarse_str]["nx"]
                 ny_tgt: NP_INT = l_ny_tgt
     
                 field_tgt = np.empty(nt_tgt * nx_tgt * ny_tgt, dtype = NP_REAL)

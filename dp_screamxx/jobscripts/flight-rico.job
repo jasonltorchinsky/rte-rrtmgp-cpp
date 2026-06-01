@@ -40,10 +40,13 @@ EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
 EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
 # Set Case - for Python Scripts
-CASE_NAME="GATEIII"
+CASE_NAME="RICO"
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
+#-------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: DEBUGGING - Directories used in script execution:"
 
 echo "RTE_RRTMGP_CPP_INPUT_DIR: ${RTE_RRTMGP_CPP_INPUT_DIR}"
 echo "RTE_RRTMGP_CPP_OUTPUT_DIR: ${RTE_RRTMGP_CPP_OUTPUT_DIR}"
@@ -67,8 +70,9 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%T")
 STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
-echo "Beginning ${STAGE_NAME}..."
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set SZAs, times, and coarsening factors
 SZAS=0,80
@@ -78,9 +82,11 @@ srun --mpi=pmi2 -n ${SLURM_NTASKS} \
   python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
     --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
     --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --coarse-factors ${COARSE_FACTORS}
+    --coarse-factors ${COARSE_FACTORS} \
+    --day-only
 
-echo "${STAGE_NAME} complete!"
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
