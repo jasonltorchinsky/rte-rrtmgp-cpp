@@ -189,7 +189,7 @@ def main():
         print(msg, flush = True)
     
     with (xr.open_dataset(dp_scream_file, engine = "netcdf4", 
-        decode_timedelta = False)) as xr_dp_scream:
+        decode_timedelta = False)).isel(time = time_idxs) as xr_dp_scream:
         g_unspecified_fields_tgt: dict = set_unspecified_fields(xr_dp_scream,
             g_grids_tgt, comm)
 
@@ -270,7 +270,7 @@ def main():
         current_time = datetime.now().strftime("%H:%M:%S")
         msg: str = "[{}]: Writing to RTE-RRTMGP-CPP+RT input...".format(current_time)
         print(msg, flush = True)
-    g_coords: Optional[list] = grids_to_coords(g_vremap_grids, times, coarse_factors, comm)
+    g_coords: Optional[list] = grids_to_coords(g_grids_tgt, times, coarse_factors, comm)
     xr_rte_rrtmgp_dict: dict = fields_to_dataset(g_fields_tgt, comm)
     save_rte_rrtmgp_cpp_input(g_coords, xr_rte_rrtmgp_dict, rad_tran_file_path_root,
         comm, szas)

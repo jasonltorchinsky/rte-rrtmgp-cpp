@@ -1,18 +1,4 @@
 #!/usr/bin/env python3
-"""
-Parallel time-slice driver for RTE-RRTMGP-CPP across multiple GPUs.
-
-Slurm-friendly logging:
-  - Prints timestamped progress lines (flush=True) so output appears promptly in slurm-%j.out
-  - Captures the executable stdout/stderr and writes it into the same stream, prefixed by GPU/worker
-  - Also writes per-task logs into the per-GPU work directory for post-mortem
-
-Concurrency model:
-  - One worker process per GPU
-  - Shared task queue of (input_file, time_index)
-  - Each worker uses a private working directory containing required symlinks and input/output filenames
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -38,12 +24,10 @@ CASE_RE = re.compile(r"^(.*?)(?:\.scream\.|\.Scream\.|\.SCREAM\.|\.scream_|\.SCR
 
 
 def ts() -> str:
-    return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    return datetime.now().strftime("%H:%M:%S")
 
-
-def log(msg: str, *, stream=sys.stdout) -> None:
-    print(f"[{ts()}] {msg}", file=stream, flush=True)
-
+def log(msg: str, *, stream = sys.stdout) -> None:
+    print(f"[{ts()}] {msg}", file = stream, flush = True)
 
 def parse_lr_tag(name: str) -> Tuple[str, int]:
     m = LR_RE.search(name)
@@ -51,11 +35,9 @@ def parse_lr_tag(name: str) -> Tuple[str, int]:
         return ("lr_00", 0)
     return (m.group(1), int(m.group(2)))
 
-
 def parse_date(name: str) -> str:
     m = DATE_RE.search(name)
     return m.group(1) if m else "unknown-date"
-
 
 def parse_case(name: str) -> str:
     base = Path(name).name
@@ -94,21 +76,21 @@ def setup_run_directory(workdir: Path, rrtmgp_data_dir: Path, rte_data_dir: Path
 
 
 def write_single_timestep(src_path: Path, t_index: int, dst_path: Path) -> None:
-    ds = xr.open_dataset(src_path, decode_times=False)
-    try:
-        if "time" not in ds.dims:
-            raise RuntimeError(f"{src_path} has no 'time' dimension")
-        nt = int(ds.sizes["time"])
-        if t_index < 0 or t_index >= nt:
-            raise IndexError(f"t_index {t_index} out of bounds for {src_path} (time={nt})")
+    with xr.open_dataset(src_path, engine = "netcdf4", decode_timedelta = False) as ds:
+        try:
+            if "time" not in ds.sizes:
+                raise RuntimeError(f"{src_path} has no 'time' dimension")
+            nt = int(ds.sizes["time"])
+            if t_index < 0 or t_index >= nt:
+                raise IndexError(f"t_index {t_index} out of bounds for {src_path} (time={nt})")
 
-        ds_t = ds.isel(time=t_index, drop=True)   # key change
+            ds_t = ds.isel(time = t_index, drop = True)   # key change
 
-        if dst_path.exists():
-            dst_path.unlink()
-        ds_t.to_netcdf(dst_path)
-    finally:
-        ds.close()
+            if dst_path.exists():
+                dst_path.unlink()
+            ds_t.to_netcdf(dst_path)
+        finally:
+            ds.close()
 
 
 def run_executable_capture(
@@ -296,12 +278,12 @@ def iter_inputs_sorted(input_dir: Path, glob_pat: str) -> List[Path]:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="Run RTE-RRTMGP-CPP per-time-slice across multiple GPUs with Slurm-friendly logging.")
-    ap.add_argument("--rte-rrtmgp-cpp-input-dir", required=True, type=Path)
-    ap.add_argument("--rte-rrtmgp-cpp-executable-dir", required=True, type=Path)
-    ap.add_argument("--rte-rrtmgp-cpp-output-dir", required=True, type=Path)
-    ap.add_argument("--lr", type=str, default=None,
-        help="Comma-separated list of lr tags to plot, e.g. '01,04,16'. "
-             "If omitted, plot all available lr_XX pairs.",
+    ap.add_argument("--rte-rrtmgp-cpp-input-dir", required = True, type = Path)
+    ap.add_argument("--rte-rrtmgp-cpp-executable-dir", required = True, type = Path)
+    ap.add_argument("--rte-rrtmgp-cpp-output-dir", required = True, type = Path)
+    ap.add_argument("--lr", type = str, default = None,
+        help = "Comma-separated list of lr tags to plot, e.g. '01,04,16'. "
+               "If omitted, plot all available lr_XX pairs.",
     )
 
     ap.add_argument("--rrtmgp-data-dir", required=True, type=Path,
@@ -309,13 +291,13 @@ def main() -> None:
     ap.add_argument("--rte-data-dir", required=True, type=Path,
                     help="Directory containing aerosol_optics.nc.")
 
-    ap.add_argument("--gpus", required=True, help='GPU list, e.g. "0,1,2" or "[0,1,2]".')
-    ap.add_argument("--raytracing", type=int, default=128)
-    ap.add_argument("--extra-exe-args", nargs=argparse.REMAINDER, default=[],
-                    help="Extra args passed through to the executable (after '--').")
-    ap.add_argument("--glob", default="*.nc")
-    ap.add_argument("--work-dir", default=".rte_rrtmgp_work", type=Path)
-    ap.add_argument("--dry-run", action="store_true")
+    ap.add_argument("--gpus", required = True, help = 'GPU list, e.g. "0,1,2" or "[0,1,2]".')
+    ap.add_argument("--raytracing", type = int, default = 128)
+    ap.add_argument("--extra-exe-args", nargs = argparse.REMAINDER, default = [],
+                    help = "Extra args passed through to the executable (after '--').")
+    ap.add_argument("--glob", default = "*.nc")
+    ap.add_argument("--work-dir", default = ".rte_rrtmgp_work", type = Path)
+    ap.add_argument("--dry-run", action = "store_true")
     args = ap.parse_args()
 
     in_dir = args.rte_rrtmgp_cpp_input_dir
@@ -377,11 +359,11 @@ def main() -> None:
 
     total_tasks = 0
     for f in inputs:
-        ds = xr.open_dataset(f, decode_times=False)
-        if "time" not in ds.dims:
+        ds = xr.open_dataset(f, decode_times = False)
+        if "time" not in ds.sizes:
             ds.close()
             raise RuntimeError(f"{f} has no 'time' dimension")
-        nt = int(ds.dims["time"])
+        nt = int(ds.sizes["time"])
         ds.close()
 
         for t in range(nt):

@@ -28,6 +28,7 @@ mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
 # RTE-RRTMGP-CPP directories
 RTE_RRTMGP_CPP_DIR=$(realpath "../..") # Source directory
 RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
+RTE_RRTMGP_CPP_EXEC=${RTE_RRTMGP_CPP_BUILD_DIR}/test_rte_rrtmgp_rt_gpu
 RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
 RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
 DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
@@ -35,11 +36,11 @@ EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
 EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
 
 # Link RRTMGP files
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
-ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
-ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
+#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
+#ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
 
 # Set Case - for Python Scripts
 CASE_NAME="RICO"
@@ -70,7 +71,8 @@ echo "CASE NAME: ${CASE_NAME}"
 #  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
 #    --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
 #    --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --coarse-factors ${COARSE_FACTORS}
+#    --coarse-factors ${COARSE_FACTORS} \
+#    --day-only
 #
 #CURRENT_TIME=$(date +"%T")
 #echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
@@ -81,15 +83,15 @@ CURRENT_TIME=$(date +"%T")
 STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
-python run_rte_rrtmgp_cpp_timeslices_multi_gpu_new.py \
-  --rte-rrtmgp-cpp-input-dir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-  --rte-rrtmgp-cpp-executable-dir ${RTE_RRTMGP_CPP_BUILD_DIR} \
-  --rte-rrtmgp-cpp-output-dir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-  --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
-  --rte-data-dir ${RTE_DATA_DIR} \
-  --work-dir ${RTE_RRTMGP_CPP_INPUT_DIR}/.rte_rrtmgp_work \
-  --raytracing 1024 \
-  --gpus "[0,1,2,3,4,5,6,7,8,9,10,11,12]"
+mpirun -np 3 \
+  python ${EXPERIMENT_DIR}/run-rte-rrtmgp-cpp.py \
+    --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
+    --rad-tran-outdir ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
+    --rad-tran-exec ${RTE_RRTMGP_CPP_EXEC} \
+    --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
+    --rte-data-dir ${RTE_DATA_DIR} \
+    --raytracing 32 \
+    --gpus 0,1,2
 
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
