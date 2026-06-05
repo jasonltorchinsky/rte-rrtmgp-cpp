@@ -4,7 +4,7 @@
 
 # Local Library Imports
 
-from .consts import NC_INT, NC_REAL
+from .dtypes import NC_INT, NC_REAL
 
 rte_3d_field_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
     "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 

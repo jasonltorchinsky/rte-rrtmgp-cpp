@@ -42,7 +42,7 @@ def main():
     rad_tran_vizdir = os.path.normpath(args.rad_tran_vizdir)
     working_dir = args.working_dir
     recalculate = args.recalculate
-    lrs = [str(lr) for lr in args.lr.split(",")]
+    lrs = [int(lr) for lr in args.lr.split(",")]
     zmax = args.zmax
     detailed_calc = args.detailed_calc
 
@@ -90,9 +90,9 @@ def main():
         #-----------------------------------------------------------------------
         # Obtain information common across each day
         #-----------------------------------------------------------------------
-        x = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["x"].values / 1000 # [km]
-        y = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["y"].values / 1000 # [km]
-        lay = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["lay"].values / 1000 # [km]
+        x = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["x"].to_numpy() / 1000 # [km]
+        y = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["y"].to_numpy() / 1000 # [km]
+        lay = xr.open_dataset(rad_tran_outfile, engine = "netcdf4", decode_timedelta = False)["lay"].to_numpy() / 1000 # [km]
 
         zmax_index = find_zmax_index(lay, zmax)
         lay = lay[:zmax_index]
@@ -117,54 +117,60 @@ def main():
                 in_mnn_index = in_mnn_indices[kk]
                 out_mnn_index = out_mnn_indices[kk]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Obtain day-specific information for plot labels
-                #-------------------------------------------------------------------
-                mnn_szas = np.rad2deg(np.acos(xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)["mu0"].isel(x = 0, y = 0, time = in_mnn_index))).values
-                mnn_times = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)["time"].isel(time = in_mnn_index).values
+                #---------------------------------------------------------------
+                mnn_szas = np.rad2deg(np.acos(xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)["mu0"].isel(x = 0, y = 0, time = in_mnn_index))).to_numpy()
+                mnn_times = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)["time"].isel(time = in_mnn_index).to_numpy()
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Get YZ-slice at each time using maximal water content
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 wc = calc_wc(rad_tran_infile, in_mnn_index, zmax_index = zmax_index) # [g m^{-3}], [time, lay, y, x]
-                xslice_indexes = wc.argmax(dim = ["lay", "y", "x"])["x"].values
+                xslice_indexes = [np.unravel_index(np.argmax(wc.isel(time = ll).to_numpy()), wc.shape[1:])[2] for ll in range(3)]
                 xslices = x[xslice_indexes]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Calculate horizontal water path at each YZ-slice
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 hwp = [((dx * 1.e3) * wc.isel(time = ll, x = xslice_indexes[ll])) for ll in range(3)] # [g m^{-2}], [3][lay, y]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Obtain plotting bounds
-                #-------------------------------------------------------------------
-                hlim_loc = np.zeros([3,2], dtype = np.float64) # Limits for horizontal plotting axis (called xlim in matplotlib)
-                yslice_indexes = [np.zeros([2], dtype = np.int32) for _ in range(3)]
-                for ll in range(3):
-                    hwp_max_index = np.unravel_index(hwp[ll].argmax(), hwp[ll].shape) # [lay_index, y_index]
-                    y_loc = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
-                    hlim_loc[ll,:] = [y_loc - 16., y_loc + 16]
+                #---------------------------------------------------------------
+                y_window_width = 3. * zmax # Width of y window [km]
+                
+                if y_window_width > y.max() - y.min():
+                    yslice_indexes = [np.array([0,-1], dtype = np.int32) for _ in range(3)]
+                    hlim_loc = np.tile(np.array([y.min(), y.max()]), [3, 1])
+                else:
+                    hlim_loc = np.zeros([3,2], dtype = np.float64) # Limits for horizontal plotting axis (called xlim in matplotlib)
+                    yslice_indexes = [np.zeros([2], dtype = np.int32) for _ in range(3)]
+                    for ll in range(3):
+                        hwp_max_index = np.unravel_index(np.argmax(hwp[ll].to_numpy()), hwp[ll].shape) # [lay_index, y_index] of maximal hwp
+                        y_loc = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
+                        hlim_loc[ll,:] = [y_loc - y_window_width / 2., y_loc + y_window_width / 2.]
 
-                    if hlim_loc[ll,0] < y.min():
-                        hlim_loc[ll,:] += y.min() - hlim_loc[ll,0]
-                    if hlim_loc[ll,1] > y.max():
-                        hlim_loc[ll,:] += y.max() - hlim_loc[ll,1]
+                        # Don't have to worry about shifting window past the edge after this block
+                        # because the window is not as wide as the domain
+                        if hlim_loc[ll,0] < y.min():
+                            hlim_loc[ll,:] += (y.min() - hlim_loc[ll,0])
 
-                    breakpoint()
-                    # THERE'S A BUG HERE TO DIAGNOSE
-                    yslice_indexes[ll][0] = y[(y - hlim_loc[ll,0]) <= 0].argmax()
-                    yslice_indexes[ll][1] = y[(hlim_loc[ll,1] - y) <= 0].argmax()
-                yslices = [y[yslice_indexes[ll]] for ll in range(3)]
+                        if hlim_loc[ll,1] > y.max():
+                            hlim_loc[ll,:] += (y.max() - hlim_loc[ll,1])
 
-                #-------------------------------------------------------------------
+                        yslice_indexes[ll][0] = np.max(np.where(y - hlim_loc[ll,0] <= 0)[0])
+                        yslice_indexes[ll][1] = np.min(np.where(hlim_loc[ll,1] - y <= 0)[0]) + 1 # To include endpoint, add 1
+                yslices = [y[yslice_indexes[ll][0]:yslice_indexes[ll][1]] for ll in range(3)]
+
+                #---------------------------------------------------------------
                 # Trim hwp to the yslice
-                #-------------------------------------------------------------------
-                breakpoint()
+                #---------------------------------------------------------------
                 hwp = [hwp[ll].isel(y = slice(yslice_indexes[ll][0], yslice_indexes[ll][1])) for ll in range(3)]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Obtain two-stream (ts) and ray-tracer (rt) data
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 ts_field = [[] for _ in range(3)]
                 rt_field = [[] for _ in range(3)]
 
@@ -181,18 +187,17 @@ def main():
                             y_index = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]),
                             zmax_index = zmax_index) # [W m^{-3}], [time, lay, y]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Prepare data for plotting
-                #-------------------------------------------------------------------
-                hwp = [hwp[ll].values for ll in range(3)] # [3][lay, y]
-                ts_field = [ts_field[ll].values for ll in range(3)] # [3][lay, y]
-                rt_field = [rt_field[ll].values for ll in range(3)] # [3][lay, y]
+                #---------------------------------------------------------------
+                hwp = [hwp[ll].to_numpy() for ll in range(3)] # [3][lay, y]
+                ts_field = [ts_field[ll].to_numpy() for ll in range(3)] # [3][lay, y]
+                rt_field = [rt_field[ll].to_numpy() for ll in range(3)] # [3][lay, y]
                 diff_field = [rt_field[ll] - ts_field[ll] for ll in range(3)] # [3][lay, y]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Obtain data bounds
-                #-------------------------------------------------------------------
-                breakpoint()
+                #---------------------------------------------------------------
                 hwp_max = [hwp[ll].max() for ll in range(3)]
                 hwp_min = [hwp[ll].min() for ll in range(3)]
 
@@ -202,29 +207,30 @@ def main():
                 diff_max = [np.abs(diff_field[ll]).max() for ll in range(3)]
                 diff_min = [-diff_max[ll] for ll in range(3)]
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Obtain information for plotting pressure contours
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 p_lay = [[] for _ in range(3)]
                 rad_tran_inds = xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False)
                 for ll in range(3):
                     p_lay[ll] = rad_tran_inds["p_lay"].isel(time = in_mnn_index[ll],
                         lay = slice(0, zmax_index), 
-                        y = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]), x = xslice_indexes[ll]).values / 100. # [hPa], [3][lay, y]
+                        y = slice(yslice_indexes[ll][0], yslice_indexes[ll][1]), x = xslice_indexes[ll]).to_numpy() / 100. # [hPa], [3][lay, y]
                 rad_tran_inds.close()
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Set case-dependent visualization options
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 if field_key == "atm_heating":
                     rad_tran_cmap = heating_cmap
                 elif field_key == "abs_flux":
                     rad_tran_cmap = flux_cmap
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Plot the data
-                #-------------------------------------------------------------------
-                fig_base_size = np.array([10.5, 5.25])
+                #---------------------------------------------------------------
+                fig_height = 5.25
+                fig_base_size = np.array([(y_window_width / zmax) * fig_height, fig_height])
                 fig, axs = plt.subplots(nrows = 4, ncols = 3,
                     sharex = "col", sharey = True,
                     constrained_layout = True,
@@ -236,9 +242,9 @@ def main():
                     hwp_pcm[ll] = axs[0, ll].pcolormesh(yslices[ll], lay, hwp[ll],
                         vmin = hwp_min[ll], vmax = hwp_max[ll],
                         cmap = hwp_cmap)
-                    p_contour = axs[0, ll].contour(yslices[ll], lay, p_lay[ll],
-                        levels = p_levels, colors = "#000000", linewidths = 2.)
-                    axs[0,ll].clabel(p_contour)
+                    #p_contour = axs[0, ll].contour(yslices[ll], lay, p_lay[ll],
+                    #    levels = p_levels, colors = "#000000", linewidths = 2.)
+                    #axs[0,ll].clabel(p_contour)
 
                 # Row 1: Two-Stream
                 ts_pcm = [[] for _ in range(3)]
@@ -286,16 +292,16 @@ def main():
                 # Set horizontal limits
                 for ll in range(4):
                     for mm in range(3):
-                        axs[ll,mm].set_xlim(hlim[mm,:])
+                        axs[ll,mm].set_xlim(hlim_loc[mm,:])
 
                 # Aspect ratio
                 for ll in range(4):
                     for mm in range(3):
                         axs[ll,mm].set_aspect("equal")
 
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 # Save the plot to file
-                #-------------------------------------------------------------------
+                #---------------------------------------------------------------
                 plt_filename = "{}_{}_day_{}.png".format(lr_str, field_key, kk)
                 plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
                 fig.savefig(plt_filepath, dpi = 200)

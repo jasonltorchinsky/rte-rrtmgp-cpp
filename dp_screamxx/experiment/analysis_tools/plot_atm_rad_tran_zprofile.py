@@ -144,6 +144,9 @@ def main():
             constrained_layout = True,
             figsize = (14, 14))
 
+        if ndays == 1:
+            axs = axs[..., None]
+
         # Labels
         lr_label = r"{:0.0f} $m$".format(dx * 1000.) if dx < 1.0 else r"{:0.2f} $km$".format(dx)
         fig.suptitle("Horizontal Resolution - {}".format(lr_label))

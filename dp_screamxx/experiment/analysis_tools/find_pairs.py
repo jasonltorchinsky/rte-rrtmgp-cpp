@@ -16,7 +16,8 @@ def find_pairs(input_dir, output_dir, lrs):
         infile_base = re.sub(ext_re, "", infile_name)
 
         for lr in lrs:
-            if ("lr_" + lr) in infile_base:
+            lr_str = "lr_{:02}".format(lr)
+            if lr_str in infile_base:
                 for jj in range(len(outfiles)):
                     if infile_base in outfiles[jj]:
                         paired_infiles += [infiles[ii]]

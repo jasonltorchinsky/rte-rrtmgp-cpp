@@ -120,6 +120,7 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vrem
             print(msg, flush = True)
 
         l_field_vremap: list[NP_ARRAY[NP_REAL]]
+
         if rad_tran_key in ["p", "t", "rel", "dei"]:
             # TO-DO: Consider vectorizing with SciPy instead of nested for loops
             # https://docs.scipy.org/doc/scipy/tutorial/interpolate/1D.html#tutorial-interpolate-1dsection
@@ -136,11 +137,36 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vrem
             l_field_vremap = [remap_layer_mass(l_z_vremap, l_z_lev_src, l_field_src[0]),
                 remap_layer_mass(l_z_vremap, l_z_lev_src, l_field_src[1])]
 
+        nfields: NP_INT = NP_INT(len(l_field_vremap))
+
+        # Limit vremapped values - ASSUME: Piecewise linear interpolation,
+        # so vremapped values stay between source values
+        field_min: Optional[NP_REAL] = None
+        field_max: Optional[NP_REAL] = None
+        if rad_tran_key == "rel": # Between 2.5 μm and 21.5 μm
+            field_min = NP_REAL(2.5)
+            field_max = NP_REAL(21.5)
+        elif rad_tran_key == "dei": # Between 10. μm and 180. μm
+            field_min = NP_REAL(10.)
+            field_max = NP_REAL(180.)
+        elif rad_tran_key == "t":
+            field_min = NP_REAL(100.0) # Lowest temperature in mesosphere https://scied.ucar.edu/learning-zone/atmosphere/mesosphere [K]
+            field_max = NP_REAL(329.817) # Hottest observed temperature https://www.ncei.noaa.gov/news/earths-hottest-temperature [K]
+        elif rad_tran_key == "p":
+            field_min = NP_REAL(0.1) # Atmospheric pressure near top of mesosphere. [Pa]
+            field_max = NP_REAL(108480.0) # Highest recorded atmospheric pressure https://web.archive.org/web/20121017130834/http://wmo.asu.edu/highest-sea-lvl-air-pressure-above-700m [Pa]
+        elif (rad_tran_key in ["lwp", "iwp"]) or ("vmr_" in rad_tran_key):
+            field_min = NP_REAL(0.0)
+
+        for ll in range(0, nfields):
+            if field_max is not None:
+                l_field_vremap[ll][l_field_vremap[ll] > field_max] = field_max
+            if field_min is not None:
+                l_field_vremap[ll][l_field_vremap[ll] < field_min] = field_min
+
         #-----------------------------------------------------------------------
         # Coarsen field values horizontally
         #-----------------------------------------------------------------------
-        nfields: NP_INT = NP_INT(len(l_field_vremap))
-
         l_horz_coarsener: list[RegularGridInterpolator] = \
             [[[RegularGridInterpolator((l_x_vremap, l_y_vremap), l_field_vremap[ll][tt,:,:,kk], method = interp_method)
                 for kk in range(0, l_nz_vremap)] for tt in range(0, l_nt)] for ll in range(0, nfields)]
@@ -158,6 +184,9 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vrem
 
             l_x_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["x"]
             l_y_tgt: NP_ARRAY[NP_REAL] = l_grids_tgt[coarse_str]["y"]
+
+            l_dy_tgt: NP_REAL = l_y_tgt[1] - l_y_tgt[0] # [m]
+            l_dx_tgt: NP_REAL = l_dy_tgt # ASSUME: Same spacing in x- and y-, but we are guaranteed to have y_tgt
 
             l_XX_tgt: NP_ARRAY[NP_REAL]
             l_YY_tgt: NP_ARRAY[NP_REAL]
@@ -194,8 +223,9 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vrem
                 # Simply extract the field
                 l_field_tgt = l_field_tgt_pre[0]
             elif rad_tran_key in ["lwp", "iwp"]:
-                # Have cloud liquid/ice water mass, integrate vertical for water path
-                l_field_tgt = dz_tgt * l_field_tgt_pre[0]
+                # Have cloud liquid/ice water mass, get density and integrate vertical for water path
+                # which is equivalent to dz * (mass / (dx * dy * dz))
+                l_field_tgt = l_field_tgt_pre[0] / (l_dx_tgt * l_dy_tgt)
             elif ("vmr_" in rad_tran_key):
                 # Needs to be divided by number of dry air moles
                 l_field_tgt = l_field_tgt_pre[0] / l_nd_tgts[coarse_str]
@@ -354,7 +384,7 @@ def get_l_field_src(xr_dp_scream: XR_DATASET, rad_tran_key: str,
             l_field_src[0] *= 2.
         # Mixing ratios to masses/moles for proportional split
         elif rad_tran_key in ["lwp", "iwp"]:
-            l_field_src[0] = l_field_src[0] * l_M_src # Mass [kg], [nt, l_nx, ny, nz]
+            l_field_src[0] = l_field_src[0] * l_M_src # Liquid/Ice Cloud-Water Mass [kg], [nt, l_nx, ny, nz]
         elif "vmr_" in rad_tran_key:
             l_field_src[0] = l_field_src[0] * l_nd_src # Moles of gas [mole], [nt, l_nx, ny, nz]
     # For relative humidity, we will remap both the water vapor mass and the
@@ -370,7 +400,7 @@ def get_l_field_src(xr_dp_scream: XR_DATASET, rad_tran_key: str,
         [_, l_qv_src] = extract_dp_scream_field(xr_dp_scream, "qv")
 
         eps: NP_REAL = R_d / R_v
-        l_qvs_src: NP_ARRAY[NP_REAL] = (-eps * l_qv_src) /  (1. - eps - l_rh_src * (l_qv_src - eps * (1. - l_qv_src)))
+        l_qvs_src: NP_ARRAY[NP_REAL] = (eps * l_qv_src) /  (l_qv_src * (l_rh_src - 1.) * (1. - eps) + eps * l_rh_src)
 
         l_mv_src: NP_ARRAY[NP_REAL] = l_qv_src * l_M_src # Mass of water vapor [kg], [nt, l_nx, ny, nz]
         l_mvs_src: NP_ARRAY[NP_REAL] = l_qvs_src * l_M_src # Mass of saturation water vapor [kg], [nt, l_nx, ny, nz]

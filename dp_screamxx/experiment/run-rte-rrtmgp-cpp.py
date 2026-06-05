@@ -196,11 +196,17 @@ def main():
             with (xr.open_dataset(rad_tran_infile, engine = "netcdf4", 
                 decode_timedelta = False).isel(time = tt)) as xr_rad_tran_in:
                 xr_rad_tran_in.to_netcdf(os.path.join(l_work_dir, "rte_rrtmgp_input.nc"))
+            
             with open(stdout, "w") as f_out, open(stderr, "w") as f_err:
-                exec_Popen: subprocess.Popen = subprocess.Popen(cmd, env = l_env, cwd = l_work_dir,
-                    stdout = f_out, stderr = f_err, text = True, bufsize = 1,
-                    universal_newlines = True)
-            exec_Popen.wait()
+                proc: subprocess.Popen = subprocess.Popen(cmd, env = l_env,
+                    cwd = l_work_dir, stdout = f_out, stderr = f_err,
+                    text = True, bufsize = 1)
+
+                current_time = datetime.now().strftime("%H:%M:%S")
+                msg: str = "[{}], [Rank {}]: Waiting on subprocess {}, time index {}.".format(current_time, l_rank, os.path.basename(rad_tran_infile), tt)
+                print(msg, flush = True)
+
+                proc.wait()
 
             rte_rrtmgp_output_src: str = os.path.join(l_work_dir, "rte_rrtmgp_output.nc")
             rte_rrtmgp_output_tgt_filename: str = os.path.basename(rad_tran_infile)[:-6] + ".t_{:03}".format(tt) + ".out.nc"

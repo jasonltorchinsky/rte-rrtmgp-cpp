@@ -140,15 +140,14 @@ def main():
         msg: str = "[{}]: Initial parsing of DP-SCREAM file: {}...".format(current_time, dp_scream_file)
         print(msg, flush = True)
 
-        #-------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # Extract hours since simulation start
-        #-------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         xr_dp_scream: XR_DATASET
-        with xr.open_dataset(dp_scream_file, engine = "netcdf4",
-            decode_timedelta = False).isel(time = time_idxs) as xr_dp_scream:
+        with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
         
             times = (xr_dp_scream["time"] - xr_dp_scream["time"][0]).to_numpy() / (3600.e9) # [ns] => [h]
-            times = times.astype(NP_REAL)
+            times = times[time_idxs].astype(NP_REAL)
 
         #-----------------------------------------------------------------------
         # Coarsen original horizontal grid - force us to keep finest (original) grid
