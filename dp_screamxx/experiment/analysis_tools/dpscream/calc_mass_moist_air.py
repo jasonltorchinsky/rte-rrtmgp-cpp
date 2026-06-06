@@ -18,7 +18,7 @@ def calc_mass_moist_air(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_i
         p_mid: XR_DATAARRAY = xr_dp_scream["p_mid"] # Pressure at level midpoints; [nt, ncol, lev]; [Pa]
         qv: XR_DATAARRAY = xr_dp_scream["qv"] # Water vapor moist mixing ratio at midpoints; [nt, ncol, lev]; [kg kg^{-1}]
         T_mid: XR_DATAARRAY = xr_dp_scream["T_mid"] # Temperature at level midpoints; [nt, ncol, lev]; [K]
-        z_int: XR_DATAARRAY = xr_dp_scream["z_int"] # Geometrix height at level interfaces; [nt, ncol, ilev]; [m]
+        z_int: XR_DATAARRAY = xr_dp_scream["z_int"] # Geometric height at level interfaces; [nt, ncol, ilev]; [m]
 
     #---------------------------------------------------------------------------
     # Sort and reshape fields from DP-SCREAM file
@@ -64,11 +64,11 @@ def calc_mass_moist_air(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_i
     else:
         mass_moist_air: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
         for ii in range(0, 3): # Assume Morning-Noon-Night indices
-            p_mid_x: XR_DATAARRAY = p_mid.isel(time = ii, x = x_indices)
-            T_mid_x: XR_DATAARRAY = T_mid.isel(time = ii, x = x_indices)
-            qv_x: XR_DATAARRAY = qv.isel(time = ii, x = x_indices)
-            dz_x: XR_DATARRAY = dz_x.isel(time = ii, x = x_indices)
+            p_mid_x: XR_DATAARRAY = p_mid.isel(time = ii, x = x_indices[ii])
+            T_mid_x: XR_DATAARRAY = T_mid.isel(time = ii, x = x_indices[ii])
+            qv_x: XR_DATAARRAY = qv.isel(time = ii, x = x_indices[ii])
+            dz_x: XR_DATARRAY = dz.isel(time = ii, x = x_indices[ii])
 
-            mass_moist_air[ii] = ((p_mid_x * dz_x) / ((R_d + (R_v - R_d) * qv_x) * T_mid_x)).to_numpy().astype(NP_REAL) # [kg]
+            mass_moist_air[ii] = ((p_mid_x * dx * dy * dz_x) / ((R_d + (R_v - R_d) * qv_x) * T_mid_x)).to_numpy().astype(NP_REAL) # [kg]
 
     return mass_moist_air

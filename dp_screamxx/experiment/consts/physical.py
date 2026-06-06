@@ -15,8 +15,9 @@ R_d: NP_REAL = R / mu_d # Gas constant for dry air [J kg^(-1) K^(-1)]
 R_v: NP_REAL = R / mu_v # Gas constant for water vapor [J kg^(-1) K^(-1)]
 
 cp_d: NP_REAL = NP_REAL(1.0061e3) # Specific heat of dry air at constant pressure [J kg^{-1} K^{-1}]
-cp_lw: NP_REAL = NP_REAL(4184.) # Specific heat of liquid water at constant pressure [J kg^{-1} K^{-1}]
-cp_iw: NP_REAL = NP_REAL(2093.) # Specific heat of ice water at constant pressure [J kg^{-1} K^{-1}]
+cp_v: NP_REAL = NP_REAL(1.884e3) # Specific heat of water vapor at constant pressure [J kg^{-1} K^{-1}]
+cp_lw: NP_REAL = NP_REAL(4.184e3) # Specific heat of liquid water at constant pressure [J kg^{-1} K^{-1}]
+cp_iw: NP_REAL = NP_REAL(2.093e3) # Specific heat of ice water at constant pressure [J kg^{-1} K^{-1}]
 
 L_v: NP_REAL = NP_REAL(2.5009e6) # Latent heat of vaporization of water at 0.01C - https://www.engineeringtoolbox.com/water-properties-d_1573.html [J kg^(-1)]
 
