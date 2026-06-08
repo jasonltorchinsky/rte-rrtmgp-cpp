@@ -28,8 +28,9 @@ def find_mnn_indices(dp_scream_file: str, tol: NP_REAL = NP_REAL(1.e-3)) -> NP_A
         daystart_index: NP_INT = daystart_indices[ii]
         dayend_index: NP_INT = dayend_indices[ii]
         index_range: NP_INT = dayend_index - daystart_index
-        mnn_indices[ii,:] = np.array([NP_INT(np.round(0.15 * index_range + daystart_index)), # Morning
+
+        mnn_indices[ii,:] = np.array([NP_INT(np.floor(0.15 * index_range + daystart_index)), # Morning
             NP_INT(np.round(0.5 * index_range + daystart_index)), # Noon
-            NP_INT(np.round(0.67 * index_range + daystart_index))]) # Night
+            NP_INT(np.ceil(0.67 * index_range + daystart_index))]) # Night
 
     return mnn_indices

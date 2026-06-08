@@ -49,32 +49,26 @@ def main():
         nargs = "?", type = str, required = True,
         help = "Path to DP-SCREAM output file."
     )
-    
     parser.add_argument("--rad-tran-indir", action = "store",
         nargs = "?", type = str, required = True,
         help = "Path for RTE-RRTMGP-CPP+RT input directory."
     )
-
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Factors by which to coarsen the horizontal grid."
     )
-
     parser.add_argument("--szas", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Solar zenith angle(s) to create RTE-RRTMGP-CPP+RT input for [degrees]."
     )
-
     parser.add_argument("--time-interval", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Interval of times to convert to RTE-RRTMGP-CPP+RT input [timesteps]."
     )
-
     parser.add_argument("--timesteps", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "List of times to convert to RTE-RRTMGP-CPP+RT input - overwritten by --time-interval [timesteps]."
     )
-
     parser.add_argument("--day-only", action = "store_true",
         required = False,
         help = "Include times only when sun is present - overwritten by --time-interval, --timsteps."

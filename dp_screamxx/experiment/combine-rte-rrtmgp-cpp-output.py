@@ -17,7 +17,7 @@ from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET, XR_DATAARRAY
 
 # Script variables
-prog_name: str = "combine-rte-rrtmgp-cpp-output.py"
+prog_name: str = "combine-rte-rrtmgp-cpp-output"
 prog_desc: str = "Combine RTE-RRTMGP-CPP+RT output into a single time-series file."
 
 def main():
@@ -52,10 +52,8 @@ def main():
     rad_tran_separate_outdir: str = os.path.normpath(args.rad_tran_separate_outdir)
     rad_tran_combined_outdir: str = os.path.normpath(args.rad_tran_combined_outdir)
 
-    coarse_factors: Optional[NP_ARRAY[NP_INT]]
-    if args.coarse_factors is None:
-        coarse_factors = None
-    else:
+    coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
+    if args.coarse_factors is not None:
         coarse_factors = np.sort(np.array(args.coarse_factors.split(","), dtype = NP_INT))[::-1]
 
     #---------------------------------------------------------------------------

@@ -268,7 +268,7 @@ def main():
         #-----------------------------------------------------------------------
         # Save the plot to file
         #-----------------------------------------------------------------------
-        plt_filename = "sw_heating_day_{}.png".format(ii)
+        plt_filename = "dpscream_sw_heating_day_{}.png".format(ii)
         plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
         fig.savefig(plt_filepath, dpi = 200)
         plt.close(fig)

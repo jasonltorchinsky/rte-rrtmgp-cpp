@@ -53,7 +53,7 @@ def calc_cloud_wc(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_indices
         sort_mask, time_indices, x_indices, zmax_index, detailed_calc) # [kg]
     
     if x_indices is None:
-        cloud_wc: XR_DATARRAY = (((qc + qi) * mass_moist_air) / (dx * dy * dz)) * 1.e-3 # [g m^{-3}]; [time, lev, y, x]
+        cloud_wc: XR_DATARRAY = (((qc + qi) * mass_moist_air) / (dx * dy * dz)) * 1.e3 # [g m^{-3}]; [time, lev, y, x]
         cloud_wc = (cloud_wc
             .assign_attrs({"units" : "g m^{-3}", 
                            "long_name" : "midpoint cloud water content",
