@@ -13,7 +13,7 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, \
     MPI_COMM, MPI_ROOT, XR_DATASET, XR_DATAARRAY
 
 # Script variables

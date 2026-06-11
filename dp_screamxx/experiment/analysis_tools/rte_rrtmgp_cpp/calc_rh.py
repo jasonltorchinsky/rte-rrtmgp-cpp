@@ -6,32 +6,29 @@ import xarray as xr
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
-def calc_vmr(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
-    x_indices: NP_ARRAY[NP_INT] = None, zmax_index: NP_INT = None) -> XR_DATAARRAY | dict:
+def calc_rh(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
+    x_indices: NP_ARRAY[NP_INT] = None, zmax_index: NP_INT = None) -> XR_DATAARRAY | list[NP_ARRAY[NP_REAL]]:
     
     #---------------------------------------------------------------------------
     # Extract relevant fields from RTE-RRTMGP-CPP file
     #---------------------------------------------------------------------------
     xr_rad_tran: XR_DATASET
     with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
-        vmr_keys: list[str] = [key for key in list(xr_rad_tran.keys()) if "vmr" in key]
-        vmr: XR_DATAARRAY = xr_rad_tran[vmr_keys] # Volume mixing ratios; [nt, lay, y, x]; [mol mol^{-1}]
+        rh: XR_DATAARRAY = xr_rad_tran["rh"] # Relative humidity; [nt, lay, y, x]; [Pa Pa^{-1}]
 
     #---------------------------------------------------------------------------
     # Select relevant times for fields from RTE-RRTMGP-CPP file
     #---------------------------------------------------------------------------
-    vmr = vmr.isel(time = time_indices) # [time, lay, y, x]; [mol mol^{-1}]
+    rh = rh.isel(time = time_indices) # [time, lay, y, x]; [Pa Pa^{-1}]
 
     #---------------------------------------------------------------------------
     # Calculate cloud water content
     #---------------------------------------------------------------------------
     if x_indices is None:
-        return vmr
+        return rh
     else:
-        vmr_dict: dict = {}
-        for key in vmr_keys:
-            vmr_dict[key] = [[] for _ in range(0, 3)]
-            for ii in range(0, 3): # Assume Morning-Noon-Night indices
-                vmr_dict[key][ii] = vmr[key].isel(time = ii, x = x_indices[ii]).to_numpy().astype(NP_REAL) # [mol mol^{-1}]; [lay, y]
+        rh_list: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
+        for ii in range(0, 3): # Assume Morning-Noon-Night indices
+            rh_list[ii] = rh.isel(time = ii, x = x_indices[ii]).to_numpy().astype(NP_REAL) # [Pa Pa^{-1}]; [lay, y]
 
-        return vmr_dict
+        return rh_list
