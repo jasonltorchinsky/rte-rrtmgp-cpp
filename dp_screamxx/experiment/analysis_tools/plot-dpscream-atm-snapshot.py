@@ -19,13 +19,13 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
-from consts.visual import heating_cmap, cw_cmap
+from consts.visual import heating_cmap, lw_cmap, iw_cmap, cw_cmap
 from dpscream import find_mnn_indices, find_szas, find_times, get_sort_mask, get_z, \
-    calc_cloud_wc, calc_rh
+    calc_cloud_wc, calc_dei, calc_rel, calc_rh
 
 # Script variables
-prog_name: str = "plot-dpscream-rad-tran-snapshot"
-prog_desc: str = "Visualize absorbed shortwave flux and atmospheric heating hates for DP-SCREAM."
+prog_name: str = "plot-dpscream-atm-snapshot"
+prog_desc: str = "Visualize atmospheric state for DP-SCREAM."
 
 def main():
     #---------------------------------------------------------------------------
@@ -115,14 +115,29 @@ def main():
         hwp: list[NP_ARRAY[NP_REAL]] = [(dx * cloud_wc[ll]) for ll in range(0, 3)] # [g m^{-2}], 3 * [lay, y]
 
         #-----------------------------------------------------------------------
-        # Calculate relative humidity
+        # Calculate relative humidity, cloud liquid water effective radius, 
+        # cloud ice water effective diameter
         #-----------------------------------------------------------------------
         current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Calculating relative humidity for day {} of {}...".format(current_time, jj, ndays - 1)
+        msg: str = "[{}]: Calculating relative humidity for day {} of {}...".format(current_time, ii, ndays - 1)
         print(msg, flush = True)
 
         rh: list[NP_ARRAY[NP_REAL]] = calc_rh(dp_scream_file, sort_mask,
-            mnn_indices[jj], x_indices) # Relative humidity; [Pa Pa^{-1}]; 3 * [lay, y]
+            mnn_indices[ii], x_indices) # Relative humidity; [N/A]; 3 * [lay, y]
+
+        current_time: str = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Calculating cloud liquid water effective radius for day {} of {}...".format(current_time, ii, ndays - 1)
+        print(msg, flush = True)
+
+        rel: list[NP_ARRAY[NP_REAL]] = calc_rel(dp_scream_file, sort_mask,
+            mnn_indices[ii], x_indices) # Cloud liquid water effective radius; [μm]; 3 * [lay, y]
+
+        current_time: str = datetime.now().strftime("%H:%M:%S")
+        msg: str = "[{}]: Calculating cloud ice water effective diameter for day {} of {}...".format(current_time, ii, ndays - 1)
+        print(msg, flush = True)
+
+        dei: list[NP_ARRAY[NP_REAL]] = calc_dei(dp_scream_file, sort_mask,
+            mnn_indices[ii], x_indices) # Cloud ice water effective diameter; [μm]; 3 * [lay, y]
         
         #-----------------------------------------------------------------------
         # Get vertical grids
@@ -170,6 +185,8 @@ def main():
         #-----------------------------------------------------------------------
         hwp = [hwp[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
         rh = [rh[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+        rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+        dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
         
         #-----------------------------------------------------------------------
         # Get grids for the yz-slices
@@ -187,6 +204,12 @@ def main():
         rh_max: list[NP_REAL] = [rh[ll].max() for ll in range(3)]
         rh_min: list[NP_REAL] = [rh[ll].min() for ll in range(3)]
 
+        rel_max: list[NP_REAL] = [rel[ll].max() for ll in range(3)]
+        rel_min: list[NP_REAL] = [rel[ll].min() for ll in range(3)]
+
+        dei_max: list[NP_REAL] = [dei[ll].max() for ll in range(3)]
+        dei_min: list[NP_REAL] = [dei[ll].min() for ll in range(3)]
+
         #-----------------------------------------------------------------------
         # Plot the data
         #-----------------------------------------------------------------------
@@ -194,7 +217,7 @@ def main():
         msg: str = "[{}]: Plotting data...".format(current_time)
         print(msg, flush = True)
 
-        nrows: NP_INT = NP_INT(2)
+        nrows: NP_INT = NP_INT(4)
         ncols: NP_INT = NP_INT(3)
         fig_height: NP_REAL = NP_REAL(3.)
         fig_base_size = np.array([(y_window_width / zmax) * fig_height, fig_height])
@@ -215,28 +238,48 @@ def main():
         rh_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
         ll: int
         for ll in range(0, ncols):
-            rh_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z, rh[ll],
+            rh_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z_grid[ll], rh[ll],
                 norm = colors.LogNorm(vmin = rh_min[ll], vmax = rh_max[ll]),
-                cmap = cw_cmap)
+                cmap = lw_cmap)
+
+        # Row 2: Cloud Liquid Water Effective Radius
+        rel_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+        ll: int
+        for ll in range(0, ncols):
+            rel_pcm[ll] = axs[2, ll].pcolormesh(y_slices[ll], z_grid[ll], rel[ll],
+                vmin = rel_min[ll], vmax = rel_max[ll],
+                cmap = lw_cmap)
+
+        # Row 3: Cloud Ice Water Effective Diameter
+        dei_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+        ll: int
+        for ll in range(0, ncols):
+            dei_pcm[ll] = axs[3, ll].pcolormesh(y_slices[ll], z_grid[ll], dei[ll],
+                vmin = rel_min[ll], vmax = rel_max[ll],
+                cmap = iw_cmap)
 
         # Colorbars
         for ll in range(0, ncols):
             hwp_cbar = fig.colorbar(hwp_pcm[ll], ax = axs[0,ll])
-            sw_heating_cbar = fig.colorbar(sw_heating_via_pdel_pcm[ll], ax = axs[1:3,ll])
+            rh_cbar = fig.colorbar(rh_pcm[ll], ax = axs[1,ll])
+            rel_cbar = fig.colorbar(rel_pcm[ll], ax = axs[2,ll])
+            dei_cbar = fig.colorbar(dei_pcm[ll], ax = axs[3,ll])
 
         # Labels
         fig.suptitle("DP-SCREAM Atmospheric Radiative Transfer")
         fig.supxlabel(r"y $\left[ km \right]$")
         fig.supylabel(r"z $\left[ km \right]$")
 
-        for ll in range(3):
+        for ll in range(0, ncols):
             col_title: str = (r"{:.2f} Hours - ".format(mnn_times[ii,ll])
                 + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[ii,ll])
                 + r"$x$ = {:.2f} $\left[ km \right]$".format(yz_slices_x[ll]))
             axs[0,ll].set_title(col_title)
 
         hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
-        rh_cbar.ax.set_ylabel(r"Relative Humidity $\left[ Pa\,Pa^{-1} \right]$")
+        rh_cbar.ax.set_ylabel(r"$rh$ $\left[ Pa\,Pa^{-1} \right]$")
+        rel_cbar.ax.set_ylabel(r"$rel$ $\left[ \mu m \right]$")
+        dei_cbar.ax.set_ylabel(r"$dei$ $\left[ \mu m \right]$")
 
         # Set horizontal limits
         ll: int

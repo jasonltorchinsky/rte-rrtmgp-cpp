@@ -14,7 +14,9 @@ if experiment_dir not in sys.path:
 
 # Import from source files
 from .calc_cloud_wc import calc_cloud_wc
+from .calc_dei import calc_dei
 from .calc_mass_moist_air import calc_mass_moist_air
+from .calc_rel import calc_rel
 from .calc_rh import calc_rh
 from .calc_sw_heating import calc_sw_heating
 from .calc_vmr import calc_vmr

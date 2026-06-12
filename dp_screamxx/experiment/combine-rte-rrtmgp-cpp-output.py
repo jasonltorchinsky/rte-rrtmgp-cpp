@@ -13,8 +13,8 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_COMM, MPI_ROOT, XR_DATASET, XR_DATAARRAY
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET, XR_DATAARRAY
+from consts.numeric import MPI_ROOT
 
 # Script variables
 prog_name: str = "combine-rte-rrtmgp-cpp-output"
@@ -100,6 +100,8 @@ def main():
             lev: XR_DATARRAY = xr_rad_tran_in["z_lev"].rename("lev").rename({"z_lev" : "lev"})
 
     t_re: re.Pattern = re.compile("t_...")
+    lr_re: re.Pattern = re.compile("lr_..")
+    in_ext_re: re.Pattern = re.compile(".in.nc")
     rad_tran_separate_outdir_list: list[str] = os.listdir(rad_tran_separate_outdir)
     for rad_tran_infile in rad_tran_infiles:
         current_time = datetime.now().strftime("%H:%M:%S")
@@ -113,17 +115,18 @@ def main():
         msg: str = "[{}]: Finding corresponding output files.".format(current_time)
         print(msg, flush = True)
 
-        rad_tran_file_basename: str = os.path.basename(rad_tran_infile)[:-6]
-        coarse_str: str = rad_tran_file_basename[-5:]
+        rad_tran_file_basename: str = re.sub(in_ext_re, "", os.path.basename(rad_tran_infile))
+        coarse_str: str = lr_re.search(rad_tran_file_basename).group()
 
         rad_tran_outfiles: list[str] = []
         for rad_tran_outfile in rad_tran_separate_outdir_list:
             if (coarse_str + ".t") in rad_tran_outfile:
                 rad_tran_outfiles += [os.path.join(rad_tran_separate_outdir, rad_tran_outfile)]
         
-        rad_tran_outfiles = sorted(rad_tran_outfiles)
+        rad_tran_outfiles: list[str] = sorted(rad_tran_outfiles)
         n_rad_tran_outfiles: int = len(rad_tran_outfiles)
-        t_idxs: list[int] = [int(t_re.search(rad_tran_outfiles[ii]).group(0)[-3:])
+        rad_tran_outfile_basenames: list[str] = [os.path.basename(rad_tran_outfiles[ii]) for ii in range(0, n_rad_tran_outfiles)]
+        t_idxs: list[int] = [int(t_re.search(rad_tran_outfile_basenames[ii]).group()[-3:])
             for ii in range(0, n_rad_tran_outfiles)]
         
         #-----------------------------------------------------------------------

@@ -1,6 +1,6 @@
 # Run parameters
 SCREAM_RUN_NAME=scream_dpxx_RICO_50x50
-RADTRAN_RUN_NAME=test
+RADTRAN_RUN_NAME=test_mie_cloud_optics
 
 # Machine-specific DP-SCREAMXX directories - Abbreviated to SCREAM
 SCREAM_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
@@ -74,36 +74,36 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#CURRENT_TIME=$(date +"%T")
-#STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
-#echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-#
-#mpirun -np 10 \
-#  python ${EXPERIMENT_DIR}/run-rte-rrtmgp-cpp.py \
-#    --rad-tran-indir ${RADTRAN_INPUT_DIR} \
-#    --rad-tran-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
-#    --rad-tran-exec ${RTE_RRTMGP_CPP_EXEC} \
-#    --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
-#    --rte-data-dir ${RTE_DATA_DIR} \
-#    --raytracing 4096 \
-#    --gpus 0,1,2,3,4,5,6,7,8,9
-#
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+mpirun -np 10 \
+  python ${EXPERIMENT_DIR}/run-rte-rrtmgp-cpp.py \
+    --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+    --rad-tran-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
+    --rad-tran-exec ${RTE_RRTMGP_CPP_EXEC} \
+    --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
+    --rte-data-dir ${RTE_DATA_DIR} \
+    --raytracing 256 \
+    --gpus 0,1,2,3,4,5,6,7,8,9
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#CURRENT_TIME=$(date +"%T")
-#STAGE_NAME="RTE-RRTMGP-CPP+RT Output Combination"
-#echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-#
-#python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output.py \
-#  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
-#  --rad-tran-separate-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
-#  --rad-tran-combined-outdir ${RADTRAN_COMBINED_OUTPUT_DIR}
-#
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="RTE-RRTMGP-CPP+RT Output Combination"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output.py \
+  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+  --rad-tran-separate-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
+  --rad-tran-combined-outdir ${RADTRAN_COMBINED_OUTPUT_DIR}
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
@@ -111,21 +111,21 @@ CURRENT_TIME=$(date +"%T")
 STAGE_NAME="DP-SCREAM Visualization"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 #
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
-#python ${EXPERIMENT_ANALYZE_DIR}/plot-dpscream-rad-tran-snapshot.py \
-#  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
-#  --detailed-calc true \
-#  --zmax 40
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-dpscream-atm-snapshot.py \
+  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
+  --detailed-calc true \
+  --zmax 40
 #
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
-#python ${EXPERIMENT_ANALYZE_DIR}/plot-dpscream-atm-snapshot.py \
-#  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
-#  --detailed-calc true \
-#  --zmax 40
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-dpscream-rad-tran-snapshot.py \
+  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
+  --detailed-calc true \
+  --zmax 40
 #
 #python ${EXPERIMENT_ANALYZE_DIR}/animate_dp_screamxx_output.py \
 #    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
@@ -148,17 +148,11 @@ echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
 CURRENT_TIME=$(date +"%T")
 STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-#
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
-#python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-vmr-snapshot.py \
-#  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/vmr_snapshot \
-#  --zmax 40 \
-#  --coarse-factors 16
 #
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
@@ -167,6 +161,14 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
   --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
   --zmax 40 \
   --coarse-factors 1
+#
+#CURRENT_TIME=$(date +"%T")
+#echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
+#python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-vmr-snapshot.py \
+#  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/vmr_snapshot \
+#  --zmax 40 \
+#  --coarse-factors 16
 #
 #echo "Solar Zenith Angle:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
@@ -179,18 +181,19 @@ echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#CURRENT_TIME=$(date +"%T")
-#STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
-#echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 #
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: Atmosphere Radiative Transfer Snapshot:"
-#python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
-#  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
-#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
-#  --detailed-calc true \
-#  --zmax 40
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
+  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
+  --detailed-calc true \
+  --zmax 40 \
+  --coarse-factors 1
 #
 #CURRENT_TIME=$(date +"%T")
 #echo "[${CURRENT_TIME}]: Atmosphere Radiative Transfer Z-Profile:"
@@ -212,8 +215,8 @@ echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #  --case ${CASE_NAME} \
 #  --lr 1,2,4,8,16
 #
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------

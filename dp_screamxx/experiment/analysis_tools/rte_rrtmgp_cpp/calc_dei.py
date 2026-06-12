@@ -6,33 +6,29 @@ import xarray as xr
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
-def calc_rh(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_indices: NP_ARRAY[NP_INT],
+def calc_dei(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
     x_indices: NP_ARRAY[NP_INT] = None, zmax_index: NP_INT = None) -> XR_DATAARRAY | list[NP_ARRAY[NP_REAL]]:
+    
+    #---------------------------------------------------------------------------
+    # Extract relevant fields from RTE-RRTMGP-CPP file
+    #---------------------------------------------------------------------------
+    xr_rad_tran: XR_DATASET
+    with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
+        dei: XR_DATAARRAY = xr_rad_tran["dei"] # Cloud ice water effective diameter at layers; [nt, lay, y, x]; [μm]
 
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Select relevant times for fields from RTE-RRTMGP-CPP file
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        rh: XR_DATAARRAY = xr_dp_scream["RelativeHumidity"] # Relative humidity at level midpoints; [nt, ncol, ilev]; [N/A]
+    dei = dei.isel(time = time_indices) # [time, lay, y, x]; [μm]
 
     #---------------------------------------------------------------------------
-    # Sort and reshape fields from DP-SCREAM file
-    #---------------------------------------------------------------------------
-    rh: XR_DATARRAY = (rh
-        .isel(time = time_indices, ncol = sort_mask)
-        .rename({"lat": "y", "lon": "x"})
-        .set_index(ncol = ["y", "x"])
-        .unstack("ncol")) # [time, lev, y, x]
-
-    #---------------------------------------------------------------------------
-    # Extract relative humidity
+    # Calculate cloud ice water effective diameter
     #---------------------------------------------------------------------------
     if x_indices is None:
-        return rh
+        return dei
     else:
-        rh_list: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
+        dei_list: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
         for ii in range(0, 3): # Assume Morning-Noon-Night indices
-            rh_list[ii] = rh.isel(time = ii, x = x_indices[ii])
+            dei_list[ii] = dei.isel(time = ii, x = x_indices[ii]).to_numpy().astype(NP_REAL) # [μm]; [lay, y]
 
-        return rh_list
+        return dei_list

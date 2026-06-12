@@ -22,7 +22,7 @@ def calc_rh(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
     rh = rh.isel(time = time_indices) # [time, lay, y, x]; [Pa Pa^{-1}]
 
     #---------------------------------------------------------------------------
-    # Calculate cloud water content
+    # Calculate relative humidity
     #---------------------------------------------------------------------------
     if x_indices is None:
         return rh

@@ -14,8 +14,8 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_COMM, MPI_ROOT, XR_DATASET
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET
+from consts.numeric import MPI_ROOT
 
 # Script variables
 prog_name: str = "run-rte-rrtmgp-cpp.py"
@@ -173,8 +173,8 @@ def main():
             os.symlink(os.path.join(rrtmgp_data_dir, rrtmgp_filenames_src[ii]),
                 os.path.join(l_work_dir, rrtmgp_filenames_tgt[ii]))
 
-    rte_filenames_src: list[str] = ["aerosol_optics.nc"]
-    rte_filenames_tgt: list[str] = ["aerosol_optics.nc"]
+    rte_filenames_src: list[str] = ["aerosol_optics.nc", "mie_lut_broadband.nc"]
+    rte_filenames_tgt: list[str] = ["aerosol_optics.nc", "mie_lut_broadband.nc"]
     for ii in range(0, len(rte_filenames_src)):
         if not os.path.exists(os.path.join(l_work_dir, rte_filenames_tgt[ii])):
             os.symlink(os.path.join(rte_data_dir, rte_filenames_src[ii]),
@@ -184,7 +184,7 @@ def main():
     # Loop through local queue and run RTE-RRTMGP-CPP+RT on the input
     # Have to move output file when process is done
     #---------------------------------------------------------------------------
-    cmd: list[str] = [rad_tran_exec, "--cloud-optics", "--raytracing", str(raytracing)]
+    cmd: list[str] = [rad_tran_exec, "--liq-cloud-optics", "--cloud-mie", "--raytracing", str(raytracing)]
     stdout: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".out")
     stderr: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".err")
     for rad_tran_infile in rad_tran_infiles:
