@@ -1,6 +1,6 @@
 # Run parameters
 SCREAM_RUN_NAME=scream_dpxx_RICO_50x50
-RADTRAN_RUN_NAME=test_mie_cloud_optics
+RADTRAN_RUN_NAME=test_cloud_optics
 
 # Machine-specific DP-SCREAMXX directories - Abbreviated to SCREAM
 SCREAM_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
@@ -54,23 +54,23 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-#CURRENT_TIME=$(date +"%T")
-#STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
-#echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-#
-## Set SZAs, times, and coarsening factors
-#SZAS=0,80
-#COARSE_FACTORS=1,2,4,8,16
-#
-#mpirun -np 192 \
-#  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
-#    --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
-#    --rad-tran-indir ${RADTRAN_INPUT_DIR} \
-#    --coarse-factors ${COARSE_FACTORS} \
-#    --day-only
-#
-#CURRENT_TIME=$(date +"%T")
-#echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# Set SZAs, times, and coarsening factors
+SZAS=0,80
+COARSE_FACTORS=1,2,4,8,16
+
+mpirun -np 192 \
+  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
+    --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+    --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+    --coarse-factors ${COARSE_FACTORS} \
+    --day-only
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
@@ -86,7 +86,7 @@ mpirun -np 10 \
     --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
     --rte-data-dir ${RTE_DATA_DIR} \
     --raytracing 256 \
-    --gpus 0,1,2,3,4,5,6,7,8,9
+    --gpus 1,2,3,4,5,6,7,8,9,10
 
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
@@ -168,7 +168,7 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
 #  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/vmr_snapshot \
 #  --zmax 40 \
-#  --coarse-factors 16
+#  --coarse-factors 1
 #
 #echo "Solar Zenith Angle:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
@@ -176,8 +176,8 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
 #  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}
 #
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#CURRENT_TIME=$(date +"%T")
+#echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
@@ -192,7 +192,15 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
   --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
   --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
   --detailed-calc true \
-  --zmax 40 \
+  --coarse-factors 1
+#  --zmax 40 \
+#
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Surface Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-sfc-snapshot.py \
+  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/sfc_snapshot \
   --coarse-factors 1
 #
 #CURRENT_TIME=$(date +"%T")

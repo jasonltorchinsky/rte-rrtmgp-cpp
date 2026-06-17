@@ -1,0 +1,7 @@
+*.txt
+*.nc
+*.out
+*.err
+*.png
+/__pycache__/*
+test_rte_rrtmgp

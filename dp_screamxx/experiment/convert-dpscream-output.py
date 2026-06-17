@@ -19,14 +19,13 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_COMM, MPI_ROOT, XR_DATASET
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET
+from consts.numeric import MPI_ROOT
 from consts.dp_screamxx_fields import dpscream_3d_field_keys, dpscream_2d_field_keys
 from consts.rte_rrtmgp_cpp_fields import rte_3d_field_keys, rte_2d_field_keys
-from convert_utils import get_g_grid_vremap, coarsen_g_grid_vremap, scatterv_g_grids, get_sort_mask, grids_to_coords, \
+from convert_utils import find_daytime_slices, get_g_grid_vremap, coarsen_g_grid_vremap, scatterv_g_grids, get_sort_mask, grids_to_coords, \
     coarsen_2d_fields, coarsen_3d_fields, save_rte_rrtmgp_cpp_input, set_unspecified_fields, \
     fields_to_dataset
-from analyze_utils import find_daytime_slices
 
 # Script variables
 prog_name: str = "convert-dpscream-output"

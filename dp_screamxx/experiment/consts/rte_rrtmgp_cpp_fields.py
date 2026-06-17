@@ -216,8 +216,8 @@ fields_units: dict = {
     "tsi" : "W m^(-2)",
     "mu0" : "N/A",
     "azi" : "Radians",
-    "lwp" : "kg m^(-2)",
-    "iwp" : "kg m^(-2)",
+    "lwp" : "g m^(-2)",
+    "iwp" : "g m^(-2)",
     "rel" : "μm",
     "dei" : "μm",
 }

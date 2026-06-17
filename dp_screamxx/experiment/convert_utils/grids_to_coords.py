@@ -5,7 +5,8 @@ from typing import Optional
 import numpy as np
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, MPI_ROOT
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM
+from consts.numeric import MPI_ROOT
 from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units
 
 def grids_to_coords(g_grids_tgt: dict, time: NP_ARRAY[NP_REAL], coarse_factors: NP_ARRAY[NP_REAL], comm: MPI_COMM) -> Optional[dict]:

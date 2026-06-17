@@ -5,8 +5,8 @@ from typing import Optional
 import numpy as np
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_REAL, MPI_COMM, MPI_ROOT
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_REAL, MPI_COMM
+from consts.numeric import MPI_ROOT
 
 def scatterv_g_grids(g_grid_vremap: Optional[dict], g_grids_tgt: Optional[dict],
     coarse_factors: NP_ARRAY[NP_INT], comm: MPI_COMM) -> [dict, dict]:

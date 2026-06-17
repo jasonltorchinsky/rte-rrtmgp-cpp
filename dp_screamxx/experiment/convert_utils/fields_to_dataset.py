@@ -4,7 +4,8 @@ from typing import Optional
 # Third-Party Library Imports
 
 # Local Library Imports
-from consts.consts import NP_INT, MPI_COMM, MPI_ROOT
+from consts.dtypes import NP_INT, MPI_COMM
+from consts.numeric import MPI_ROOT
 from consts.rte_rrtmgp_cpp_fields import grid_descriptions, grid_units, \
     fields_dimensions, fields_descriptions, fields_units
 

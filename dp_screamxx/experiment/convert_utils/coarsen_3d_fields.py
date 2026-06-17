@@ -8,9 +8,10 @@ from datetime import datetime
 from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, \
-    MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET, \
-    R_d, R_v, mu_d
+from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, \
+    MPI_REAL, MPI_COMM, XR_DATASET
+from consts.numeric import MPI_ROOT
+from consts.physical import R_d, R_v, mu_d
 from consts.rte_rrtmgp_cpp_fields import rte_3d_field_keys
 
 def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vremap: dict, 
@@ -223,9 +224,9 @@ def coarsen_3d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vrem
                 # Simply extract the field
                 l_field_tgt = l_field_tgt_pre[0]
             elif rad_tran_key in ["lwp", "iwp"]:
-                # Have cloud liquid/ice water mass, get density and integrate vertical for water path
-                # which is equivalent to dz * (mass / (dx * dy * dz))
-                l_field_tgt = l_field_tgt_pre[0] / (l_dx_tgt * l_dy_tgt)
+                # Have cloud liquid/ice water mass [kg], get density and integrate vertical for water path
+                # which is equivalent to dz * (mass / (dx * dy * dz)) [kg m^{-2}], and convert to [g m^{-2}]
+                l_field_tgt = 1.e3 * l_field_tgt_pre[0] / (l_dx_tgt * l_dy_tgt)
             elif ("vmr_" in rad_tran_key):
                 # Needs to be divided by number of dry air moles
                 l_field_tgt = l_field_tgt_pre[0] / l_nd_tgts[coarse_str]

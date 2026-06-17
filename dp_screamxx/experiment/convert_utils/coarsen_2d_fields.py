@@ -8,8 +8,9 @@ from datetime import datetime
 from scipy.interpolate import RegularGridInterpolator
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_REAL, MPI_COMM, MPI_ROOT, XR_DATASET
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, \
+    MPI_REAL, MPI_COMM, XR_DATASET
+from consts.numeric import MPI_ROOT
 from consts.rte_rrtmgp_cpp_fields import rte_2d_field_keys
 
 def coarsen_2d_fields(xr_dp_scream: XR_DATASET, g_grid_vremap: dict, l_grid_vremap: dict, 

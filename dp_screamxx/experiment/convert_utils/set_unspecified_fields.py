@@ -5,8 +5,8 @@ from typing import Optional
 import numpy as np
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, \
-    MPI_COMM, MPI_ROOT
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, MPI_COMM
+from consts.numeric import MPI_ROOT
 
 def set_unspecified_fields(xr_dp_scream: XR_DATASET, g_grids: dict,
     comm: MPI_COMM) -> Optional[dict]:

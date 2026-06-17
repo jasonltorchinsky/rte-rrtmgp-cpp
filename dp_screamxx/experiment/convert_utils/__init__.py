@@ -13,6 +13,7 @@ if src_dir not in sys.path:
 
 # Import from source files
 from .coarsen_g_grid_vremap import coarsen_g_grid_vremap
+from .find_daytime_slices import find_daytime_slices
 from .get_g_grid_vremap import get_g_grid_vremap
 from .get_sort_mask import get_sort_mask
 from .grids_to_coords import grids_to_coords

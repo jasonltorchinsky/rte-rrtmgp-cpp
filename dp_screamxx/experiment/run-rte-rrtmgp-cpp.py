@@ -184,7 +184,7 @@ def main():
     # Loop through local queue and run RTE-RRTMGP-CPP+RT on the input
     # Have to move output file when process is done
     #---------------------------------------------------------------------------
-    cmd: list[str] = [rad_tran_exec, "--liq-cloud-optics", "--cloud-mie", "--raytracing", str(raytracing)]
+    cmd: list[str] = [rad_tran_exec, "--cloud-optics", "--single-gpt", "--raytracing", str(raytracing)]
     stdout: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".out")
     stderr: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".err")
     for rad_tran_infile in rad_tran_infiles:

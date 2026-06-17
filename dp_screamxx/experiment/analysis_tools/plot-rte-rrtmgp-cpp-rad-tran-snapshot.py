@@ -19,9 +19,9 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
-from consts.visual import heating_cmap, cw_cmap
+from consts.visual import flux_cmap, heating_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_sw_heating
+    calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-snapshot"
@@ -115,14 +115,14 @@ def main():
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
         ndays: NP_INT = mnn_indices.shape[0]
 
-        #---------------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
-        #---------------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         int: jj
         for jj in range(0, ndays):
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Calculate cloud water content, x-indices for yz-slices for calculations
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
             print(msg, flush = True)
@@ -138,16 +138,16 @@ def main():
 
             cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll, x = x_indices[ll]).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lev, y]
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Calculate horizontal water path at each YZ-slice
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             hwp: list[NP_ARRAY[NP_REAL]] = [(dx * cloud_wc[ll]) for ll in range(0, 3)] # [g m^{-2}], 3 * [lay, y]
 
-            #-----------------------------------------------------------------------
-            # Calculate shortwave radiative heating rates
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
+            # Calculate radiative quantities
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating radiative quantities for day {} of {}...".format(current_time, jj, ndays - 1)
+            msg: str = "[{}]: Calculating heating rates for day {} of {}...".format(current_time, jj, ndays - 1)
             print(msg, flush = True)
 
             sw_heating_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_heating(rad_tran_infile, rad_tran_outfile,
@@ -156,9 +156,19 @@ def main():
             sw_heating_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_heating(rad_tran_infile, rad_tran_outfile,
                 mnn_indices[jj], x_indices, solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; 3 * [lev, y]
 
-            #-----------------------------------------------------------------------
+            current_time: str = datetime.now().strftime("%H:%M:%S")
+            msg: str = "[{}]: Calculating absorbed fluxes for day {} of {}...".format(current_time, jj, ndays - 1)
+            print(msg, flush = True)
+
+            sw_flux_abs_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
+                mnn_indices[jj], x_indices, solver = "rt") # Shortwave absorbed flux, ray-tracer; [W m^{-3}]; 3 * [lev, y]
+
+            sw_flux_abs_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
+                mnn_indices[jj], x_indices, solver = "ts") # Shortwave absorbed flux, two-stream; [W m^{-3}]; 3 * [lev, y]
+
+            #-------------------------------------------------------------------
             # Obtain plotting bounds
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Obtaining plotting bounds...".format(current_time)
             print(msg, flush = True)
@@ -190,64 +200,88 @@ def main():
                     y_bound_indices[ll][1] = np.min(np.where(y_bounds[ll,1] - y <= 0)[0]) + 1 # To include endpoint, add 1
             y_slices = [y[y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Trim fields to the yz-slice
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             hwp = [hwp[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
             sw_heating_ts = [sw_heating_ts[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
             sw_heating_rt = [sw_heating_rt[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+            sw_flux_abs_ts = [sw_flux_abs_ts[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+            sw_flux_abs_rt = [sw_flux_abs_rt[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
             
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Obtain data bounds
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             hwp_max: list[NP_REAL] = [hwp[ll].max() for ll in range(3)]
             hwp_min: list[NP_REAL] = [hwp[ll].min() for ll in range(3)]
 
             sw_heating_max: list[NP_REAL] = [max(sw_heating_ts[ll].max(), sw_heating_rt[ll].max()) for ll in range(3)]
             sw_heating_min: list[NP_REAL] = [min(sw_heating_ts[ll].min(), sw_heating_rt[ll].min()) for ll in range(3)]
 
-            #-----------------------------------------------------------------------
+            sw_flux_abs_max: list[NP_REAL] = [max(sw_flux_abs_ts[ll].max(), sw_flux_abs_rt[ll].max()) for ll in range(3)]
+            sw_flux_abs_min: list[NP_REAL] = [min(sw_flux_abs_ts[ll].min(), sw_flux_abs_rt[ll].min()) for ll in range(3)]
+
+            #-------------------------------------------------------------------
             # Plot the data
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Plotting data...".format(current_time)
             print(msg, flush = True)
 
-            fig_height: NP_REAL = NP_REAL(3.)
-            fig_base_size = np.array([(y_window_width / zmax) * fig_height, fig_height])
-            fig, axs = plt.subplots(nrows = 3, ncols = 3,
+            nrows: NP_INT = NP_INT(5)
+            ncols: NP_INT = NP_INT(3)
+            fig_height: NP_REAL = NP_REAL(6.)
+            fig_base_size = np.array([(ncols / nrows) * (y_window_width / zmax) * fig_height, fig_height])
+            fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
                 figsize = 3. * fig_base_size)
 
             # Row 0: Horizontal Water Path
-            hwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, 3)]
+            hwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
-            for ll in range(3):
+            for ll in range(0, ncols):
                 hwp_pcm[ll] = axs[0, ll].pcolormesh(y_slices[ll], z, hwp[ll],
                     vmin = hwp_min[ll], vmax = hwp_max[ll],
                     cmap = cw_cmap)
 
-            # Row 1: Two-Stream
-            sw_heating_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, 3)]
+            # Row 1: Heating, Two-Stream
+            sw_heating_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
-            for ll in range(3):
+            for ll in range(0, ncols):
                 sw_heating_ts_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z, sw_heating_ts[ll],
                     norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
                     cmap = heating_cmap)
 
-            # Row 2: Ray-Tracer
-            sw_heating_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, 3)]
+            # Row 2: Heating, Ray-Tracer
+            sw_heating_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
-            for ll in range(3):
+            for ll in range(0, ncols):
                 sw_heating_rt_pcm[ll] = axs[2, ll].pcolormesh(y_slices[ll], z, sw_heating_rt[ll],
                     norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
                     cmap = heating_cmap)
 
+            # Row 3: Absorbed Flux, Two-Stream
+            sw_flux_abs_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+            ll: int
+            for ll in range(0, ncols):
+                sw_flux_abs_ts_pcm[ll] = axs[3, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_ts[ll],
+                    norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
+                    cmap = flux_cmap)
+
+            # Row 4: Absorbed Flux, Ray-Tracer
+            sw_flux_abs_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+            ll: int
+            for ll in range(0, ncols):
+                sw_flux_abs_rt_pcm[ll] = axs[4, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_rt[ll],
+                    norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
+                    cmap = flux_cmap)
+
             # Colorbars
-            for ll in range(3):
+            for ll in range(0, ncols):
                 hwp_cbar = fig.colorbar(hwp_pcm[ll], ax = axs[0,ll])
                 sw_heating_cbar = fig.colorbar(sw_heating_ts_pcm[ll], ax = axs[1:3,ll])
+                sw_flux_abs_cbar = fig.colorbar(sw_flux_abs_ts_pcm[ll], ax = axs[3:5,ll])
 
             # Labels
             fig.suptitle("RTE-RRTMGP-CPP Atmospheric Radiative Transfer")
@@ -261,29 +295,32 @@ def main():
                 axs[0,ll].set_title(col_title)
             axs[1,0].set_ylabel(r"Two-Stream")
             axs[2,0].set_ylabel(r"Ray-Tracer")
+            axs[3,0].set_ylabel(r"Two-Stream")
+            axs[4,0].set_ylabel(r"Ray-Tracer")
 
             hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
             sw_heating_cbar.ax.set_ylabel(r"Atmospheric Heating Rate $\left[ K\,d^{-1} \right]$")
+            sw_flux_abs_cbar.ax.set_ylabel(r"Absorbed Shortwave Flux $\left[ W\,m^{-3} \right]$")
 
             # Set horizontal limits
             ll: int
             mm: int
-            for ll in range(3):
-                for mm in range(3):
+            for ll in range(0, nrows):
+                for mm in range(0, ncols):
                     axs[ll,mm].set_xlim(y_bounds[mm,:])
                     axs[ll,mm].set_ylim((0.0, zmax))
 
             # Aspect ratio
             ll: int
             mm: int
-            for ll in range(3):
-                for mm in range(3):
+            for ll in range(0, nrows):
+                for mm in range(0, ncols):
                     axs[ll,mm].set_aspect("equal")
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Save the plot to file
-            #-----------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_sw_heating_day_{}.{}.png".format(jj, lr_str)
+            #-------------------------------------------------------------------
+            plt_filename = "rte_rrtmgp_cpp_rad_tran_day_{}.{}.png".format(jj, lr_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)
             plt.close(fig)

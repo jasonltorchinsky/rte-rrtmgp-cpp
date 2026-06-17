@@ -5,7 +5,7 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
 def get_g_grid_vremap(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT]) -> dict:
     xr_dp_scream: XR_DATASET

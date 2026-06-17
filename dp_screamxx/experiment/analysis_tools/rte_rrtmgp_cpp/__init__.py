@@ -18,6 +18,8 @@ from .calc_dei import calc_dei
 from .calc_mass_moist_air import calc_mass_moist_air
 from .calc_rel import calc_rel
 from .calc_rh import calc_rh
+from .calc_sw_flux_abs import calc_sw_flux_abs
+from .calc_sw_flux_sfc_dn import calc_sw_flux_sfc_dn
 from .calc_sw_heating import calc_sw_heating
 from .calc_vmr import calc_vmr
 from .find_inout_pairs import find_inout_pairs
