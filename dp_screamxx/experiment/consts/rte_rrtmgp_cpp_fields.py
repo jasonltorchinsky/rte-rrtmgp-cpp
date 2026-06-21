@@ -6,6 +6,9 @@
 
 from .dtypes import NC_INT, NC_REAL
 
+rte_rrtmgp_cpp_gas_keys: list[str] = ["h2o", "co2", "o3", "n2o", "co", "ch4", "o2", "n2", "ccl4", "cfc11", "cfc12", 
+    "cfc22", "hfc143a", "hfc125", "hfc23", "hfc32", "hfc134a", "cf4", "no2"]
+
 rte_3d_field_keys: list[str] = ["p", "t", "rh", "lwp", "iwp", "rel", "dei", 
     "vmr_ch4", "vmr_co", "vmr_co2", "vmr_h2o", "vmr_n2", "vmr_n2o", 
     "vmr_o2", "vmr_o3"]

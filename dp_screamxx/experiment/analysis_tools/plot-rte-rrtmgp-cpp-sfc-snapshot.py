@@ -178,7 +178,7 @@ def main():
             vwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                vwp_pcm[ll] = axs[0, ll].pcolormesh(y, x, vwp[ll],
+                vwp_pcm[ll] = axs[0, ll].pcolormesh(y, x, vwp[ll] * 1.e-3,
                     vmin = vwp_min[ll], vmax = vwp_max[ll],
                     cmap = cw_cmap)
 
@@ -215,7 +215,7 @@ def main():
             axs[1,0].set_ylabel(r"Two-Stream")
             axs[2,0].set_ylabel(r"Ray-Tracer")
 
-            vwp_cbar.ax.set_ylabel(r"Vertical Cloud Water Path $\left[ g\,m^{-2} \right]$")
+            vwp_cbar.ax.set_ylabel(r"Vertical Cloud Water Path $\left[ kg\,m^{-2} \right]$")
             flux_sfc_dn_cbar.ax.set_ylabel(r"Surface Downwelling Flux $\left[ W\,m^{-2} \right]$")
 
             # Aspect ratio

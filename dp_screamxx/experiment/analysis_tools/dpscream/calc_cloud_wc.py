@@ -18,7 +18,7 @@ def calc_cloud_wc(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_indices
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
         qc: XR_DATAARRAY = xr_dp_scream["qc"] # Cloud liquid water moist mixing ratio; [nt, ncol, lev]; [kg kg^{-1}]
         qi: XR_DATAARRAY = xr_dp_scream["qi"] # Cloud ice water moist mixing ratio; [nt, ncol, lev]; [kg kg^{-1}]
-        z_int: XR_DATAARRAY = xr_dp_scream["z_int"] # Geometrix height at level interfaces; [nt, ncol, ilev]; [m]
+        z_int: XR_DATAARRAY = xr_dp_scream["z_int"] # Geometric height at level interfaces; [nt, ncol, ilev]; [m]
 
     #---------------------------------------------------------------------------
     # Sort and reshape fields from DP-SCREAM file
@@ -51,7 +51,7 @@ def calc_cloud_wc(dp_scream_file: str, sort_mask: NP_ARRAY[NP_INT], time_indices
     #---------------------------------------------------------------------------
     mass_moist_air: XR_DATARRAY | list[NP_ARRAY[NP_REAL]] = calc_mass_moist_air(dp_scream_file,
         sort_mask, time_indices, x_indices, zmax_index, detailed_calc) # [kg]
-    
+
     if x_indices is None:
         cloud_wc: XR_DATARRAY = (((qc + qi) * mass_moist_air) / (dx * dy * dz)) * 1.e3 # [g m^{-3}]; [time, lev, y, x]
         cloud_wc = (cloud_wc

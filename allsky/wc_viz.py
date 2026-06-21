@@ -24,9 +24,11 @@ jmid = len(y) // 2
 
 # Total water path
 total_water_path = lwp + iwp              # (lay, y, x)
+dz = z[1] - z[0]
+total_water_content = total_water_path / dz
 
 # Central y xz-slice
-total_water_path_xz = total_water_path[:, jmid, :]   # (lay, x)
+total_water_content_xz = total_water_content[:, jmid, :]   # (lay, x)
 
 # For plotting against z, use layer midpoints if needed
 # Here we use z directly, assuming lay aligns with z spacing
@@ -44,18 +46,18 @@ sza_rounded = int(np.rint(sza_deg))
 fig, ax = plt.subplots(1, 1, figsize=(8, 6), constrained_layout=True)
 
 im = ax.pcolormesh(
-    x, z_plot, total_water_path_xz,
+    x, z_plot, total_water_content_xz,
     shading="auto",
     cmap="viridis"
 )
-ax.set_title("Total Cloud Water Path (IWP + LWP), central y xz-slice")
+ax.set_title("Total Cloud Water Content, central y xz-slice")
 ax.set_xlabel("x [m]")
 ax.set_ylabel("z [m]")
 cbar = fig.colorbar(im, ax=ax)
-cbar.set_label("Water path [g m$^{-2}$]")
+cbar.set_label("Water content [g m$^{-3}$]")
 
 fig.suptitle(f"RTE+RRTMGP Input, Solar Zenith Angle = {sza_deg:.2f}°", fontsize=16)
 
-outfile = f"rte_rrtmgp_input_total_water_path_{sza_rounded}.png"
+outfile = f"rte_rrtmgp_input_total_water_content_{sza_rounded}.png"
 fig.savefig(outfile, dpi=200, bbox_inches="tight")
 plt.show()

@@ -65,8 +65,8 @@ def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str, time_indices: N
         p_lev: XR_DATAARRAY = xr_rad_tran["p_lev"] # Hydrostatic pressure at levels; [nt, lev, y, x]; [Pa]
         p_lay: XR_DATAARRAY = xr_rad_tran["p_lay"] # Hydrostatic pressure at layers; [nt, lay, y, x]; [Pa]
         t_lay: XR_DATAARRAY = xr_rad_tran["t_lay"] # Temperature at layers; [nt, lay, y, x]; [K]
-        lwp: XR_DATAARRAY = xr_rad_tran["lwp"] # Cloud liquid water path at layers; [nt, lay, y, x]; [kg m^{-2}]
-        iwp: XR_DATAARRAY = xr_rad_tran["iwp"] # Cloud ice water path at layers; [nt, lay, y, x]; [kg m^{-2}]
+        lwp: XR_DATAARRAY = xr_rad_tran["lwp"] # Cloud liquid water path at layers; [nt, lay, y, x]; [g m^{-2}]
+        iwp: XR_DATAARRAY = xr_rad_tran["iwp"] # Cloud ice water path at layers; [nt, lay, y, x]; [g m^{-2}]
 
     #---------------------------------------------------------------------------
     # Select relevant times for fields from RTE-RRTMGP-CPP file
@@ -93,8 +93,8 @@ def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str, time_indices: N
     dy: NP_REAL = dx
 
     mass_moist_air: XR_DATARRAY = calc_mass_moist_air(rad_tran_infile, time_indices) # [time, lay, y, x]; [kg]
-    qc: XR_DATAARRAY = (lwp * dx * dy) / mass_moist_air
-    qi: XR_DATAARRAY = (iwp * dx * dy) / mass_moist_air
+    qc: XR_DATAARRAY = ((lwp * 1.e-3) * dx * dy) / mass_moist_air # [kg kg^{-1}]
+    qi: XR_DATAARRAY = ((iwp * 1.e-3) * dx * dy) / mass_moist_air # [kg kg^{-1}]
 
     #---------------------------------------------------------------------------
     # Calculate shortwave heating rate

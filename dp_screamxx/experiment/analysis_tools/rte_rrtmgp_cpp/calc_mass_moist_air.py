@@ -16,7 +16,7 @@ def calc_mass_moist_air(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
     xr_rad_tran: XR_DATASET
     with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
         p_lev: XR_DATAARRAY = xr_rad_tran["p_lev"] # Hydrostatic pressure at levels; [nt, lev, y, x]; [Pa]
-        lay: XR_DATAARRAY = xr_rad_tran["lay"] # Geometric height at layers; [lay]; [m]
+        z: XR_DATAARRAY = xr_rad_tran["z"] # Geometric height at layers; [lay]; [m]
 
     #---------------------------------------------------------------------------
     # Select relevant times for fields from RTE-RRTMGP-CPP file
@@ -33,7 +33,7 @@ def calc_mass_moist_air(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
     # Calculate moist air mass
     #---------------------------------------------------------------------------
     if x_indices is None:
-        pdel: XR_DATAARRAY = (p_lev.diff("lev")).rename({"lev" : "lay"}).assign_coords({"lay" : lay}) # Pressure-thickness; [time, lay, y]; [Pa]
+        pdel: XR_DATAARRAY = (p_lev.diff("lev")).rename({"lev" : "lay"}).assign_coords({"lay" : z.to_numpy().astype(NP_REAL)}) # Pressure-thickness; [time, lay, y]; [Pa]
         mass_moist_air: XR_DATAARRAY = (pdel * dx * dy) / g # From hydrostatic pressure definition; [kg]
         mass_moist_air = (mass_moist_air
             .assign_attrs({"units" : "kg", 
