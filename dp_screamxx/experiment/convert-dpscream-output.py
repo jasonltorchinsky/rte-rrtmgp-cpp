@@ -8,6 +8,7 @@ M. A. Veerman. Simulating sunshine on cloudy days (2023). doi: 10.18174/634325.
 # Standard Library Imports
 import os
 import re
+import socket
 
 from argparse import ArgumentParser, Namespace
 from datetime import datetime
@@ -37,6 +38,10 @@ def main():
     comm: MPI_COMM = MPI.COMM_WORLD
     l_rank: NP_INT = NP_INT(comm.Get_rank())
     comm_size: NP_INT = NP_INT(comm.Get_size())
+
+    msg: str = "Initializing..."
+    print_msg(msg, l_rank)
+    comm.barrier()
 
     #---------------------------------------------------------------------------
     # Parse command-line input
@@ -73,7 +78,11 @@ def main():
     )
     parser.add_argument("--day-only", action = "store_true",
         required = False,
-        help = "Include times only when sun is present - overwritten by --time-interval, --timsteps."
+        help = "Include times only when sun is present - overwritten by --time-interval, --timesteps."
+    )
+    parser.add_argument("--recalculate", action = "store_true",
+        required = False,
+        help = "Re-calculate timesteps for which RTE-RRTMGP-CPP input is already present."
     )
     
     args: Namespace = parser.parse_args()
@@ -86,6 +95,7 @@ def main():
         coarse_factors = np.array([1], dtype = NP_INT)
     else:
         coarse_factors = np.sort(np.array(args.coarse_factors.split(","), dtype = NP_INT))[::-1]
+    coarse_factor_strs: list[str] = ["lr_{:02}".format(coarse_factor) for coarse_factor in coarse_factors]
 
     szas: Optional[NP_ARRAY[NP_REAL]] = None
     if args.szas is not None:
@@ -117,6 +127,21 @@ def main():
     rad_tran_file_path_root: str = os.path.join(rad_tran_indir, rad_tran_file_name_root)
 
     #---------------------------------------------------------------------------
+    # Trim g_time_idxs if we're not re-converting previously converted RTE-RRTMGP-CPP input
+    #---------------------------------------------------------------------------
+    if not args.recalculate:
+        g_missing_time_idxs: list[NP_INT] = []
+        for g_time_idx in g_time_idxs:
+            time_str: str = "t_{:03}".format(g_time_idx)
+            has_all_files: bool = all([
+                any([((coarse_factor_str in file_name) and (time_str in file_name)) for file_name in os.listdir(rad_tran_indir)])
+                for coarse_factor_str in coarse_factor_strs])
+
+            if not has_all_files:
+                g_missing_time_idxs += [g_time_idx]
+        g_time_idxs: NP_ARRAY[NP_INT] = np.array(g_missing_time_idxs)
+
+    #---------------------------------------------------------------------------
     # Each rank gets a subset of time-steps to convert
     #---------------------------------------------------------------------------
     msg: str = "Obtaining local time indexes..."
@@ -131,85 +156,100 @@ def main():
 
     l_time_idxs: NP_ARRAY[NP_INT] = g_time_idxs[start_idx:end_idx]
 
-    #---------------------------------------------------------------------------
-    # Each rank gets times of local time indexes
-    #---------------------------------------------------------------------------
-    msg: str = "Extracting time since simulation start..."
+    msg: str = "Obtained local time indices: {}.".format(l_time_idxs)
     print_msg(msg, l_rank)
 
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        times: NP_ARRAY[NP_REAL] = (xr_dp_scream["time"] - xr_dp_scream["time"][0]).to_numpy().astype(NP_REAL) / (3600.e9) # [ns] => [h]
-    times = times[l_time_idxs]
+    l_has_time_idxs: int = int(l_time_idxs.size != 0) # 0 if not given any work, 1 if given work
+    comm: MPI_COMM = comm.Split(l_has_time_idxs, l_rank)
 
     #---------------------------------------------------------------------------
-    # Each rank gets the mask needed to sort DP-SCREAM output into x- and y-
+    # Ranks with no l_time_idxs skip the conversion loop
     #---------------------------------------------------------------------------
-    msg: str = "Getting col to x-/y- sorting mask..."
-    print_msg(msg, l_rank)
-
-    sort_mask: NP_ARRAY[NP_INT] = get_sort_mask(dp_scream_file)
-
-    #---------------------------------------------------------------------------
-    # Get the RTE-RRTMGP-CPP source grid, which has the same horizontal grid
-    # as DP-SCREAM, and a uniform vertical grid that is always within
-    # the bounds of the DP-SCREAM vertical grid (which moves)
-    #---------------------------------------------------------------------------
-    msg: str = "Getting RTE-RRTMGP-CPP source grid..."
-    print_msg(msg, l_rank)
-
-    rad_tran_src_grid: dict = get_rad_tran_src_grid(dp_scream_file, l_time_idxs, comm)
-
-    #---------------------------------------------------------------------------
-    # Generate RTE-RRTMGP-CPP target grids (horizontally coarsened)
-    #---------------------------------------------------------------------------
-    msg: str = "Generating RTE-RRTMGP-CPP target grids..."
-    print_msg(msg, l_rank)
-
-    rad_tran_tgt_grids: dict = get_rad_tran_tgt_grids(rad_tran_src_grid, coarse_factors, comm)
-
-    #---------------------------------------------------------------------------
-    # Loop through local time indexes
-    #---------------------------------------------------------------------------
-    time_idx: NP_INT
-    for time_idx in l_time_idxs:
-        #-----------------------------------------------------------------------
-        # Map relevant values from DP-SCREAM to the RTE-RRTMGP-CPP source grid
-        #-----------------------------------------------------------------------
-        dp_scream_remap: dict = remap_dp_scream(dp_scream_file, time_idx, rad_tran_src_grid, sort_mask, comm)
+    if l_has_time_idxs == 0:
+        msg: str = "Has no work, skipping to end."
+        print_msg(msg, l_rank)
+    elif l_has_time_idxs == 1:
+        msg: str = "Has work."
+        print_msg(msg, l_rank)
 
         #-----------------------------------------------------------------------
-        # Horizontally coarsen relevant DP-SCREAM values to RTE-RRTMGP-CPP target grids
+        # Each rank gets the mask needed to sort DP-SCREAM output into x- and y-
         #-----------------------------------------------------------------------
-        dp_scream_coarsen: dict = coarsen_dp_scream(dp_scream_remap, rad_tran_src_grid, rad_tran_tgt_grids, comm)
+        msg: str = "Getting col to x-/y- sorting mask..."
+        print_msg(msg, l_rank)
+
+        sort_mask: NP_ARRAY[NP_INT] = get_sort_mask(dp_scream_file)
 
         #-----------------------------------------------------------------------
-        # Obtain time since simulation start
+        # Get the RTE-RRTMGP-CPP source grid, which has the same horizontal grid
+        # as DP-SCREAM, and a uniform vertical grid that is always within
+        # the bounds of the DP-SCREAM vertical grid (which moves)
         #-----------------------------------------------------------------------
-        xr_dp_scream: XR_DATASET
-        with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-            times: XR_DATAARRAY = xr_dp_scream["time"] # Time since simulation start; [time]; [ns]
-        time_data: NP_REAL = NP_REAL(times[time_idx] - times[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
-        time: XR_DATAARRAY = XR_DATAARRAY(data = np.array([time_data], dtype = NP_REAL),
-            dims = ("time"),
-            coords = {"time" : np.array([time_data], dtype = NP_REAL)},
-            name = "time",
-            attrs = {
-                "units" : "h",
-                "long_name": "time_since_simulation_start",
-                "standard_name": "time_since_simulation_start",
-            }
-        )
-        coarse_factor_str: str
-        for coarse_factor_str in dp_scream_coarsen.keys():
-            dp_scream_coarsen[coarse_factor_str]["time"] = time
+        msg: str = "Getting RTE-RRTMGP-CPP source grid..."
+        print_msg(msg, l_rank)
+
+        rad_tran_src_grid: dict = get_rad_tran_src_grid(dp_scream_file, l_time_idxs, comm)
 
         #-----------------------------------------------------------------------
-        # Save to RTE-RRTMGP-CPP input file
+        # Generate RTE-RRTMGP-CPP target grids (horizontally coarsened)
         #-----------------------------------------------------------------------
-        save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids, dp_scream_coarsen, rad_tran_indir,
-            dp_scream_file, time_idx, comm)
+        msg: str = "Generating RTE-RRTMGP-CPP target grids..."
+        print_msg(msg, l_rank)
 
+        rad_tran_tgt_grids: dict = get_rad_tran_tgt_grids(rad_tran_src_grid, coarse_factors, l_rank)
+
+        #-----------------------------------------------------------------------
+        # Loop through local time indexes
+        #-----------------------------------------------------------------------
+        time_idx: NP_INT
+        for time_idx in l_time_idxs:
+            msg: str = "Processing time_idx {}...".format(time_idx)
+            print_msg(msg, l_rank)
+
+            #-------------------------------------------------------------------
+            # Map relevant values from DP-SCREAM to the RTE-RRTMGP-CPP source grid
+            #-------------------------------------------------------------------
+            dp_scream_remap: dict = remap_dp_scream(dp_scream_file, time_idx, rad_tran_src_grid, sort_mask, l_rank)
+
+            #-------------------------------------------------------------------
+            # Horizontally coarsen relevant DP-SCREAM values to RTE-RRTMGP-CPP target grids
+            #-------------------------------------------------------------------
+            dp_scream_coarsen: dict = coarsen_dp_scream(dp_scream_remap, rad_tran_src_grid, rad_tran_tgt_grids, l_rank)
+
+            #-------------------------------------------------------------------
+            # Obtain time since simulation start
+            #-------------------------------------------------------------------
+            xr_dp_scream: XR_DATASET
+            with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
+                times: XR_DATAARRAY = xr_dp_scream["time"] # Time since simulation start; [time]; [ns]
+            time_data: NP_REAL = NP_REAL(times[time_idx] - times[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
+            time: XR_DATAARRAY = XR_DATAARRAY(data = np.array([time_data], dtype = NP_REAL),
+                dims = ("time"),
+                coords = {"time" : np.array([time_data], dtype = NP_REAL)},
+                name = "time",
+                attrs = {
+                    "units" : "h",
+                    "long_name": "time_since_simulation_start",
+                    "standard_name": "time_since_simulation_start",
+                }
+            )
+            coarse_factor_str: str
+            for coarse_factor_str in dp_scream_coarsen.keys():
+                dp_scream_coarsen[coarse_factor_str]["time"] = time
+
+            #-------------------------------------------------------------------
+            # Save to RTE-RRTMGP-CPP input file
+            #-------------------------------------------------------------------
+            msg: str = "Calling save_rte_rrtmgp_cpp_input..."
+            print_msg(msg, l_rank)
+
+            save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids, dp_scream_coarsen, rad_tran_indir,
+                dp_scream_file, time_idx, l_rank)
+    
+        msg: str = "Passed l_time_idxs loop!"
+        print_msg(msg, l_rank)
+
+    MPI.COMM_WORLD.barrier()
 
 if __name__ == "__main__":
     main()

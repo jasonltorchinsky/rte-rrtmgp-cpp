@@ -10,7 +10,6 @@ def find_daytime_slices(infile, tol = 1.e-3, mode = "rte-rrtmgp-cpp"):
         key = "cosine_solar_zenith_angle"
         mu0 = xr.open_dataset(infile, engine = "netcdf4", decode_timedelta = False)[key].isel(ncol = 0)
 
-    
     daytime_mask = np.isfinite(mu0) & (mu0 > tol)
     daystart_indices = np.where(~daytime_mask.shift(time = 1, fill_value = False) & daytime_mask)[0]
     dayend_indices = np.where(~daytime_mask.shift(time = -1, fill_value = False) & daytime_mask)[0]

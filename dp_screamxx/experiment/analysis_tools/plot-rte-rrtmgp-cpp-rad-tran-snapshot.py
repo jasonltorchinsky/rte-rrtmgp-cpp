@@ -123,7 +123,7 @@ def main():
             msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
             print(msg, flush = True)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj]) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], zmax = zmax) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(3)]) # [3]
             yz_slices_x: NP_ARRAY[NP_REAL] = cloud_wc["x"][x_indices].to_numpy().astype(NP_REAL) * 1.e-3 # x-location of yz-slices; [km]; [3]
 
@@ -142,20 +142,20 @@ def main():
             print(msg, flush = True)
 
             sw_heating_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_heating(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], x_indices, solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; 3 * [lev, y]
+                mnn_indices[jj], x_indices, solver = "rt", zmax = zmax) # Shortwave heating rate, ray-tracer; [K d^{-1}]; 3 * [lev, y]
 
             sw_heating_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_heating(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], x_indices, solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; 3 * [lev, y]
+                mnn_indices[jj], x_indices, solver = "ts", zmax = zmax) # Shortwave heating rate, two-stream; [K d^{-1}]; 3 * [lev, y]
 
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Calculating absorbed fluxes for day {} of {}...".format(current_time, jj, ndays - 1)
             print(msg, flush = True)
 
             sw_flux_abs_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], x_indices, solver = "rt") # Shortwave absorbed flux, ray-tracer; [W m^{-3}]; 3 * [lev, y]
+                mnn_indices[jj], x_indices, solver = "rt", zmax = zmax) # Shortwave absorbed flux, ray-tracer; [W m^{-3}]; 3 * [lev, y]
 
             sw_flux_abs_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], x_indices, solver = "ts") # Shortwave absorbed flux, two-stream; [W m^{-3}]; 3 * [lev, y]
+                mnn_indices[jj], x_indices, solver = "ts", zmax = zmax) # Shortwave absorbed flux, two-stream; [W m^{-3}]; 3 * [lev, y]
 
             #-------------------------------------------------------------------
             # Obtain plotting bounds
@@ -289,7 +289,7 @@ def main():
             axs[3,0].set_ylabel(r"Two-Stream")
             axs[4,0].set_ylabel(r"Ray-Tracer")
 
-            cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-2} \right]$")
+            cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")
             sw_heating_cbar.ax.set_ylabel(r"Atmospheric Heating Rate $\left[ K\,d^{-1} \right]$")
             sw_flux_abs_cbar.ax.set_ylabel(r"Absorbed Shortwave Flux $\left[ W\,m^{-3} \right]$")
 

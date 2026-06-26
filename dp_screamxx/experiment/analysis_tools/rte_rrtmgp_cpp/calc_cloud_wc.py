@@ -1,4 +1,5 @@
 # Standard Library Imports
+from typing import Optional
 
 # Third-Party Library Imports
 import xarray as xr
@@ -7,7 +8,7 @@ import xarray as xr
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
 def calc_cloud_wc(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
-    x_indices: NP_ARRAY[NP_INT] = None, zmax_index: NP_INT = None, detailed_calc: bool = False) -> list[NP_ARRAY[NP_REAL]]:
+    x_indices: NP_ARRAY[NP_INT] = None, zmax: Optional[NP_REAL] = None) -> list[NP_ARRAY[NP_REAL]]:
     
     #---------------------------------------------------------------------------
     # Extract relevant fields from RTE-RRTMGP-CPP file
@@ -40,12 +41,20 @@ def calc_cloud_wc(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
                            "standard_name" : "cloud_water_content"})
             .rename("cloud_water_content")
             .assign_coords({"lay" : z.to_numpy()}))
+
+        if zmax is not None:
+            cloud_wc = cloud_wc.sel(lay = slice(0, zmax * 1.e3)) # zmax [km] => [m]
     else:
         cloud_wc: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
         for ii in range(0, 3): # Assume Morning-Noon-Night indices
             lwp_x: XR_DATAARRAY = lwp.isel(time = ii, x = x_indices[ii])
             iwp_x: XR_DATAARRAY = iwp.isel(time = ii, x = x_indices[ii])
 
-            cloud_wc[ii] = ((lwp_x + iwp_x) / dz).to_numpy().astype(NP_REAL) * mass_moist_air_x # [g m^{-3}]; [lay, y]
+            cloud_wc_x: XR_DATAARRAY = (lwp_x + iwp_x) / dz
+
+            if zmax is not None:
+                cloud_wc_x = cloud_wc_x.sel(lay = slice(0, zmax * 1.e3)) # zmax [km] => m
+
+            cloud_wc[ii] = (cloud_wc_x).to_numpy().astype(NP_REAL) * mass_moist_air_x # [g m^{-3}]; [lay, y]
 
     return cloud_wc

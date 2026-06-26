@@ -110,11 +110,6 @@ def main():
         cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll, x = x_indices[ll]).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lev, y]
 
         #-----------------------------------------------------------------------
-        # Calculate horizontal water path at each YZ-slice
-        #-----------------------------------------------------------------------
-        hwp: list[NP_ARRAY[NP_REAL]] = [(dx * cloud_wc[ll]) for ll in range(0, 3)] # [g m^{-2}], 3 * [lay, y]
-
-        #-----------------------------------------------------------------------
         # Calculate radiative quantities
         #-----------------------------------------------------------------------
         current_time: str = datetime.now().strftime("%H:%M:%S")
@@ -162,8 +157,8 @@ def main():
             y_bounds = np.zeros([3, 2], dtype = NP_REAL) # Limits for horizontal plotting axis (called xlim in matplotlib)
             y_bound_indices = [np.zeros([2], dtype = NP_INT) for _ in range(0, 3)]
             for ll in range(3):
-                hwp_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(hwp[ll]), hwp[ll].shape) # [lay_index, y_index] of maximal hwp
-                y_loc: NP_REAL = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
+                cloud_wc_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(cloud_wc[ll]), cloud_wc[ll].shape) # [lay_index, y_index] of maximal cloud_wc
+                y_loc: NP_REAL = y[cloud_wc_max_index[1]] # Y-location of maximal cloud_wc [km]
                 y_bounds[ll,:] = [y_loc - y_window_width / 2., y_loc + y_window_width / 2.]
 
                 # Don't have to worry about shifting window past the edge after this block
@@ -181,7 +176,7 @@ def main():
         #-----------------------------------------------------------------------
         # Trim fields to the yz-slice
         #-----------------------------------------------------------------------
-        hwp = [hwp[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
+        cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
         sw_heating_via_pdel = [sw_heating_via_pdel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
         sw_heating_via_flux = [sw_heating_via_flux[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
         sw_flux_abs_via_pdel = [sw_flux_abs_via_pdel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
@@ -197,8 +192,8 @@ def main():
         #-----------------------------------------------------------------------
         # Obtain data bounds
         #-----------------------------------------------------------------------
-        hwp_max: list[NP_REAL] = [hwp[ll].max() for ll in range(0, 3)]
-        hwp_min: list[NP_REAL] = [hwp[ll].min() for ll in range(0, 3)]
+        cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(0, 3)]
+        cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(0, 3)]
 
         sw_heating_max: list[NP_REAL] = [max(sw_heating_via_pdel[ll].max(), sw_heating_via_flux[ll].max()) for ll in range(0, 3)]
         sw_heating_min: list[NP_REAL] = [min(sw_heating_via_pdel[ll].min(), sw_heating_via_flux[ll].min()) for ll in range(0, 3)]
@@ -223,11 +218,11 @@ def main():
             figsize = 3. * fig_base_size)
 
         # Row 0: Horizontal Water Path
-        hwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+        cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
         ll: int
         for ll in range(0, ncols):
-            hwp_pcm[ll] = axs[0, ll].pcolormesh(y_grid[ll], z_grid[ll], hwp[ll],
-                vmin = hwp_min[ll], vmax = hwp_max[ll],
+            cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(y_grid[ll], z_grid[ll], cloud_wc[ll],
+                vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
                 cmap = cw_cmap)
 
         # Row 1: Shortwave Heating via pdel
@@ -264,7 +259,7 @@ def main():
 
         # Colorbars
         for ll in range(0, ncols):
-            hwp_cbar = fig.colorbar(hwp_pcm[ll], ax = axs[0,ll])
+            cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll])
             sw_heating_cbar = fig.colorbar(sw_heating_via_pdel_pcm[ll], ax = axs[1:3,ll])
             sw_flux_abs_cbar = fig.colorbar(sw_flux_abs_via_pdel_pcm[ll], ax = axs[3:5,ll])
 
@@ -283,7 +278,7 @@ def main():
         axs[3,0].set_ylabel(r"Shortwave Absorbed Flux via $pdel$")
         axs[4,0].set_ylabel(r"Shortwave Absorbed Flux via $flux$")
 
-        hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
+        cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")
         sw_heating_cbar.ax.set_ylabel(r"Atmospheric Heating Rate $\left[ K\,d^{-1} \right]$")
         sw_flux_abs_cbar.ax.set_ylabel(r"Absorbed Flux$\left[ W\,m^{-3} \right]$")
 

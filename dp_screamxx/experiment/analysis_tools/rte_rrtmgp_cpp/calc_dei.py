@@ -1,4 +1,5 @@
 # Standard Library Imports
+from typing import Optional
 
 # Third-Party Library Imports
 import xarray as xr
@@ -7,7 +8,7 @@ import xarray as xr
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
 def calc_dei(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
-    x_indices: NP_ARRAY[NP_INT] = None, zmax_index: NP_INT = None) -> XR_DATAARRAY | list[NP_ARRAY[NP_REAL]]:
+    x_indices: NP_ARRAY[NP_INT] = None, zmax: Optional[NP_REAL] = None) -> XR_DATAARRAY | list[NP_ARRAY[NP_REAL]]:
     
     #---------------------------------------------------------------------------
     # Extract relevant fields from RTE-RRTMGP-CPP file
@@ -25,10 +26,15 @@ def calc_dei(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
     # Calculate cloud ice water effective diameter
     #---------------------------------------------------------------------------
     if x_indices is None:
+        if zmax is not None:
+            dei = dei.sel(lay = slice(0, zmax * 1.e3)) # zmax [km] => [m]
         return dei
     else:
         dei_list: list[NP_ARRAY[NP_REAL]] = [[] for _ in range(0, 3)]
         for ii in range(0, 3): # Assume Morning-Noon-Night indices
-            dei_list[ii] = dei.isel(time = ii, x = x_indices[ii]).to_numpy().astype(NP_REAL) # [μm]; [lay, y]
+            dei_x: XR_DATAARRAY = dei.isel(time = ii, x = x_indices[ii])
+            if zmax is not None:
+                dei_x = dei_x.sel(lay = slice(0, zmax * 1.e3)) # zmax [km] => [m]
+            dei_list[ii] = dei_x.to_numpy().astype(NP_REAL) # [μm]; [lay, y]
 
         return dei_list

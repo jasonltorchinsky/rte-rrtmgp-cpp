@@ -6,19 +6,14 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, MPI_COMM, XR_DATAARRAY
-from consts.numeric import MPI_ROOT
-from consts.physical import cp_d, cp_v, cp_lw, cp_iw, mu_d, g
+from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATAARRAY
+from consts.physical import cp_d, cp_v, cp_lw, cp_iw, mu_d, g, sec_per_hour
 from consts.rte_rrtmgp_cpp_fields import rte_rrtmgp_cpp_gas_keys as gas_keys
 
 from .print_msg import print_msg
 
-def remap_dp_scream(dp_scream_file: str, time_idx: NP_INT, rad_tran_src_grid: dict, sort_mask: NP_ARRAY[NP_INT], comm: MPI_COMM) -> dict:
-    #---------------------------------------------------------------------------
-    # Obtain MPI information
-    #---------------------------------------------------------------------------
-    l_rank: NP_INT = NP_INT(comm.Get_rank())
-
+def remap_dp_scream(dp_scream_file: str, time_idx: NP_INT, rad_tran_src_grid: dict, 
+    sort_mask: NP_ARRAY[NP_INT], l_rank: NP_INT) -> dict:
     #---------------------------------------------------------------------------
     # Calculate relevant DP-SCREAM quantities on the DP-SCREAM grid
     #---------------------------------------------------------------------------
@@ -29,33 +24,44 @@ def remap_dp_scream(dp_scream_file: str, time_idx: NP_INT, rad_tran_src_grid: di
     p_top: NP_REAL = calc_p_top(dp_scream_file) # [Pa]
 
     # Masses to remap other quantities
-    mass_moist_air_src: XR_DATAARRAY = calc_mass_moist_air(dp_scream_file, time_idx) # [ncol, lev]; [kg]
-    mass_dry_air_src: XR_DATAARRAY = calc_mass_dry_air(dp_scream_file, time_idx, mass_moist_air_src) # [ncol, lev]; [kg]
-    mass_wv_src: XR_DATAARRAY = calc_mass_wv(dp_scream_file, time_idx, mass_moist_air_src) # [ncol, lev]; [kg]
-    mass_lw_src: XR_DATAARRAY = calc_mass_lw(dp_scream_file, time_idx, mass_moist_air_src) # [ncol, lev]; [kg]
-    mass_iw_src: XR_DATAARRAY = calc_mass_iw(dp_scream_file, time_idx, mass_moist_air_src) # [ncol, lev]; [kg]
+    msg: str = "Calculating air, water vapor, and cloud water masses from DP-SCREAM..."
+    print_msg(msg, l_rank)
+    mass_moist_air_src: XR_DATAARRAY # [ncol, lev]; [kg]
+    mass_dry_air_src: XR_DATAARRAY # [ncol, lev]; [kg]
+    mass_wv_src: XR_DATAARRAY # [ncol, lev]; [kg]
+    mass_lw_src: XR_DATAARRAY # [ncol, lev]; [kg]
+    mass_iw_src: XR_DATAARRAY # [ncol, lev]; [kg]
+    [mass_moist_air_src, mass_dry_air_src, mass_wv_src, mass_lw_src, mass_iw_src] = \
+        calc_masses(dp_scream_file, time_idx)
 
     # Molar amounts to remap volume mixing ratios
-    nmole_dry_air_src: XR_DATAARRAY = calc_nmole_dry_air(mass_dry_air_src) # [ncol, lev]; [mol]
-    nmole_gases_src: dict = {}
-    for gas_key in gas_keys:
-        nmole_gas_src: Optional[XR_DATAARRAY] = calc_nmole_gas(dp_scream_file, time_idx, nmole_dry_air_src, gas_key) # [ncol, lev]; [mol]
-        if nmole_gas_src is not None:
-            nmole_gases_src["nmole_" + gas_key] = nmole_gas_src
+    msg: str = "Calculating number of dry air and trace gas moles from DP-SCREAM..."
+    print_msg(msg, l_rank)
+    nmole_dry_air_src: XR_DATAARRAY # [ncol, lev]; [mol]
+    nmole_gases_src: dict # [ncol, lev]; [mol]
+    [nmole_dry_air_src, nmole_gases_src] = \
+        calc_nmole_gases(dp_scream_file, time_idx, mass_dry_air_src) 
 
-    # Quanities that need to be specially remapped
+    # Quantities that need to be specially remapped
+    msg: str = "Calculating temperature from DP-SCREAM..."
+    print_msg(msg, l_rank)
     T_src: XR_DATAARRAY = calc_T(dp_scream_file, time_idx) # [ncol, lev]; [K]
 
-    rel_src: XR_DATAARRAY = calc_rel(dp_scream_file, time_idx) # [ncol, lev]; [μm]
-    dei_src: XR_DATAARRAY = calc_dei(dp_scream_file, time_idx) # [ncol, lev]; [μm]
+    msg: str = "Calculating cloud water effective sizes from DP-SCREAM..."
+    print_msg(msg, l_rank)
+    rel_src: XR_DATAARRAY # [ncol, lev]; [μm]
+    dei_src: XR_DATAARRAY # [ncol, lev]; [μm]
+    [rel_src, dei_src] = calc_effective_sizes(dp_scream_file, time_idx) 
 
     # Two-dimensional quantities
-    mu0: XR_DATAARRAY = calc_mu0(dp_scream_file, time_idx) # [ncol]; [N/A]
-    azi: XR_DATAARRAY = calc_azi(dp_scream_file) # [ncol]; [N/A]
-    tsi: XR_DATAARRAY = calc_tsi(dp_scream_file) # [ncol]; [W m^{-2}]
-    sfc_alb_dir: XR_DATAARRAY
-    sfc_alb_dif: XR_DATAARRAY
-    [sfc_alb_dir, sfc_alb_dif] = calc_sfc_alb(dp_scream_file) # [ncol]; [N/A]
+    msg: str = "Calculating two-dimensional quantities from DP-SCREAM..."
+    print_msg(msg, l_rank)
+    mu0: XR_DATAARRAY # [ncol]; [N/A]
+    azi: XR_DATAARRAY # [ncol]; [N/A]
+    tsi: XR_DATAARRAY # [ncol]; [W m^{-2}]
+    sfc_alb_dir: XR_DATAARRAY # [ncol, swband]; [N/A]
+    sfc_alb_dif: XR_DATAARRAY # [ncol, swband]; [N/A]
+    [mu0, azi, tsi, sfc_alb_dir, sfc_alb_dif] = calc_2d_quantities(dp_scream_file, time_idx)
 
     #---------------------------------------------------------------------------
     # Vertically remap relevant DP-SCREAM quantities to the RTE-RRTMGP-CPP source grid
@@ -123,8 +129,7 @@ def calc_z_int(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        z_int: XR_DATAARRAY = xr_dp_scream["z_int"] # Geometric height at level interfaces; [nt, ncol, ilev]; [μm]
-    z_int = z_int.isel(time = time_idx)
+        z_int: XR_DATAARRAY = xr_dp_scream["z_int"].isel(time = time_idx).load() # Geometric height at level interfaces; [nt, ncol, ilev]; [μm]
 
     return z_int
 
@@ -134,163 +139,212 @@ def calc_p_top(dp_scream_file: str) -> NP_REAL:
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        p_int: XR_DATAARRAY = xr_dp_scream["p_int"] # Hydrostatic pressure at level interfaces [top -> bot]; [nt, ncol, ilev]; [Pa]
-    p_top: NP_REAL = NP_REAL(p_int.isel(time = 0, ncol = 0, ilev = 0)) # ASSUME - Constant in space and time
+        p_int: XR_DATAARRAY = xr_dp_scream["p_int"].isel(time = 0, ncol = 0, ilev = 0).load() # Hydrostatic pressure at level interfaces [top -> bot]; [nt, ncol, ilev]; [Pa]
+    p_top: NP_REAL = NP_REAL(p_int) # ASSUME - Constant in space and time
 
     return p_top
 
-def calc_mass_moist_air(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
+def calc_masses(dp_scream_file: str, time_idx: NP_INT) -> list[XR_DATAARRAY]:
     #---------------------------------------------------------------------------
     # Extract relevant fields from DP-SCREAM file
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        p_int: XR_DATAARRAY = xr_dp_scream["p_int"] # Hydrostatic pressure at level interfaces; [nt, ncol, ilev]; [Pa]
-        lev: XR_DATAARRAY = xr_dp_scream["lev"] # Hybrid level at level midpoints; [nt, ncol, lev]; [m]
-    p_int: XR_DATARRAY = p_int.isel(time = time_idx) # [time, ilev, ncol]; [Pa]
+        p_int: XR_DATAARRAY = xr_dp_scream["p_int"].isel(time = time_idx).load() # Hydrostatic pressure at level interfaces; [nt, ncol, ilev]; [Pa]
+        qv: XR_DATAARRAY = xr_dp_scream["qv"].isel(time = time_idx).load() # Water vapor moist mixing ratio at level midpoints; [ncol, lev]; [kg kg^{-1}]
+        qc: XR_DATAARRAY = xr_dp_scream["qc"].isel(time = time_idx).load() # Cloud liquid water moist mixing ratio at level midpoints; [ncol, lev]; [kg kg^{-1}]
+        qi: XR_DATAARRAY = xr_dp_scream["qi"].isel(time = time_idx).load() # Cloud ice water moist mixing ratio at level midpoints; [ncol, lev]; [kg kg^{-1}]
+        lev: XR_DATAARRAY = xr_dp_scream["lev"].load() # Hybrid level at level midpoints; [lev]; [N/A]
+        ncol: XR_DATAARRAY = xr_dp_scream["ncol"].load() # Horizontal grid; [ncol]
+        lon: XR_DATAARRAY = xr_dp_scream["lon"].load() # x-position at column midpoints; [ncol]; [m]
+        lat: XR_DATAARRAY = xr_dp_scream["lat"].load() # y-position at column midpoints; [ncol]; [m]
+        time: XR_DATAARRAY = xr_dp_scream["time"].load() # Time since simulation start; [ns]
     pdel: XR_DATAARRAY = (p_int.diff("ilev")).rename({"ilev" : "lev"}).assign_coords({"lev" : lev}) # Hydrostatic pressure-thickness; [time, lev, ncol]; [Pa]
+    time_data: NP_REAL = NP_REAL(time[time_idx] - time[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
 
     #---------------------------------------------------------------------------
     # Calculate grid spacing - ASSUME: Same in x-, y- throughout domain
     #---------------------------------------------------------------------------
-    x: NP_ARRAY[NP_REAL] = np.unique(p_int["lon"]).astype(NP_REAL) # [n_x]; [m]
+    x: NP_ARRAY[NP_REAL] = NP_REAL(np.unique(lon)) # [n_x]; [m]
     dx: NP_REAL = x[1] - x[0] # [m]
     dy: NP_REAL = dx # [m]
 
+    #---------------------------------------------------------------------------
+    # Set up common elements across as xarray data arrays
+    #---------------------------------------------------------------------------
+    dims: tuple[str] = ("ncol", "lev")
+    coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+        "ncol" : NP_REAL(ncol.to_numpy()),
+        "lev" : lev.copy(deep = True),
+    }
+
+    #---------------------------------------------------------------------------
+    # Calculate mass moist air
+    #---------------------------------------------------------------------------
     mass_moist_air: XR_DATARRAY = (pdel * dx * dy) / g # From hydrostatic pressure definition; [kg]
-    mass_moist_air = (mass_moist_air
-        .assign_attrs({"units" : "kg", 
-                       "long_name" : "midpoint moist air mass",
-                       "standard_name" : "moist_air_mass"})
-        .rename("mass_moist_air"))
+    mass_moist_air = XR_DATAARRAY(data = NP_REAL(mass_moist_air.to_numpy()),
+        dims = dims,
+        coords = coords,
+        name = "mass_moist_air",
+        attrs = {
+            "units" : "kg", 
+            "long_name" : "midpoint moist air mass",
+            "standard_name" : "moist_air_mass",
+        })
 
-    return mass_moist_air
-
-def calc_mass_dry_air(dp_scream_file: str, time_idx: NP_INT, mass_moist_air: XR_DATAARRAY) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Calculate mass dry air
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        qv: XR_DATAARRAY = xr_dp_scream["qv"] # Water vapor moist mixing ratio at level midpoints; [nt, ncol, lev]; [kg kg^{-1}]
-    qv = qv.isel(time = time_idx)
-
     mass_dry_air: XR_DATARRAY = (1. - qv) * mass_moist_air # Water vapor mass; [ncol, lev]; [kg]
-    mass_dry_air = (mass_dry_air
-        .assign_attrs({"units" : "kg", 
-                       "long_name" : "midpoint dry air mass",
-                       "standard_name" : "dry_air_mass"})
-        .rename("mass_dry_air"))
+    mass_dry_air = XR_DATAARRAY(data = NP_REAL(mass_dry_air.to_numpy()),
+        dims = dims,
+        coords = coords,
+        name = "mass_dry_air",
+        attrs = {
+            "units" : "kg", 
+            "long_name" : "midpoint dry air mass",
+            "standard_name" : "dry_air_mass"
+        })
 
-    return mass_dry_air
-
-def calc_mass_wv(dp_scream_file: str, time_idx: NP_INT, mass_moist_air: XR_DATAARRAY) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Calculate mass water vapor
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        qv: XR_DATAARRAY = xr_dp_scream["qv"] # Water vapor moist mixing ratio at level midpoints; [nt, ncol, lev]; [kg kg^{-1}]
-    qv = qv.isel(time = time_idx)
-
     mass_wv: XR_DATARRAY = qv * mass_moist_air # Water vapor mass; [ncol, lev]; [kg]
-    mass_wv = (mass_wv
-        .assign_attrs({"units" : "kg", 
-                       "long_name" : "midpoint water vapor mass",
-                       "standard_name" : "water_vapor_mass"})
-        .rename("mass_wv"))
+    mass_wv = XR_DATAARRAY(data = NP_REAL(mass_wv.to_numpy()),
+        dims = dims,
+        coords = coords,
+        name = "mass_wv",
+        attrs = {
+            "units" : "kg", 
+            "long_name" : "midpoint water vapor mass",
+            "standard_name" : "water_vapor_mass"
+        })
 
-    return mass_wv
-
-def calc_mass_lw(dp_scream_file: str, time_idx: NP_INT, mass_moist_air: XR_DATAARRAY) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Calculate mass cloud liquid water
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        qc: XR_DATAARRAY = xr_dp_scream["qc"] # Cloud liquid water moist mixing ratio at level midpoints; [nt, ncol, lev]; [kg kg^{-1}]
-    qc = qc.isel(time = time_idx)
-
     mass_lw: XR_DATARRAY = qc * mass_moist_air # Cloud liquid water mass; [ncol, lev]; [kg]
-    mass_lw = (mass_lw
-        .assign_attrs({"units" : "kg", 
-                       "long_name" : "midpoint cloud liquid water mass",
-                       "standard_name" : "cloud_liquid_water_mass"})
-        .rename("mass_lw"))
+    mass_lw = XR_DATAARRAY(data = NP_REAL(mass_lw.to_numpy()),
+        dims = dims,
+        coords = coords,
+        name = "mass_lw",
+        attrs = {
+            "units" : "kg", 
+            "long_name" : "midpoint cloud liquid water mass",
+            "standard_name" : "cloud_liquid_water_mass"
+        })
 
-    return mass_lw
-
-def calc_mass_iw(dp_scream_file: str, time_idx: NP_INT, mass_moist_air: XR_DATAARRAY) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Calculate mass cloud ice water
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        qi: XR_DATAARRAY = xr_dp_scream["qi"] # Cloud ice water moist mixing ratio at level midpoints; [nt, ncol, lev]; [kg kg^{-1}]
-    qi = qi.isel(time = time_idx)
-
     mass_iw: XR_DATARRAY = qi * mass_moist_air # Cloud ice water mass; [ncol, lev]; [kg]
-    mass_iw = (mass_iw
-        .assign_attrs({"units" : "kg", 
-                       "long_name" : "midpoint cloud ice water mass",
-                       "standard_name" : "cloud_ice_water_mass"})
-        .rename("mass_iw"))
+    mass_iw = XR_DATAARRAY(data = NP_REAL(mass_iw.to_numpy()),
+        dims = dims,
+        coords = coords,
+        name = "mass_iw",
+        attrs = {
+            "units" : "kg", 
+            "long_name" : "midpoint cloud ice water mass",
+            "standard_name" : "cloud_ice_water_mass"
+        })
 
-    return mass_iw
+    return [mass_moist_air, mass_dry_air, mass_wv, mass_lw, mass_iw]
 
-def calc_nmole_dry_air(mass_dry_air: XR_DATAARRAY) -> XR_DATAARRAY:
+def calc_nmole_gases(dp_scream_file: str, time_idx: NP_INT, 
+    mass_dry_air: XR_DATAARRAY) -> list[XR_DATAARRAY, dict]:
+    #---------------------------------------------------------------------------
+    # Calculate number of dry air moles
+    #---------------------------------------------------------------------------
     nmole_dry_air: XR_DATARRAY = mass_dry_air / mu_d # Number of dry air moles; [ncol, lev]; [mol]
     nmole_dry_air = (nmole_dry_air
         .assign_attrs({"units" : "mol", 
                        "long_name" : "midpoint dry air number of moles",
                        "standard_name" : "dry_air_moles"})
         .rename("nmole_dry_air"))
+    
+    #---------------------------------------------------------------------------
+    # Extract relevant fields from DP-SCREAM file common across all trace gases
+    #---------------------------------------------------------------------------
+    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
+        lev: XR_DATAARRAY = xr_dp_scream["lev"].load() # Hybrid level at level midpoints; [lev]; [N/A]
+        ncol: XR_DATAARRAY = xr_dp_scream["ncol"].load() # Horizontal grid; [ncol]
+        lon: XR_DATAARRAY = xr_dp_scream["lon"].load() # x-position at column midpoints; [ncol]; [m]
+        lat: XR_DATAARRAY = xr_dp_scream["lat"].load() # y-position at column midpoints; [ncol]; [m]
+        time: XR_DATAARRAY = xr_dp_scream["time"].load() # Time since simulation start; [ns]
+    time_data: NP_REAL = NP_REAL(time[time_idx] - time[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
 
-    return nmole_dry_air
+    #---------------------------------------------------------------------------
+    # Set up common elements across as xarray data arrays
+    #---------------------------------------------------------------------------
+    dims: tuple[str] = ("ncol", "lev")
+    coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+        "ncol" : NP_REAL(ncol.to_numpy()),
+        "lev" : lev.copy(deep = True),
+    }
 
-def calc_nmole_gas(dp_scream_file: str, time_idx: NP_INT, nmole_dry_air: XR_DATAARRAY, gas_key: str) -> XR_DATAARRAY:
+    #---------------------------------------------------------------------------
+    # Extract relevant fields from DP-SCREAM file
+    #---------------------------------------------------------------------------
+    nmole_gases: dict = {}
+    xr_dp_scream: XR_DATASET
+    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
+        for gas_key in gas_keys:
+            dp_scream_key: str = gas_key + "_volume_mix_ratio"
+            if dp_scream_key in xr_dp_scream.keys():
+                vmr_gas: XR_DATAARRAY = xr_dp_scream[dp_scream_key].isel(time = time_idx).load() # Gas dry volume mixing ratio at level midpoints; [nt, ncol, lev]; [mol mol^{-1}]
+                nmole_gas: XR_DATAARRAY = vmr_gas * nmole_dry_air # Moles of gas at midpoints; [ncol, lev]; [mol]
+                nmole_gas = XR_DATAARRAY(data = NP_REAL(nmole_gas.to_numpy()),
+                    dims = dims,
+                    coords = coords,
+                    name = "nmole_" + gas_key,
+                    attrs = {
+                        "units" : "mole", 
+                        "long_name" : "midpoint " + gas_key + " number of moles",
+                        "standard_name" : gas_key + "_moles"
+                    })
+                
+                nmole_gases["nmole_" + gas_key] = nmole_gas
+
+    return [nmole_dry_air, nmole_gases]
+
+def calc_effective_sizes(dp_scream_file: str, time_idx: NP_INT) -> list[XR_DATAARRAY]:
     #---------------------------------------------------------------------------
     # Extract relevant fields from DP-SCREAM file
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        dp_scream_key: str = gas_key + "_volume_mix_ratio"
-        if dp_scream_key in xr_dp_scream.keys():
-            vmr_gas: XR_DATAARRAY = xr_dp_scream[dp_scream_key] # Gas dry volume mixing ratio at level midpoints; [nt, ncol, lev]; [mol mol^{-1}]
-        else:
-            return None
-    vmr_gas = vmr_gas.isel(time = time_idx)
-
-    nmole_gas: XR_DATAARRAY = vmr_gas * nmole_dry_air # Moles of gas at midpoints; [ncol, lev]; [mol]
-    nmole_gas = (nmole_gas
-        .assign_attrs({"units" : "mole", 
-                       "long_name" : "midpoint " + gas_key + " number of moles",
-                       "standard_name" : gas_key + "_moles"})
-        .rename("nmole_" + gas_key))
-
-    return nmole_gas
-
-def calc_rel(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
+        rel: XR_DATAARRAY = xr_dp_scream["eff_radius_qc"].isel(time = time_idx).load() # Cloud liquid water effective radius at level midpoints; [nt, ncol, lev]; [μm]
+        rei: XR_DATAARRAY = xr_dp_scream["eff_radius_qi"].isel(time = time_idx).load() # Cloud ice water effective radius at level midpoints; [nt, ncol, lev]; [μm]
+        lon: XR_DATAARRAY = xr_dp_scream["lon"].load() # x-position at column midpoints; [ncol]; [m]
+        lat: XR_DATAARRAY = xr_dp_scream["lat"].load() # y-position at column midpoints; [ncol]; [m]
+        time: XR_DATAARRAY = xr_dp_scream["time"].load() # Time since simulation start; [ns]
+    time_data: NP_REAL = NP_REAL(time[time_idx] - time[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
+    
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Set up common elements across xarray data arrays
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        rel: XR_DATAARRAY = xr_dp_scream["eff_radius_qc"] # Cloud liquid water effective radius at level midpoints; [nt, ncol, lev]; [μm]
-    rel = rel.isel(time = time_idx)
+    coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+    }
 
-    return rel
-
-def calc_dei(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Set up xarray data arrays for cloud liquid water effective radius and
+    # cloud ice water effective diameter
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        rei: XR_DATAARRAY = xr_dp_scream["eff_radius_qi"] # Cloud ice water effective radius at level midpoints; [nt, ncol, lev]; [μm]
-    rei = rei.isel(time = time_idx)
+    rel = rel.assign_coords(coords)
 
-    return 2. * rei
+    dei: XR_DATAARRAY = 2. * rei
+    dei = dei.assign_coords(coords)
+
+    return [rel, dei]
 
 def calc_T(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
@@ -298,77 +352,91 @@ def calc_T(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        T: XR_DATAARRAY = xr_dp_scream["T_mid"] # Temperature at level midpoints; [nt, ncol, lev]; [K]
-    T = T.isel(time = time_idx)
+        T: XR_DATAARRAY = xr_dp_scream["T_mid"].isel(time = time_idx).load() # Temperature at level midpoints; [nt, ncol, lev]; [K]
+        lon: XR_DATAARRAY = xr_dp_scream["lon"].load() # x-position at column midpoints; [ncol]; [m]
+        lat: XR_DATAARRAY = xr_dp_scream["lat"].load() # y-position at column midpoints; [ncol]; [m]
+        time: XR_DATAARRAY = xr_dp_scream["time"].load() # Time since simulation start; [ns]
+    time_data: NP_REAL = NP_REAL(time[time_idx] - time[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
+
+    #---------------------------------------------------------------------------
+    # Set up common elements across xarray data arrays
+    #---------------------------------------------------------------------------
+    coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+    }
+
+    #---------------------------------------------------------------------------
+    # Set up xarray data array for temperature
+    #---------------------------------------------------------------------------
+    T = T.assign_coords(coords)
 
     return T
 
-def calc_mu0(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
+def calc_2d_quantities(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
     # Extract relevant fields from DP-SCREAM file
     #---------------------------------------------------------------------------
     xr_dp_scream: XR_DATASET
     with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        mu0: XR_DATAARRAY = xr_dp_scream["cosine_solar_zenith_angle"] # Cosine solar zenith angle; [ncol]; [N/A]
-    mu0 = mu0.isel(time = time_idx)
-
-    return mu0
-
-def calc_tsi(dp_scream_file: str) -> XR_DATAARRAY:
+        mu0: XR_DATAARRAY = xr_dp_scream["cosine_solar_zenith_angle"].isel(time = time_idx).load() # Cosine solar zenith angle; [ncol]; [N/A]
+        swband: XR_DATAARRAY = xr_dp_scream["swband"].load() # Shortwave bands; [swband]
+        ncol: XR_DATAARRAY = xr_dp_scream["ncol"].load() # Horizontal grid; [ncol]
+        lon: XR_DATAARRAY = xr_dp_scream["lon"].load() # x-position at column midpoints; [ncol]; [m]
+        lat: XR_DATAARRAY = xr_dp_scream["lat"].load() # y-position at column midpoints; [ncol]; [m]
+        time: XR_DATAARRAY = xr_dp_scream["time"].load() # Time since simulation start; [ns]
+    time_data: NP_REAL = NP_REAL(time[time_idx] - time[0]) / (sec_per_hour * 1.0e9) # Time since simulation start; [ns] => [h]
+    
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Set up common elements across xarray data arrays
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        ncol: XR_DATAARRAY = xr_dp_scream["ncol"] # Horizontal grid; [ncol]
-    standard_tsi: NP_REAL = NP_REAL(1361.) # Globally- and annually-averaged
-    tsi_data: NP_ARRAY[NP_REAL] = standard_tsi + np.zeros_like(ncol, dtype = NP_REAL) # [ncol]; [W m^{-2}]
+    coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+        "ncol" : NP_REAL(ncol.to_numpy()),
+    }
 
-    tsi: XR_DATAARRAY = XR_DATAARRAY(data = tsi_data,
-        dims = ("ncol"),
-        coords = ncol.coords,
-        name = "tsi",
-        attrs = {
-            "units": "W m^{-2}",
-            "long_name": "total_solar_irradiance",
-            "standard_name": "total_solar_irradiance",
-            "cell_methods": ncol.attrs.get("cell_methods", "time: point"),
-        })
+    albedo_coords: dict = {
+        "time" : time_data,
+        "lat" : lat.copy(deep = True),
+        "lon" : lon.copy(deep = True),
+        "ncol" : NP_REAL(ncol.to_numpy()),
+        "band_sw" : NP_REAL(swband.to_numpy()),
+    }
 
-    return tsi
-
-def calc_azi(dp_scream_file: str) -> XR_DATAARRAY:
     #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
+    # Set up xarray data arrays to output cosine solar zenith angle, solar
+    # azimuthal angle, total solar irradiance, and direct and diffuse surface
+    # albedo
     #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        ncol: XR_DATAARRAY = xr_dp_scream["ncol"] # Horizontal grid; [ncol]
+    mu0 = mu0.assign_coords(coords)
+
     standard_azi: NP_REAL = NP_REAL(0.)
     azi_data: NP_ARRAY[NP_REAL] = standard_azi + np.zeros_like(ncol, dtype = NP_REAL) # [ncol]; [radians]
-
     azi: XR_DATAARRAY = XR_DATAARRAY(data = azi_data,
         dims = ("ncol"),
-        coords = ncol.coords,
+        coords = coords,
         name = "azi",
         attrs = {
             "units": "radians",
             "long_name": "solar_azimuthal_angle",
             "standard_name": "solar_azimuthal_angle",
-            "cell_methods": ncol.attrs.get("cell_methods", "time: point"),
         })
 
-    return azi
+    standard_tsi: NP_REAL = NP_REAL(1361.) # Globally- and annually-averaged
+    tsi_data: NP_ARRAY[NP_REAL] = standard_tsi + np.zeros_like(ncol, dtype = NP_REAL) # [ncol]; [W m^{-2}]
+    tsi: XR_DATAARRAY = XR_DATAARRAY(data = tsi_data,
+        dims = ("ncol"),
+        coords = coords,
+        name = "tsi",
+        attrs = {
+            "units": "W m^{-2}",
+            "long_name": "total_solar_irradiance",
+            "standard_name": "total_solar_irradiance",
+        })
 
-def calc_sfc_alb(dp_scream_file: str) -> list[XR_DATAARRAY, XR_DATAARRAY]:
-    #---------------------------------------------------------------------------
-    # Extract relevant fields from DP-SCREAM file
-    #---------------------------------------------------------------------------
-    xr_dp_scream: XR_DATASET
-    with xr.open_dataset(dp_scream_file, engine = "netcdf4", decode_timedelta = False) as xr_dp_scream:
-        ncol: XR_DATAARRAY = xr_dp_scream["ncol"] # Horizontal grid; [ncol]
-        swband: XR_DATAARRAY = xr_dp_scream["swband"] # Shortwave bands; [swband]
-    
     nswband: NP_INT = NP_INT(swband.size)
     nncol: NP_INT = NP_INT(ncol.size)
 
@@ -380,37 +448,25 @@ def calc_sfc_alb(dp_scream_file: str) -> list[XR_DATAARRAY, XR_DATAARRAY]:
 
     sfc_alb_dir: XR_DATAARRAY = XR_DATAARRAY(data = sfc_alb_dir_data,
         dims = ("ncol", "band_sw"),
-        coords = {
-            "lat" : ncol["lat"],
-            "lon" : ncol["lon"],
-            "ncol" : ncol.to_numpy().astype(NP_REAL),
-            "band_sw" : swband.to_numpy().astype(NP_REAL),
-        },
+        coords = albedo_coords,
         name = "sfc_alb_dir",
         attrs = {
             "units": "N/A",
             "long_name": "surface albedo - direct",
             "standard_name": "surface albedo - direct",
-            "cell_methods": ncol.attrs.get("cell_methods", "time: point"),
         })
 
     sfc_alb_dif: XR_DATAARRAY = XR_DATAARRAY(data = sfc_alb_dif_data,
         dims = ("ncol", "band_sw"),
-        coords = {
-            "lat" : ncol["lat"],
-            "lon" : ncol["lon"],
-            "ncol" : ncol.to_numpy().astype(NP_REAL),
-            "band_sw" : swband.to_numpy().astype(NP_REAL),
-        },
+        coords = albedo_coords,
         name = "sfc_alb_dif",
         attrs = {
             "units": "N/A",
             "long_name": "surface albedo - diffuse",
             "standard_name": "surface albedo - diffuse",
-            "cell_methods": ncol.attrs.get("cell_methods", "time: point"),
         })
 
-    return [sfc_alb_dir, sfc_alb_dif]
+    return [mu0, azi, tsi, sfc_alb_dir, sfc_alb_dif]
 
 def conservative_vertical_remap(z_int_src: XR_DATAARRAY, z_int_tgt: NP_ARRAY[NP_REAL],
     z_mid_tgt: NP_ARRAY[NP_REAL], field_src: XR_DATAARRAY) -> XR_DATAARRAY:

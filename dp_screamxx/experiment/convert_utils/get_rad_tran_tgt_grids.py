@@ -7,17 +7,12 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY
 from consts.numeric import MPI_ROOT
 
 from .print_msg import print_msg
 
-def get_rad_tran_tgt_grids(rad_tran_src_grid: dict, coarse_factors: NP_ARRAY[NP_INT], comm: MPI_COMM) -> dict:
-    #---------------------------------------------------------------------------
-    # Obtain MPI information
-    #---------------------------------------------------------------------------
-    l_rank: NP_INT = NP_INT(comm.Get_rank())
-
+def get_rad_tran_tgt_grids(rad_tran_src_grid: dict, coarse_factors: NP_ARRAY[NP_INT], l_rank: NP_INT) -> dict:
     #---------------------------------------------------------------------------
     # Obtain source grid information
     #---------------------------------------------------------------------------

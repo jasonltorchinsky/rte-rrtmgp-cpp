@@ -10,16 +10,12 @@ import xarray as xr
 
 # Local Library Imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET, XR_DATAARRAY
-from consts.numeric import MPI_ROOT
 from consts.rte_rrtmgp_cpp_fields import fields_dimensions, fields_descriptions, fields_units
 
-def save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids: dict, rad_tran_tgt_vars_dict: dict,
-    rad_tran_indir: str, dp_scream_file: str, time_idx: NP_INT, comm: MPI_COMM):
-    #---------------------------------------------------------------------------
-    # Get MPI communicator information
-    #---------------------------------------------------------------------------
-    l_rank: NP_INT = NP_INT(comm.Get_rank())
+from .print_msg import print_msg
 
+def save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids: dict, rad_tran_tgt_vars_dict: dict,
+    rad_tran_indir: str, dp_scream_file: str, time_idx: NP_INT, l_rank: NP_INT):
     #---------------------------------------------------------------------------
     # Make tweaks to xarray data arrays to match necessary format, and write to file
     #---------------------------------------------------------------------------
@@ -50,6 +46,5 @@ def save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids: dict, rad_tran_tgt_vars_dict: 
 
         xr_rte_rrtmgp_cpp.to_netcdf(file_path)
 
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = ("[{}]: [Rank {}]: Writing to {}...").format(current_time, l_rank, file_path)
-        print(msg, flush = True)
+        msg: str = "Writing to {}...".format(file_path)
+        print_msg(msg, l_rank)

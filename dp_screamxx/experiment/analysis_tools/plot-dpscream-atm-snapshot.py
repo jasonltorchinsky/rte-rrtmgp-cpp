@@ -110,11 +110,6 @@ def main():
         cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll, x = x_indices[ll]).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lev, y]
 
         #-----------------------------------------------------------------------
-        # Calculate horizontal water path at each YZ-slice
-        #-----------------------------------------------------------------------
-        hwp: list[NP_ARRAY[NP_REAL]] = [(dx * cloud_wc[ll]) for ll in range(0, 3)] # [g m^{-2}], 3 * [lay, y]
-
-        #-----------------------------------------------------------------------
         # Calculate relative humidity, cloud liquid water effective radius, 
         # cloud ice water effective diameter
         #-----------------------------------------------------------------------
@@ -164,8 +159,8 @@ def main():
             y_bounds = np.zeros([3, 2], dtype = NP_REAL) # Limits for horizontal plotting axis (called xlim in matplotlib)
             y_bound_indices = [np.zeros([2], dtype = NP_INT) for _ in range(0, 3)]
             for ll in range(3):
-                hwp_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(hwp[ll]), hwp[ll].shape) # [lay_index, y_index] of maximal hwp
-                y_loc: NP_REAL = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
+                cloud_wc_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(cloud_wc[ll]), cloud_wc[ll].shape) # [lay_index, y_index] of maximal cloud_wc
+                y_loc: NP_REAL = y[cloud_wc_max_index[1]] # Y-location of maximal cloud_wc [km]
                 y_bounds[ll,:] = [y_loc - y_window_width / 2., y_loc + y_window_width / 2.]
 
                 # Don't have to worry about shifting window past the edge after this block
@@ -183,7 +178,7 @@ def main():
         #-----------------------------------------------------------------------
         # Trim fields to the yz-slice
         #-----------------------------------------------------------------------
-        hwp = [hwp[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+        cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
         rh = [rh[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
         rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
         dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
@@ -198,8 +193,8 @@ def main():
         #-----------------------------------------------------------------------
         # Obtain data bounds
         #-----------------------------------------------------------------------
-        hwp_max: list[NP_REAL] = [hwp[ll].max() for ll in range(3)]
-        hwp_min: list[NP_REAL] = [hwp[ll].min() for ll in range(3)]
+        cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(3)]
+        cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(3)]
 
         rh_max: list[NP_REAL] = [rh[ll].max() for ll in range(3)]
         rh_min: list[NP_REAL] = [rh[ll].min() for ll in range(3)]
@@ -227,11 +222,11 @@ def main():
             figsize = 3. * fig_base_size)
 
         # Row 0: Horizontal Water Path
-        hwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, 3)]
+        cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, 3)]
         ll: int
         for ll in range(0, ncols):
-            hwp_pcm[ll] = axs[0, ll].pcolormesh(y_grid[ll], z_grid[ll], hwp[ll],
-                vmin = hwp_min[ll], vmax = hwp_max[ll],
+            cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(y_grid[ll], z_grid[ll], cloud_wc[ll],
+                vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
                 cmap = cw_cmap)
 
         # Row 1: Relative Humidity
@@ -260,7 +255,7 @@ def main():
 
         # Colorbars
         for ll in range(0, ncols):
-            hwp_cbar = fig.colorbar(hwp_pcm[ll], ax = axs[0,ll])
+            cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll])
             rh_cbar = fig.colorbar(rh_pcm[ll], ax = axs[1,ll])
             rel_cbar = fig.colorbar(rel_pcm[ll], ax = axs[2,ll])
             dei_cbar = fig.colorbar(dei_pcm[ll], ax = axs[3,ll])
@@ -276,7 +271,7 @@ def main():
                 + r"$x$ = {:.2f} $\left[ km \right]$".format(yz_slices_x[ll]))
             axs[0,ll].set_title(col_title)
 
-        hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
+        cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")
         rh_cbar.ax.set_ylabel(r"$rh$ $\left[ Pa\,Pa^{-1} \right]$")
         rel_cbar.ax.set_ylabel(r"$rel$ $\left[ \mu m \right]$")
         dei_cbar.ax.set_ylabel(r"$dei$ $\left[ \mu m \right]$")

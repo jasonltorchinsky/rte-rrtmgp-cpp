@@ -1,42 +1,49 @@
 #!/bin/bash
-#SBATCH --time=0-15:00:00
-#SBATCH --nodes=32
+#SBATCH --time=0-12:00:00
+#SBATCH --nodes=42
 #SBATCH --ntasks-per-node=1
-#SBATCH --cpus-per-task=20
 #SBATCH --account=fy260144
 #SBATCH --reservation=flight-cldera
-#SBATCH --job-name=2020-03-12
+#SBATCH --job-name=debug-2020-03-12
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
-# Machine-specific DP-SCREAMXX directories
-DP_SCREAMXX_DATA_DIR=/pscratch/jltorch/ml3drt/dpxx # DP-SCREAMXX output parent directory
-DP_SCREAMXX_RUN_NAME=scream_dpxx_COMBLE_400x400
-DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
-DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
+export HDF5_USE_FILE_LOCKING=FALSE
 
-# Machine-specific RTE-RRTMGP-CPP I/O directories
-RTE_RRTMGP_CPP_DIR=/pscratch/jltorch/ml3drt/rte-rrtmgp-cpp
-RTE_RRTMGP_CPP_RUN_NAME=2020-03-12
-RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
-RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
-RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
-RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
-RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
-RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
-RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_CPP_FILE_BASE}
+# Run parameters
+SCREAM_RUN_NAME=scream_dpxx_COMBLE_400x400
+RADTRAN_RUN_NAME=debug-2020-03-12
 
-mkdir -p ${RTE_RRTMGP_CPP_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_OUTPUT_DIR}
-mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
+# Machine-specific DP-SCREAMXX directories - Abbereviated to SCREAM
+SCREAM_DATA_DIR=/pscratch/jltorch/ml3drt/dpxx # DP-SCREAMXX output parent directory
+SCREAM_RUN_DIR=${SCREAM_DATA_DIR}/${SCREAM_RUN_NAME}/run
+SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
+SCREAM_OUTPUT_FILE_PATH=${SCREAM_RUN_DIR}/${SCREAM_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}.nc
+
+# Machine-specific RTE-RRTMGP-CPP I/O directories - Abbreviated to RADTRAN
+RADTRAN_DATA_DIR=/pscratch/jltorch/ml3drt/rte-rrtmgp-cpp
+RADTRAN_RUN_DIR=${RADTRAN_DATA_DIR}/${SCREAM_RUN_NAME}/${RADTRAN_RUN_NAME}
+RADTRAN_SEPARATE_INPUT_DIR=${RADTRAN_RUN_DIR}/separate_input
+RADTRAN_COMBINED_INPUT_DIR=${RADTRAN_RUN_DIR}/combined_input
+RADTRAN_SEPARATE_OUTPUT_DIR=${RADTRAN_RUN_DIR}/separate_output
+RADTRAN_COMBINED_OUTPUT_DIR=${RADTRAN_RUN_DIR}/combined_output
+RADTRAN_VIZ_DIR=${RADTRAN_RUN_DIR}/viz
+RADTRAN_VIZ_INPUT_DIR=${RADTRAN_VIZ_DIR}/input
+RADTRAN_FILE_BASE=${SCREAM_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}
+RADTRAN_INPUT_FILE_PATH_BASE=${RADTRAN_INPUT_DIR}/${RADTRAN_FILE_BASE}
+
+mkdir -p ${RADTRAN_DATA_DIR}
+mkdir -p ${RADTRAN_SEPARATE_INPUT_DIR}
+mkdir -p ${RADTRAN_COMBINED_INPUT_DIR}
+mkdir -p ${RADTRAN_SEPARATE_OUTPUT_DIR}
+mkdir -p ${RADTRAN_COMBINED_OUTPUT_DIR}
+mkdir -p ${RADTRAN_VIZ_DIR}
 
 # RTE-RRTMGP-CPP directories
-RTE_RRTMGP_CPP_DIR=$(realpath "../..") # Source directory
-DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
-EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
-EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analyze_utils
+RTE_RRTMGP_CPP_DIR=/ascldap/users/jltorch/codes/rte-rrtmgp-cpp/jasonltorchinsky/dpscream-output-conversion # Source directory
+SCREAM_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
+EXPERIMENT_DIR=${SCREAM_DIR}/experiment
+EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analysis_tools
 
 # Set Case - for Python Scripts
 CASE_NAME="COMBLE"
@@ -47,10 +54,71 @@ CASE_NAME="COMBLE"
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: DEBUGGING - Directories used in script execution:"
 
-echo "RTE_RRTMGP_CPP_INPUT_DIR: ${RTE_RRTMGP_CPP_INPUT_DIR}"
-echo "RTE_RRTMGP_CPP_OUTPUT_DIR: ${RTE_RRTMGP_CPP_OUTPUT_DIR}"
-echo "RTE_RRTMGP_CPP_VIZ_DIR: ${RTE_RRTMGP_CPP_VIZ_DIR}"
+echo "RADTRAN_SEPARATE_INPUT_DIR: ${RADTRAN_SEPARATE_INPUT_DIR}"
+echo "RADTRAN_COMBINED_INPUT_DIR: ${RADTRAN_COMBINED_INPUT_DIR}"
+echo "RADTRAN_SEPARATE_OUTPUT_DIR: ${RADTRAN_SEPARATE_OUTPUT_DIR}"
+echo "RADTRAN_COMBINED_OUTPUT_DIR: ${RADTRAN_COMBINED_OUTPUT_DIR}"
+echo "RADTRAN_VIZ_DIR: ${RADTRAN_VIZ_DIR}"
 echo "CASE NAME: ${CASE_NAME}"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# Set SZAs, times, and coarsening factors
+COARSE_FACTORS=1,2,4,8,16,32,64
+
+srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
+    --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+    --rad-tran-indir ${RADTRAN_SEPARATE_INPUT_DIR} \
+    --coarse-factors ${COARSE_FACTORS} \
+    --day-only
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT Input Combination"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set coarsening factors
+# COARSE_FACTORS=1,2,4,8,16,32,64
+
+# python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-input.py \
+#   --rad-tran-separate-indir ${RADTRAN_SEPARATE_INPUT_DIR} \
+#   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#   --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+## Flight is not a GPU-enbaled machine
+## Move combined input files to a GPU-enabled machine
+## Run ray-traver on GPU-enabled machine
+## Move separate output files back to Flight for further processing
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT Output Combination"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set coarsening factors
+# COARSE_FACTORS=1,2,4,8,16
+
+# python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output.py \
+#   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#   --rad-tran-separate-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
+#   --rad-tran-combined-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#   --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
@@ -60,57 +128,10 @@ echo "CASE NAME: ${CASE_NAME}"
 #echo "OLR:"
 #srun --mpi=pmi2 -n ${SLURM_NTASKS} \
 #  python ${EXPERIMENT_ANALYZE_DIR}/plot_olr.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR} \
+#    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
+#    --rte_rrtmgp_cpp_viz_dir_path ${RADTRAN_VIZ_DIR} \
 #    --distribution-visualization ribbons
 
-#echo "${STAGE_NAME} complete!"
-#-------------------------------------------------------------------------------
-
-#-------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%T")
-STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
-echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-
-# Set SZAs, times, and coarsening factors
-SZAS=0,80
-COARSE_FACTORS=1,2,4,8,16,32,64
-
-srun --mpi=pmi2 -n ${SLURM_NTASKS} \
-  python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
-    --dp-scream-file ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-    --rad-tran-indir ${RTE_RRTMGP_CPP_INPUT_DIR} \
-    --coarse-factors ${COARSE_FACTORS}
-
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
-#-------------------------------------------------------------------------------
-
-#-------------------------------------------------------------------------------
-#STAGE_NAME="RTE-RRTMGP-CPP+RT Combination"
-#echo "Beginning ${STAGE_NAME}..."
-#
-#SEPARATE_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/separate_input
-#COMBINED_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
-#
-#echo "SEPARATE_DIR: ${SEPARATE_DIR}"
-#echo "COMBINED_DIR: ${COMBINED_DIR}"
-#echo "DP_SCREAM FILE: ${DP_SCREAMXX_OUTPUT_FILE_PATH}"
-#
-#srun --mpi=pmi2 -n ${SLURM_NTASKS} \
-#  python ${EXPERIMENT_DIR}/combine_rte_rrtmgp_cpp_files_new.py \
-#    --separate-dir "${SEPARATE_DIR}" \
-#    --combined-dir "${COMBINED_DIR}" \
-#    --dpscream-file "${DP_SCREAMXX_OUTPUT_FILE_PATH}" \
-#    --lr 08,16,32,64 \
-#    --preserve-precision True \
-#    --compression-level 0 \
-#    --shuffle False \
-#    --chunk-time 1 \
-#    --chunksize-mb 64 \
-#    --no-fill True \
-#    --eta-interval 30
-#
 #echo "${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 

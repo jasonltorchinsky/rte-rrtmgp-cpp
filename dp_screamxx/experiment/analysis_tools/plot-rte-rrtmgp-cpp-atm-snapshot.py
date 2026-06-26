@@ -21,7 +21,7 @@ import xarray as xr
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.visual import lw_cmap, iw_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_dei, calc_rel, calc_rh
+    calc_cloud_wc, calc_dei, calc_rel
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-atm-snapshot"
@@ -104,19 +104,19 @@ def main():
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
         ndays: NP_INT = mnn_indices.shape[0]
 
-        #---------------------------------------------------------------------------
+        #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
-        #---------------------------------------------------------------------------
-        int: jj
+        #-----------------------------------------------------------------------
+        jj: int
         for jj in range(0, ndays):
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Calculate cloud water content, x-indices for yz-slices for calculations
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
             print(msg, flush = True)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj]) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], zmax = zmax) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(3)]) # [3]
             yz_slices_x: NP_ARRAY[NP_REAL] = cloud_wc["x"][x_indices].to_numpy().astype(NP_REAL) * 1.e-3 # x-location of yz-slices; [km]; [3]
 
@@ -127,35 +127,24 @@ def main():
 
             cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll, x = x_indices[ll]).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lev, y]
 
-            #-----------------------------------------------------------------------
-            # Calculate horizontal water path at each YZ-slice
-            #-----------------------------------------------------------------------
-            hwp: list[NP_ARRAY[NP_REAL]] = [(dx * cloud_wc[ll]) for ll in range(0, 3)] # [g m^{-2}], 3 * [lay, y]
-
-            #-----------------------------------------------------------------------
-            # Calculate relative humidity
-            #-----------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating relative humidity for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
-
-            rh: list[NP_ARRAY[NP_REAL]] = calc_rh(rad_tran_infile, mnn_indices[jj], x_indices) # Relative humidity; [Pa Pa^{-1}]; 3 * [lay, y]
-
+            #-------------------------------------------------------------------
+            # Calculate effective sizes
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Calculating cloud liquid water effective radius for day {} of {}...".format(current_time, ii, ndays - 1)
             print(msg, flush = True)
 
-            rel: list[NP_ARRAY[NP_REAL]] = calc_rel(rad_tran_infile, mnn_indices[jj], x_indices) # Cloud liquid water effective radius; [μm]; 3 * [lay, y]
+            rel: list[NP_ARRAY[NP_REAL]] = calc_rel(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud liquid water effective radius; [μm]; 3 * [lay, y]
 
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Calculating cloud ice water effective diameter for day {} of {}...".format(current_time, ii, ndays - 1)
             print(msg, flush = True)
 
-            dei: list[NP_ARRAY[NP_REAL]] = calc_dei(rad_tran_infile, mnn_indices[jj], x_indices) # Cloud ice water effective diameter; [μm]; 3 * [lay, y]
+            dei: list[NP_ARRAY[NP_REAL]] = calc_dei(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud ice water effective diameter; [μm]; 3 * [lay, y]
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Obtain plotting bounds
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Obtaining plotting bounds...".format(current_time)
             print(msg, flush = True)
@@ -171,8 +160,8 @@ def main():
                 y_bounds = np.zeros([3, 2], dtype = NP_REAL) # Limits for horizontal plotting axis (called xlim in matplotlib)
                 y_bound_indices = [np.zeros([2], dtype = NP_INT) for _ in range(0, 3)]
                 for ll in range(3):
-                    hwp_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(hwp[ll]), hwp[ll].shape) # [lay_index, y_index] of maximal hwp
-                    y_loc: NP_REAL = y[hwp_max_index[1]] # Y-location of maximal hwp [km]
+                    cloud_wc_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(cloud_wc[ll]), cloud_wc[ll].shape) # [lay_index, y_index] of maximal cloud_wc
+                    y_loc: NP_REAL = y[cloud_wc_max_index[1]] # Y-location of maximal cloud_wc [km]
                     y_bounds[ll,:] = [y_loc - y_window_width / 2., y_loc + y_window_width / 2.]
 
                     # Don't have to worry about shifting window past the edge after this block
@@ -187,22 +176,18 @@ def main():
                     y_bound_indices[ll][1] = np.min(np.where(y_bounds[ll,1] - y <= 0)[0]) + 1 # To include endpoint, add 1
             y_slices = [y[y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Trim fields to the yz-slice
-            #-----------------------------------------------------------------------
-            hwp = [hwp[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
-            rh = [rh[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]    
+            #-------------------------------------------------------------------
+            cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]   
             rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
             dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
             
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Obtain data bounds
-            #-----------------------------------------------------------------------
-            hwp_max: list[NP_REAL] = [hwp[ll].max() for ll in range(3)]
-            hwp_min: list[NP_REAL] = [hwp[ll].min() for ll in range(3)]
-
-            rh_max: list[NP_REAL] = [rh[ll].max() for ll in range(3)]
-            rh_min: list[NP_REAL] = [rh[ll].min() for ll in range(3)]
+            #-------------------------------------------------------------------
+            cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(3)]
+            cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(3)]
 
             rel_max: list[NP_REAL] = [rel[ll].max() for ll in range(3)]
             rel_min: list[NP_REAL] = [rel[ll].min() for ll in range(3)]
@@ -210,14 +195,14 @@ def main():
             dei_max: list[NP_REAL] = [dei[ll].max() for ll in range(3)]
             dei_min: list[NP_REAL] = [dei[ll].min() for ll in range(3)]
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Plot the data
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}]: Plotting data...".format(current_time)
             print(msg, flush = True)
 
-            nrows: NP_INT = NP_INT(4)
+            nrows: NP_INT = NP_INT(3)
             ncols: NP_INT = NP_INT(3)
             fig_height: NP_REAL = NP_REAL(3.)
             fig_base_size = np.array([(y_window_width / zmax) * fig_height, fig_height])
@@ -227,43 +212,34 @@ def main():
                 figsize = 3. * fig_base_size)
 
             # Row 0: Horizontal Water Path
-            hwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+            cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                hwp_pcm[ll] = axs[0, ll].pcolormesh(y_slices[ll], z, hwp[ll],
-                    vmin = hwp_min[ll], vmax = hwp_max[ll],
+                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(y_slices[ll], z, cloud_wc[ll],
+                    vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
                     cmap = cw_cmap)
 
-            # Row 1: Relative Humidity
-            rh_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            ll: int
-            for ll in range(0, ncols):
-                rh_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z, rh[ll],
-                    norm = colors.LogNorm(vmin = rh_min[ll], vmax = rh_max[ll]),
-                    cmap = lw_cmap)
-
-            # Row 2: Cloud Liquid Water Effective Radius
+            # Row 1: Cloud Liquid Water Effective Radius
             rel_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                rel_pcm[ll] = axs[2, ll].pcolormesh(y_slices[ll], z, rel[ll],
+                rel_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z, rel[ll],
                     vmin = rel_min[ll], vmax = rel_max[ll],
                     cmap = lw_cmap)
 
-            # Row 3: Cloud Ice Water Effective Diameter
+            # Row 2: Cloud Ice Water Effective Diameter
             dei_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                dei_pcm[ll] = axs[3, ll].pcolormesh(y_slices[ll], z, dei[ll],
+                dei_pcm[ll] = axs[2, ll].pcolormesh(y_slices[ll], z, dei[ll],
                     vmin = rel_min[ll], vmax = rel_max[ll],
                     cmap = iw_cmap)
 
             # Colorbars
             for ll in range(0, ncols):
-                hwp_cbar = fig.colorbar(hwp_pcm[ll], ax = axs[0,ll])
-                rh_cbar = fig.colorbar(rh_pcm[ll], ax = axs[1,ll])
-                rel_cbar = fig.colorbar(rel_pcm[ll], ax = axs[2,ll])
-                dei_cbar = fig.colorbar(dei_pcm[ll], ax = axs[3,ll])
+                cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll])
+                rel_cbar = fig.colorbar(rel_pcm[ll], ax = axs[1,ll])
+                dei_cbar = fig.colorbar(dei_pcm[ll], ax = axs[2,ll])
 
             # Labels
             fig.suptitle("RTE-RRTMGP-CPP Atmospheric Radiative Transfer")
@@ -276,8 +252,7 @@ def main():
                     + r"$x$ = {:.2f} $\left[ km \right]$".format(yz_slices_x[ll]))
                 axs[0,ll].set_title(col_title)
 
-            hwp_cbar.ax.set_ylabel(r"Horizontal Cloud Water Path $\left[ g\,m^{-2} \right]$")
-            rh_cbar.ax.set_ylabel(r"$rh$ $\left[ Pa\,Pa^{-1} \right]$")            
+            cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")          
             rel_cbar.ax.set_ylabel(r"$rel$ $\left[ \mu m \right]$")
             dei_cbar.ax.set_ylabel(r"$dei$ $\left[ \mu m \right]$")
 
@@ -296,9 +271,9 @@ def main():
                 for mm in range(0, ncols):
                     axs[ll,mm].set_aspect("equal")
 
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             # Save the plot to file
-            #-----------------------------------------------------------------------
+            #-------------------------------------------------------------------
             plt_filename = "rte_rrtmgp_cpp_atm_day_{}.{}.png".format(jj, lr_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)

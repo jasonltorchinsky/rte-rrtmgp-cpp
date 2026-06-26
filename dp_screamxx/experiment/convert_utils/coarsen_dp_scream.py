@@ -7,20 +7,14 @@ import re
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, MPI_COMM, XR_DATAARRAY
-from consts.numeric import MPI_ROOT
+from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATAARRAY
 from consts.physical import cp_d, cp_v, cp_lw, cp_iw, mu_d, g
 from consts.rte_rrtmgp_cpp_fields import rte_rrtmgp_cpp_gas_keys as gas_keys
 
 from .print_msg import print_msg
 
 def coarsen_dp_scream(dp_scream_remap: dict, rad_tran_src_grid: dict, 
-    rad_tran_tgt_grids: dict, comm: MPI_COMM) -> dict:
-    #---------------------------------------------------------------------------
-    # Obtain MPI information
-    #---------------------------------------------------------------------------
-    l_rank: NP_INT = NP_INT(comm.Get_rank())
-
+    rad_tran_tgt_grids: dict, l_rank: NP_INT) -> dict:
     #---------------------------------------------------------------------------
     # Calculate relevant DP-SCREAM quantities on the DP-SCREAM grid
     #---------------------------------------------------------------------------

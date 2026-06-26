@@ -20,10 +20,11 @@ from .calc_rel import calc_rel
 from .calc_rh import calc_rh
 from .calc_sw_flux_abs import calc_sw_flux_abs
 from .calc_sw_flux_sfc_dn import calc_sw_flux_sfc_dn
+from .calc_sw_flux_tod_up import calc_sw_flux_tod_up
 from .calc_sw_heating import calc_sw_heating
 from .calc_vmr import calc_vmr
 from .find_inout_pairs import find_inout_pairs
 from .find_mnn_indices import find_mnn_indices
+from .find_daytime_indices import find_daytime_indices
 from .find_szas import find_szas
 from .find_times import find_times
-#from .get_z import get_z
