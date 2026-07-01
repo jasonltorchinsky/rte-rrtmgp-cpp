@@ -19,9 +19,10 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
+from consts.numeric import NP_SMALL
 from consts.visual import lw_cmap, iw_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_dei, calc_rel
+    calc_cloud_wc, calc_dei, calc_rel, find_grid, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-atm-snapshot"
@@ -31,9 +32,8 @@ def main():
     #---------------------------------------------------------------------------
     # Parse command-line input
     #---------------------------------------------------------------------------
-    current_time: str = datetime.now().strftime("%H:%M:%S")
-    msg: str = "[{}]: Parsing command-line input...".format(current_time)
-    print(msg, flush = True)
+    msg: str = "Parsing command-line input..."
+    print_msg(msg)
 
     parser: ArgumentParser = ArgumentParser(prog = prog_name,
         description = prog_desc)
@@ -88,21 +88,26 @@ def main():
 
         lr_str: str = lr_re.search(rad_tran_infile).group()
 
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Processing {}...".format(current_time, lr_str)
-        print(msg, flush = True)
+        msg: str = "Processing {}...".format(lr_str)
+        print_msg(msg)
+
+        #-----------------------------------------------------------------------
+        # Obtain grid information
+        #-----------------------------------------------------------------------
+        msg: str = "Obtaining grid information..."
+        print_msg(msg)
+        grid: dict = find_grid(rad_tran_infile)
 
         #-----------------------------------------------------------------------
         # Obtain Morning-Noon-Night time indices, times, SZAs, zmax index
         #-----------------------------------------------------------------------
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Obtaining morning-noon-night information...".format(current_time)
-        print(msg, flush = True)
+        msg: str = "Obtaining morning-noon-night information..."
+        print_msg(msg)
 
         mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
         mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
-        ndays: NP_INT = mnn_indices.shape[0]
+        ndays: NP_INT = NP_INT(mnn_indices.shape[0])
 
         #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
@@ -112,9 +117,8 @@ def main():
             #-------------------------------------------------------------------
             # Calculate cloud water content, x-indices for yz-slices for calculations
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
+            msg: str = "Calculating cloud water content for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
 
             cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], zmax = zmax) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(3)]) # [3]
@@ -130,58 +134,30 @@ def main():
             #-------------------------------------------------------------------
             # Calculate effective sizes
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud liquid water effective radius for day {} of {}...".format(current_time, ii, ndays - 1)
-            print(msg, flush = True)
+            msg: str = "Calculating cloud water effective sizes for day {} of {}...".format(current_time, jj, ndays - 1)
+            print_msg(msg)
 
             rel: list[NP_ARRAY[NP_REAL]] = calc_rel(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud liquid water effective radius; [μm]; 3 * [lay, y]
-
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud ice water effective diameter for day {} of {}...".format(current_time, ii, ndays - 1)
-            print(msg, flush = True)
-
             dei: list[NP_ARRAY[NP_REAL]] = calc_dei(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud ice water effective diameter; [μm]; 3 * [lay, y]
 
             #-------------------------------------------------------------------
             # Obtain plotting bounds
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Obtaining plotting bounds...".format(current_time)
-            print(msg, flush = True)
+            msg: str = "Obtaining plotting bounds..."
+            print_msg(msg)
 
             y_window_width: NP_REAL = 3. * zmax # Width of y window [km]
-            
-            y_bounds: NP_ARRAY[NP_REAL]
-            y_bound_indices: list[NP_ARRAY[NP_INT]]
-            if y_window_width > y.max() - y.min():
-                y_bounds = np.tile(np.array([y.min(), y.max()]), [3, 1]) # [3, 2]
-                y_bound_indices = [np.array([0, -1], dtype = NP_INT) for _ in range(0, 3)]
-            else:
-                y_bounds = np.zeros([3, 2], dtype = NP_REAL) # Limits for horizontal plotting axis (called xlim in matplotlib)
-                y_bound_indices = [np.zeros([2], dtype = NP_INT) for _ in range(0, 3)]
-                for ll in range(3):
-                    cloud_wc_max_index: NP_ARRAY[NP_INT] = np.unravel_index(np.argmax(cloud_wc[ll]), cloud_wc[ll].shape) # [lay_index, y_index] of maximal cloud_wc
-                    y_loc: NP_REAL = y[cloud_wc_max_index[1]] # Y-location of maximal cloud_wc [km]
-                    y_bounds[ll,:] = [y_loc - y_window_width / 2., y_loc + y_window_width / 2.]
-
-                    # Don't have to worry about shifting window past the edge after this block
-                    # because the window is not as wide as the domain
-                    if y_bounds[ll,0] < y.min():
-                        y_bounds[ll,:] += (y.min() - y_bounds[ll,0])
-
-                    if y_bounds[ll,1] > y.max():
-                        y_bounds[ll,:] += (y.max() - y_bounds[ll,1])
-
-                    y_bound_indices[ll][0] = np.max(np.where(y - y_bounds[ll,0] <= 0)[0])
-                    y_bound_indices[ll][1] = np.min(np.where(y_bounds[ll,1] - y <= 0)[0]) + 1 # To include endpoint, add 1
-            y_slices = [y[y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
+            y_window_indices: list[NP_ARRAY[NP_INT]] = [[] for _ in range(0, 3)]
+            for ll in range(0, 3):
+                y_window_indices = find_y_window_indices(y, cloud_wc[ll], y_window_width)
+            y_windows = [y[y_window_indices[ll][0]:y_window_indices[ll][1]] for ll in range(0, 3)]
 
             #-------------------------------------------------------------------
             # Trim fields to the yz-slice
             #-------------------------------------------------------------------
-            cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]   
-            rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
-            dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(3)]
+            cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]   
+            rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
+            dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
             
             #-------------------------------------------------------------------
             # Obtain data bounds

@@ -19,6 +19,7 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
+from consts.numeric import NP_SMALL
 from consts.visual import flux_cmap, heating_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
     calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs
@@ -187,8 +188,8 @@ def main():
                     if y_bounds[ll,1] > y.max():
                         y_bounds[ll,:] += (y.max() - y_bounds[ll,1])
 
-                    y_bound_indices[ll][0] = np.max(np.where(y - y_bounds[ll,0] <= 0)[0])
-                    y_bound_indices[ll][1] = np.min(np.where(y_bounds[ll,1] - y <= 0)[0]) + 1 # To include endpoint, add 1
+                    y_bound_indices[ll][0] = np.max(np.where(y - y_bounds[ll,0] <= NP_SMALL)[0])
+                    y_bound_indices[ll][1] = np.min(np.where(y_bounds[ll,1] - y <= NP_SMALL)[0]) + 1 # To include endpoint, add 1
             y_slices = [y[y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
 
             #-------------------------------------------------------------------

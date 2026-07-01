@@ -110,8 +110,16 @@ def main():
             time: XR_DATARRAY = xr_rad_tran_combined_in["time"]
         ntime: NP_INT = NP_INT(time.size)
 
-        xr_rad_tran_separate_out: list[XR_DATASET] = [xr.open_dataset(rad_tran_separate_outfiles[coarse_factor_str][ii],
-            engine = "netcdf4").expand_dims(time = [NP_REAL(time[ii])]) for ii in range(0, ntime)]
+        xr_rad_tran_separate_out: list[XR_DATASET] = [
+            (xr.open_dataset(rad_tran_separate_outfiles[coarse_factor_str][ii],
+                engine = "netcdf4",
+                drop_variables = ["p_lay", "p_lev", 
+                    "tot_tau", "tot_ssa", 
+                    "cld_tau", "cld_ssa", "cld_asy",
+                    "aer_tau", "aer_ssa", "aer_asy",
+                    "sw_gpt_flux_up", "sw_gpt_flux_dn", "sw_gpt_flux_dn_dir", "sw_gpt_flux_net"])
+            .expand_dims(time = [NP_REAL(time[ii])]))
+            for ii in range(0, ntime)]
         for ii in range(0, ntime):
             xr_rad_tran_separate_out[ii]["time"].attrs.update(time.attrs)
 

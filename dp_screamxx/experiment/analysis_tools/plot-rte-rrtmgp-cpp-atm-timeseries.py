@@ -226,7 +226,6 @@ def main():
                     layer_mass_cloud_stats[(nquantiles - 1) - ll],
                     color = "blue", edgecolor = None, alpha = 0.15)
             axs[row,jj].set_yscale("log")
-            breakpoint()
 
             # Row 3: Number of Clouds
             row: NP_INT = NP_INT(3)

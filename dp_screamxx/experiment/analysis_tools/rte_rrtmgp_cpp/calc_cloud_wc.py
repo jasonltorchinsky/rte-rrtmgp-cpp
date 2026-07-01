@@ -7,23 +7,33 @@ import xarray as xr
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
-def calc_cloud_wc(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT],
+def calc_cloud_wc(rad_tran_infile: str, time_indices: NP_ARRAY[NP_INT] = None,
     x_indices: NP_ARRAY[NP_INT] = None, zmax: Optional[NP_REAL] = None) -> list[NP_ARRAY[NP_REAL]]:
-    
+    #---------------------------------------------------------------------------
+    # Get indexers for xarray data arrays
+    #---------------------------------------------------------------------------
+    indexers: dict = {}
+    if ((time_indices is not None) and (x_indices is not None)):
+        indexers["time"] = XR_DATAARRAY(time_indices, dims = "slice")
+        indexers["x"] = XR_DATAARRAY(x_indices, dims = "slice")
+    elif ((time_indices is not None) and (x_indices is None)):
+        indexers["time"] = XR_DATAARRAY(time_indices, dims = "time")
+    elif ((time_indices is None) and (x_indices is not None)):
+        indexers["x"] = XR_DATAARRAY(x_indices, dims = "x")
+
+    ## TO-DO: CONTINUE FROM HERE WITH Z SELECTING AND ALL THAT TO GET RID OF LIST-NUMPY WEIRDNESS
+
     #---------------------------------------------------------------------------
     # Extract relevant fields from RTE-RRTMGP-CPP file
     #---------------------------------------------------------------------------
+    
+
     xr_rad_tran: XR_DATASET
     with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
-        lwp: XR_DATAARRAY = xr_rad_tran["lwp"] # Cloud liquid water path; [nt, lay, y, x]; [g m^{2}]
-        iwp: XR_DATAARRAY = xr_rad_tran["iwp"] # Cloud ice water path; [nt, lay, y, x]; [g m^{2}]
-        z: XR_DATAARRAY = xr_rad_tran["z"] # Layer midpoints; [lay]; [m]
-
-    #---------------------------------------------------------------------------
-    # Select relevant times for fields from RTE-RRTMGP-CPP file
-    #---------------------------------------------------------------------------
-    lwp = lwp.isel(time = time_indices) # [time, lay, y, x]; [g m^{-2}]
-    iwp = iwp.isel(time = time_indices) # [time, lay, y, x]; [g m^{-2}]
+        breakpoint()
+        lwp: XR_DATAARRAY = xr_rad_tran["lwp"].isel(time = time_indices).load() # Cloud liquid water path; [nt, lay, y, x]; [g m^{2}]
+        iwp: XR_DATAARRAY = xr_rad_tran["iwp"].isel(time = time_indices).load() # Cloud ice water path; [nt, lay, y, x]; [g m^{2}]
+        z: XR_DATAARRAY = xr_rad_tran["z"].load() # Layer midpoints; [lay]; [m]
 
     #---------------------------------------------------------------------------
     # Calculate grid spacing - ASSUME: Uniform vertical grid in time and space

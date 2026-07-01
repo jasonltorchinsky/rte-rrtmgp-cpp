@@ -411,7 +411,16 @@ def calc_2d_quantities(dp_scream_file: str, time_idx: NP_INT) -> XR_DATAARRAY:
     # azimuthal angle, total solar irradiance, and direct and diffuse surface
     # albedo
     #---------------------------------------------------------------------------
-    mu0 = mu0.assign_coords(coords)
+    mu0_data: NP_ARRAY[NP_REAL] = NP_REAL(mu0.to_numpy()) # [ncol]; [N/A]
+    mu0: XR_DATAARRAY = XR_DATAARRAY(data = mu0_data,
+        dims = ("ncol"),
+        coords = coords,
+        name = "mu0",
+        attrs = {
+            "units": "N/A",
+            "long_name": "cosine_solar_zenith_angle",
+            "standard_name": "cosine_solar_zenith_angle",
+        })
 
     standard_azi: NP_REAL = NP_REAL(0.)
     azi_data: NP_ARRAY[NP_REAL] = standard_azi + np.zeros_like(ncol, dtype = NP_REAL) # [ncol]; [radians]

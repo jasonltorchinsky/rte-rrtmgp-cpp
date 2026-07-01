@@ -16,10 +16,10 @@ def find_daytime_indices(rad_tran_infile: str, tol: NP_REAL = NP_REAL(1.e-3)) ->
     with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
         mu0: XR_DATARRAY = xr_rad_tran["mu0"].isel(x = 0, y = 0) # Cosine SZA; [nt]; ASSUME- Constant throughout domain
 
-    sunrising_mask: NP_ARRAY[NP_BOOL] = mu0.diff(dim = "time") > NP_REAL(0.)
-    sunsetting_mask: NP_ARRAY[NP_BOOL] = mu0.diff(dim = "time") < NP_REAL(0.)
-    daystart_indices: NP_ARRAY[NP_INT] = NP_INT(np.where(~sunrising_mask.shift(time = 1, fill_value = False) & sunrising_mask)[0])
-    dayend_indices: NP_ARRAY[NP_INT] = NP_INT(np.where(~sunsetting_mask.shift(time = -1, fill_value = False) & sunsetting_mask)[0] + 1)
+    mu0_diff: NP_ARRAY[NP_REAL] = NP_REAL(mu0.diff(dim = "time").to_numpy())
+    dayends: NP_ARRAY[NP_INT] = np.where((mu0_diff[:-1] < 0) & (mu0_diff[1:] > 0))[0] + 1
+    daystart_indices: NP_ARRAY[NP_INT] = np.r_[0, dayends + 1] # ASSUME: Day start at 0, days start right after days end
+    dayend_indices: NP_ARRAY[NP_INT] = np.r_[dayends, mu0.size - 1] # ASSUME: Day ends at last index
 
     ndays: NP_INT = NP_INT(daystart_indices.size)
 
