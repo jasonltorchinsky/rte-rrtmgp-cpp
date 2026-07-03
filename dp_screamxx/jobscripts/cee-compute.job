@@ -144,7 +144,7 @@ echo "CASE NAME: ${CASE_NAME}"
 #  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
 #  --detailed-calc true \
-#  --zmax 40
+#  --z-max 40
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
@@ -152,7 +152,7 @@ echo "CASE NAME: ${CASE_NAME}"
 #  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
 #  --detailed-calc true \
-#  --zmax 40
+#  --z-max 40
 
 # python ${EXPERIMENT_ANALYZE_DIR}/animate_dp_screamxx_output.py \
 #    --dpscream_file_path ${SCREAM_OUTPUT_FILE_PATH} \
@@ -182,16 +182,16 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set coarsening factors
-COARSE_FACTORS=64
-ZMAX=40
+COARSE_FACTORS=1,2
+ZMAX=16
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
- --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
- --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
- --coarse-factors ${COARSE_FACTORS} \
- --zmax ${ZMAX}
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
+#  --coarse-factors ${COARSE_FACTORS} \
+#  --z-max ${ZMAX}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Atmosphere Time Series:"
@@ -199,14 +199,14 @@ python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_timeseries \
 #  --coarse-factors ${COARSE_FACTORS} \
-#  --zmax ${ZMAX}
+#  --z-max ${ZMAX}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
 # python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-vmr-snapshot.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/vmr_snapshot \
-#  --zmax ${ZMAX} \
+#  --z-max ${ZMAX} \
 #  --coarse-factors ${COARSE_FACTORS}
 
 # echo "Solar Zenith Angle:"
@@ -225,17 +225,17 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set plotting options
-COARSE_FACTORS=64
-ZMAX=40
+COARSE_FACTORS=4
+ZMAX=16
 
-# CURRENT_TIME=$(date +"%T")
-# echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
-#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
-#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
-#  --coarse-factors ${COARSE_FACTORS} \
-#  --zmax ${ZMAX}
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
+ --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+ --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+ --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
+ --coarse-factors ${COARSE_FACTORS} \
+ --z-max ${ZMAX}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Radiative Transfer Time Series:"
@@ -244,7 +244,7 @@ ZMAX=40
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_timeseries \
 #  --coarse-factors ${COARSE_FACTORS} \
-#  --zmax ${ZMAX}
+#  --z-max ${ZMAX}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Surface Snapshot:"
@@ -261,7 +261,7 @@ ZMAX=40
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_rad_tran_zprofile \
 #  --detailed-calc true \
-#  --zmax 16 \
+#  --z-max 16 \
 #  --lr 16
 
 # CURRENT_TIME=$(date +"%T")
@@ -294,7 +294,7 @@ ZMAX=40
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/error_timeseries \
 #  --coarse-factors ${COARSE_FACTORS} \
-#  --zmax ${ZMAX} 
+#  --z-max ${ZMAX} 
 
 #echo "Radiative Transfer Distributions:"
 #python ${EXPERIMENT_ANALYZE_DIR}/plot_rad_tran_dists.py \
@@ -302,7 +302,7 @@ ZMAX=40
 #  --rad-tran-outdir ${RADTRAN_OUTPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_dists \
 #  --detailed-calc true \
-#  --zmax 16 \
+#  --z-max 16 \
 #  --case ${CASE_NAME} \
 #  --lr 64
 

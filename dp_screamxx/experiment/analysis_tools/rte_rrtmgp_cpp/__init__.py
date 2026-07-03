@@ -29,5 +29,5 @@ from .find_inout_pairs import find_inout_pairs
 from .find_mnn_indices import find_mnn_indices
 from .find_szas import find_szas
 from .find_times import find_times
-from .find_y_window import find_y_window
+from .find_y_slice import find_y_slice
 from .print_msg import print_msg

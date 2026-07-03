@@ -22,7 +22,7 @@ from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.numeric import NP_SMALL
 from consts.visual import lw_cmap, iw_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_dei, calc_rel, find_grid, print_msg
+    calc_cloud_wc, calc_dei, calc_rel, find_grid, find_y_slice, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-atm-snapshot"
@@ -46,7 +46,7 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", nargs = "?", default = False, type = bool,
         help = "Re-calculate surface heating rates.")
-    parser.add_argument("--zmax", nargs = "?", default = 16., type = float,
+    parser.add_argument("--z-max", nargs = "?", default = 16., type = float,
         help = "Maximum height for calculations [km].")
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
@@ -58,7 +58,7 @@ def main():
     rad_tran_vizdir: str = os.path.normpath(args.rad_tran_vizdir)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
-    zmax: NP_REAL = NP_REAL(args.zmax)
+    z_max: NP_REAL = NP_REAL(args.z_max)
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
     if args.coarse_factors is not None:
@@ -99,7 +99,7 @@ def main():
         grid: dict = find_grid(rad_tran_infile)
 
         #-----------------------------------------------------------------------
-        # Obtain Morning-Noon-Night time indices, times, SZAs, zmax index
+        # Obtain Morning-Noon-Night time indices, times, SZAs, z_max index
         #-----------------------------------------------------------------------
         msg: str = "Obtaining morning-noon-night information..."
         print_msg(msg)
@@ -114,102 +114,126 @@ def main():
         #-----------------------------------------------------------------------
         jj: int
         for jj in range(0, ndays):
+            day_str: str = "day_{}".format(jj)
+
             #-------------------------------------------------------------------
-            # Calculate cloud water content, x-indices for yz-slices for calculations
+            # Calculate spatial extent of plots based on maximal cloud water content
             #-------------------------------------------------------------------
-            msg: str = "Calculating cloud water content for day {} of {}...".format(jj, ndays - 1)
+            msg: str = "Calculating plot spatial extent for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], zmax = zmax) # Cloud water content; [g m^{-3}]; [3, lev, y, x]
-            x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(3)]) # [3]
-            yz_slices_x: NP_ARRAY[NP_REAL] = cloud_wc["x"][x_indices].to_numpy().astype(NP_REAL) * 1.e-3 # x-location of yz-slices; [km]; [3]
-
-            # Sneak in getting grid information before converting cloud_wc
-            dx: NP_REAL = NP_REAL(cloud_wc["x"][1] - cloud_wc["x"][0]) # [m]
-            y: NP_ARRAY[NP_REAL] = cloud_wc["y"].to_numpy().astype(NP_REAL) * 1.e-3 # [km]
-            z: NP_ARRAY[NP_REAL] = cloud_wc["lay"].to_numpy().astype(NP_REAL) * 1.e-3 # [km]
-
-            cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll, x = x_indices[ll]).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lev, y]
-
-            #-------------------------------------------------------------------
-            # Calculate effective sizes
-            #-------------------------------------------------------------------
-            msg: str = "Calculating cloud water effective sizes for day {} of {}...".format(current_time, jj, ndays - 1)
-            print_msg(msg)
-
-            rel: list[NP_ARRAY[NP_REAL]] = calc_rel(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud liquid water effective radius; [μm]; 3 * [lay, y]
-            dei: list[NP_ARRAY[NP_REAL]] = calc_dei(rad_tran_infile, mnn_indices[jj], x_indices, zmax = zmax) # Cloud ice water effective diameter; [μm]; 3 * [lay, y]
-
-            #-------------------------------------------------------------------
-            # Obtain plotting bounds
-            #-------------------------------------------------------------------
-            msg: str = "Obtaining plotting bounds..."
-            print_msg(msg)
-
-            y_window_width: NP_REAL = 3. * zmax # Width of y window [km]
-            y_window_indices: list[NP_ARRAY[NP_INT]] = [[] for _ in range(0, 3)]
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], z_max = z_max) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+        
+            x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(0, 3)])
+            y_slice_width: NP_REAL = 3. * z_max # Width of y-slices [km]
+            y_slices: list[slice] = [[] for _ in range(0, 3)]
             for ll in range(0, 3):
-                y_window_indices = find_y_window_indices(y, cloud_wc[ll], y_window_width)
-            y_windows = [y[y_window_indices[ll][0]:y_window_indices[ll][1]] for ll in range(0, 3)]
+                y_slices[ll] = find_y_slice(grid["yh"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
+
+            #-------------------------------------------------------------------
+            # Calculate desired atmospheric quantities
+            #-------------------------------------------------------------------
+            msg: str = "Calculating desired atmospheric quantities for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
+
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, 
+                time_indices = mnn_indices[jj], 
+                x_indices = x_indices, 
+                z_max = z_max) # Cloud water content; [g m^{-3}]; [slice, lay, y]
+            rel: XR_DATAARRAY = calc_rel(rad_tran_infile, 
+                time_indices = mnn_indices[jj], 
+                x_indices = x_indices, 
+                z_max = z_max) # Cloud liquid water effective radius; [μm]; [slice, lay, y]
+            dei: XR_DATAARRAY = calc_dei(rad_tran_infile, 
+                time_indices = mnn_indices[jj], 
+                x_indices = x_indices, 
+                z_max = z_max) # Cloud ice water effective diameter; [μm]; [slice, lay, y]
 
             #-------------------------------------------------------------------
             # Trim fields to the yz-slice
             #-------------------------------------------------------------------
-            cloud_wc = [cloud_wc[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]   
-            rel = [rel[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
-            dei = [dei[ll][...,y_bound_indices[ll][0]:y_bound_indices[ll][1]] for ll in range(0, 3)]
+            cloud_wc: list[XR_DATAARRAY] = [(cloud_wc
+                .sel(y = y_slices[ll])
+                .isel(slice = ll)
+                .load()) for ll in range(0, 3)]   
+            rel: list[XR_DATAARRAY] = [(rel
+                .sel(y = y_slices[ll])
+                .isel(slice = ll)
+                .load()) for ll in range(0, 3)]
+            dei: list[XR_DATAARRAY] = [(dei
+                .sel(y = y_slices[ll])
+                .isel(slice = ll)
+                .load()) for ll in range(0, 3)]
+
+            #-------------------------------------------------------------------
+            # Trim grids to the yz-slice
+            #-------------------------------------------------------------------
+            yh_islices: list[slice] = [slice(
+                    grid["yh"].to_index().searchsorted(y_slices[ll].start, side = "right") - 1,
+                    grid["yh"].to_index().searchsorted(y_slices[ll].stop, side = "left") + 1
+                ) for ll in range(0, 3)]
+            yh: list[XR_DATAARRAY] = [(grid["yh"]
+                .isel(yh = yh_islices[ll])
+                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
+
+            zh_islices: list[slice] = [slice(
+                    0,
+                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") # [km] => [m]
+                ) for ll in range(0, 3)]
+            zh: list[XR_DATAARRAY] = [(grid["zh"]
+                .isel(zh = zh_islices[ll])
+                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
             
             #-------------------------------------------------------------------
             # Obtain data bounds
             #-------------------------------------------------------------------
-            cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(3)]
-            cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(3)]
+            cloud_wc_max: list[NP_REAL] = [NP_REAL(cloud_wc[ll].max()) for ll in range(0,3)]
+            cloud_wc_min: list[NP_REAL] = [NP_REAL(cloud_wc[ll].min()) for ll in range(0,3)]
 
-            rel_max: list[NP_REAL] = [rel[ll].max() for ll in range(3)]
-            rel_min: list[NP_REAL] = [rel[ll].min() for ll in range(3)]
+            rel_max: list[NP_REAL] = [NP_REAL(rel[ll].max()) for ll in range(0,3)]
+            rel_min: list[NP_REAL] = [NP_REAL(rel[ll].min()) for ll in range(0,3)]
 
-            dei_max: list[NP_REAL] = [dei[ll].max() for ll in range(3)]
-            dei_min: list[NP_REAL] = [dei[ll].min() for ll in range(3)]
+            dei_max: list[NP_REAL] = [NP_REAL(dei[ll].max()) for ll in range(0,3)]
+            dei_min: list[NP_REAL] = [NP_REAL(dei[ll].min()) for ll in range(0,3)]
 
             #-------------------------------------------------------------------
             # Plot the data
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Plotting data...".format(current_time)
-            print(msg, flush = True)
+            msg: str = "Plotting data..."
+            print_msg(msg)
 
             nrows: NP_INT = NP_INT(3)
             ncols: NP_INT = NP_INT(3)
             fig_height: NP_REAL = NP_REAL(3.)
-            fig_base_size = np.array([(y_window_width / zmax) * fig_height, fig_height])
+            fig_base_size = np.array([(y_slice_width / z_max) * fig_height, fig_height])
             fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
                 figsize = 3. * fig_base_size)
 
-            # Row 0: Horizontal Water Path
+            # Row 0: Cloud Water Content
             cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(y_slices[ll], z, cloud_wc[ll],
+                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(yh[ll], zh[ll], cloud_wc[ll],
                     vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
-                    cmap = cw_cmap)
+                    cmap = cw_cmap, shading = "flat")
 
             # Row 1: Cloud Liquid Water Effective Radius
             rel_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                rel_pcm[ll] = axs[1, ll].pcolormesh(y_slices[ll], z, rel[ll],
+                rel_pcm[ll] = axs[1, ll].pcolormesh(yh[ll], zh[ll], rel[ll],
                     vmin = rel_min[ll], vmax = rel_max[ll],
-                    cmap = lw_cmap)
+                    cmap = lw_cmap, shading = "flat")
 
             # Row 2: Cloud Ice Water Effective Diameter
             dei_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                dei_pcm[ll] = axs[2, ll].pcolormesh(y_slices[ll], z, dei[ll],
+                dei_pcm[ll] = axs[2, ll].pcolormesh(yh[ll], zh[ll], dei[ll],
                     vmin = rel_min[ll], vmax = rel_max[ll],
-                    cmap = iw_cmap)
+                    cmap = iw_cmap, shading = "flat")
 
             # Colorbars
             for ll in range(0, ncols):
@@ -218,27 +242,26 @@ def main():
                 dei_cbar = fig.colorbar(dei_pcm[ll], ax = axs[2,ll])
 
             # Labels
-            fig.suptitle("RTE-RRTMGP-CPP Atmospheric Radiative Transfer")
+            dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
+            dx_str: str
+            if dx < 1.e3:
+                dx_str = r"{:.0f} $m$".format(dx)
+            else:
+                dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
+
+            fig.suptitle(r"RTE-RRTMGP-CPP Atmospheric Snapshots - {}".format(dx_str))
             fig.supxlabel(r"y $\left[ km \right]$")
             fig.supylabel(r"z $\left[ km \right]$")
 
             for ll in range(0, ncols):
+                x_pos: NP_REAL = NP_REAL(grid["x"].isel(x = x_indices[ll])) * 1.e-3 # [m] => [km]
                 col_title: str = (r"{:.2f} Hours - ".format(mnn_times[jj,ll])
-                    + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[jj,ll])
-                    + r"$x$ = {:.2f} $\left[ km \right]$".format(yz_slices_x[ll]))
+                    + r"$x$ = {:.2f} $\left[ km \right]$".format(x_pos))
                 axs[0,ll].set_title(col_title)
 
             cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")          
             rel_cbar.ax.set_ylabel(r"$rel$ $\left[ \mu m \right]$")
             dei_cbar.ax.set_ylabel(r"$dei$ $\left[ \mu m \right]$")
-
-            # Set horizontal limits
-            ll: int
-            mm: int
-            for ll in range(0, nrows):
-                for mm in range(0, ncols):
-                    axs[ll,mm].set_xlim(y_bounds[mm,:])
-                    axs[ll,mm].set_ylim((0.0, zmax))
 
             # Aspect ratio
             ll: int
@@ -250,7 +273,7 @@ def main():
             #-------------------------------------------------------------------
             # Save the plot to file
             #-------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_atm_day_{}.{}.png".format(jj, lr_str)
+            plt_filename = "rte_rrtmgp_cpp_atm_snapshot.{}.{}.png".format(day_str, lr_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)
             plt.close(fig)
