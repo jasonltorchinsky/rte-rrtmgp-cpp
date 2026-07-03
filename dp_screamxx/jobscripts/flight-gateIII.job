@@ -110,7 +110,7 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT Output Combination"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set coarsening factors
-COARSE_FACTORS=1
+COARSE_FACTORS=1,2
 
 python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output.py \
   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \

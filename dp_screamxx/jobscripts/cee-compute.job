@@ -182,7 +182,7 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set coarsening factors
-COARSE_FACTORS=1,2
+COARSE_FACTORS=4
 ZMAX=16
 
 # CURRENT_TIME=$(date +"%T")
@@ -200,6 +200,13 @@ ZMAX=16
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_timeseries \
 #  --coarse-factors ${COARSE_FACTORS} \
 #  --z-max ${ZMAX}
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Atmosphere Vertical Profile:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-vert-profile.py \
+ --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+ --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_vert_profile \
+ --coarse-factors ${COARSE_FACTORS}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
@@ -228,14 +235,14 @@ echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 COARSE_FACTORS=4
 ZMAX=16
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
- --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
- --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
- --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
- --coarse-factors ${COARSE_FACTORS} \
- --z-max ${ZMAX}
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-snapshot.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_snapshot \
+#  --coarse-factors ${COARSE_FACTORS} \
+#  --z-max ${ZMAX}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Radiative Transfer Time Series:"

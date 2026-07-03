@@ -22,6 +22,7 @@ from .calc_sw_flux_abs import calc_sw_flux_abs
 from .calc_sw_flux_sfc_dn import calc_sw_flux_sfc_dn
 from .calc_sw_flux_tod_up import calc_sw_flux_tod_up
 from .calc_sw_heating import calc_sw_heating
+from .calc_t import calc_t
 from .calc_vmr import calc_vmr
 from .find_daytime_indices import find_daytime_indices
 from .find_grid import find_grid

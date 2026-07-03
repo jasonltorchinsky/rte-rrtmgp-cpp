@@ -21,7 +21,7 @@ from scipy import ndimage
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.visual import flux_cmap, heating_cmap, cw_cmap
-from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_szas, find_times, \
+from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, \
     calc_cloud_wc
 
 # Script variables
@@ -101,8 +101,6 @@ def main():
         print(msg, flush = True)
 
         daytime_indices: NP_ARRAY[NP_INT] = find_daytime_indices(rad_tran_infile) # Time indices for each day; [ndays; time_per_day]
-        daytime_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, daytime_indices) # Time since simulation start; [h]; [ndays, 3]
-        daytime_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, daytime_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
         ndays: NP_INT = NP_INT(daytime_indices.shape[0])
 
         #-----------------------------------------------------------------------
