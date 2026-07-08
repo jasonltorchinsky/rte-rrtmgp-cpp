@@ -7,7 +7,7 @@ import xarray as xr
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 from consts.physical import g, R_d, R_v, cp_d, cp_v, cp_lw, cp_iw, sec_per_day
-from consts.numeric import NP_SMALL
+from consts.numeric import NP_SMALL, NP_INF
 from .calc_mass_moist_air import calc_mass_moist_air
 
 """
@@ -30,12 +30,15 @@ def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str,
                 .load()) # Layer midpoints; [lay]; [m]
             lev: XR_DATAARRAY = (xr_rad_tran["lev"]
                 .load()) # Layer interfaces; [lev]; [m]
-            z_max_index: NP_INT = NP_INT(lay
-                    .indexes["lay"]
-                    .searchsorted(z_max * 1.e3, side = "right"))
-            zh_max_index: NP_INT = z_max_index + 1
-            zh_max: NP_REAL = (NP_REAL(lev[zh_max_index - 1]) + NP_SMALL) * 1.e-3 # [m] => [km]
-            # Honestly, I don't know what's going on with the indexing here. This seems to work though
+            
+        diff_arr: NP_ARRAY[NP_REAL] = NP_REAL(lay.to_numpy()) - z_max * 1.e3
+        neg_diff: NP_ARRAY[NP_REAL] = np.where(diff_arr <= NP_SMALL, diff_arr, -NP_INF)
+
+        z_max_index: NP_INT = NP_INT(np.argmax(neg_diff))
+        z_max: NP_REAL = NP_REAL(lay[z_max_index] + NP_SMALL) * 1.e-3 # [m] => [km]
+
+        zh_max_index: NP_INT = z_max_index + 1
+        zh_max: NP_REAL = (NP_REAL(lev[zh_max_index]) + NP_SMALL) * 1.e-3 # [m] => [km]
 
     #---------------------------------------------------------------------------
     # Get indexers for xarray data arrays
@@ -52,18 +55,18 @@ def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str,
     sel_indexers: dict = {}
     out_isel_indexers: dict = {}
     if z_max is not None:
-        sel_indexers["z"] = slice(0, z_max * 1.e3) # [km] => [m]
-        sel_indexers["zh"] = slice(0, zh_max * 1.e3) # [km] => [m]
-        sel_indexers["lay"] = slice(0, z_max * 1.e3) # [km] => [m]
-        sel_indexers["lev"] = slice(0, zh_max * 1.e3) # [km] => [m]
+        sel_indexers["z"] = slice(-NP_INF, z_max * 1.e3) # [km] => [m]
+        sel_indexers["zh"] = slice(-NP_INF, zh_max * 1.e3) # [km] => [m]
+        sel_indexers["lay"] = slice(-NP_INF, z_max * 1.e3) # [km] => [m]
+        sel_indexers["lev"] = slice(-NP_INF, zh_max * 1.e3) # [km] => [m]
 
-        out_isel_indexers["lay"] = slice(0, z_max_index) # "lay" is messed up in output and doesn't have a coordinate
-        out_isel_indexers["lev"] = slice(0, zh_max_index) # "lev" is messed up in output and doesn't have a coordinate
+        out_isel_indexers["lay"] = slice(0, z_max_index + 1) # "lay" is messed up in output and doesn't have a coordinate
+        out_isel_indexers["lev"] = slice(0, zh_max_index + 1) # "lev" is messed up in output and doesn't have a coordinate
     else:
-        sel_indexers["z"] = slice(0, None)
-        sel_indexers["zh"] = slice(0, None)
-        sel_indexers["lay"] = slice(0, None)
-        sel_indexers["lev"] = slice(0, None)
+        sel_indexers["z"] = slice(-NP_INF, None)
+        sel_indexers["zh"] = slice(-NP_INF, None)
+        sel_indexers["lay"] = slice(-NP_INF, None)
+        sel_indexers["lev"] = slice(-NP_INF, None)
 
         out_isel_indexers["lay"] = slice(0, None)
         out_isel_indexers["lev"] = slice(0, None)

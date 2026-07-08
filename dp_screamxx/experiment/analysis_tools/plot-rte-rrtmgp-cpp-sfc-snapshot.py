@@ -7,7 +7,6 @@ if experiment_dir not in sys.path:
     sys.path.append(experiment_dir)
 
 # Standard Library Imports
-from datetime import datetime
 import re
 from argparse import ArgumentParser, Namespace
 
@@ -21,7 +20,7 @@ import xarray as xr
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.visual import flux_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_sw_flux_sfc_dn
+    calc_cloud_wc, calc_sw_flux_sfc_dn, find_grid, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-sfc-snapshot"
@@ -31,9 +30,8 @@ def main():
     #---------------------------------------------------------------------------
     # Parse command-line input
     #---------------------------------------------------------------------------
-    current_time: str = datetime.now().strftime("%H:%M:%S")
-    msg: str = "[{}]: Parsing command-line input...".format(current_time)
-    print(msg, flush = True)
+    msg: str = "Parsing command-line input..."
+    print_msg(msg)
 
     parser: ArgumentParser = ArgumentParser(prog = prog_name,
         description = prog_desc)
@@ -92,83 +90,102 @@ def main():
 
         lr_str: str = lr_re.search(rad_tran_infile).group()
 
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Processing {}...".format(current_time, lr_str)
-        print(msg, flush = True)
+        msg: str = "Processing {}...".format(lr_str)
+        print_msg(msg)
 
         #-----------------------------------------------------------------------
-        # Obtain Morning-Noon-Night time indices, times, SZAs, zmax index
+        # Obtain grid information
         #-----------------------------------------------------------------------
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Obtaining morning-noon-night information...".format(current_time)
-        print(msg, flush = True)
+        msg: str = "Obtaining grid information..."
+        print_msg(msg)
+        grid: dict = find_grid(rad_tran_infile)
+
+        dz: NP_REAL = NP_REAL(grid["zh"][1] - grid["zh"][0])
+
+        #-----------------------------------------------------------------------
+        # Obtain Morning-Noon-Night time indices, times, SZAs
+        #-----------------------------------------------------------------------
+        msg: str = "Obtaining morning-noon-night information..."
+        print_msg(msg)
 
         mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
         mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
-        ndays: NP_INT = mnn_indices.shape[0]
+        ndays: NP_INT = NP_INT(mnn_indices.shape[0])
 
         #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
         #-----------------------------------------------------------------------
         int: jj
         for jj in range(0, ndays):
-            #-------------------------------------------------------------------
-            # Calculate cloud water content, x-indices for yz-slices for calculations
-            #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
-
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj]) # Cloud water content; [g m^{-3}]; [3, lay, y, x]
-
-            # Sneak in getting grid information before converting cloud_wc
-            dz: NP_REAL = NP_REAL(cloud_wc["lay"][1] - cloud_wc["lay"][0]) # [m]
-            x: NP_ARRAY[NP_REAL] = cloud_wc["x"].to_numpy().astype(NP_REAL) * 1.e-3 # [km]
-            y: NP_ARRAY[NP_REAL] = cloud_wc["y"].to_numpy().astype(NP_REAL) * 1.e-3 # [km]
-
-            cloud_wc: list[NP_ARRAY[NP_REAL]] = [cloud_wc.isel(time = ll).to_numpy().astype(NP_REAL) for ll in range(0, 3)] # [g m^{-3}]; 3 * [lay, y, x]
+            day_str: str = "day_{}".format(jj)
 
             #-------------------------------------------------------------------
-            # Calculate vertical cloud water path at each time
+            # Calculate vertical water path
             #-------------------------------------------------------------------
-            vwp: list[NP_ARRAY[NP_REAL]] = [np.transpose(dz * np.sum(cloud_wc[ll], axis = 0), axes = (1, 0)) for ll in range(0, 3)] # [g m^{-2}], 3 * [y, x]
+            msg: str = "Calculating vertical water path for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
+
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj]) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+            vwp: XR_DATAARRAY = dz * cloud_wc.sum(dim = "lay") # [g m^{-2}], [time, y, x]
 
             #-------------------------------------------------------------------
             # Calculate downwelling surface flux
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating downwelling surface flux for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
+            msg: str = "Calculating downwelling surface flux for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
 
-            flux_sfc_dn_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_sfc_dn(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], solver = "rt") # Downwelling surface flux; [W m^{-2}]; [time, y, x]
-            flux_sfc_dn_rt: list[NP_ARRAY[NP_REAL]] = [np.transpose(flux_sfc_dn_rt.isel(time = ll).to_numpy().astype(NP_REAL), axes = (1, 0)) for ll in range(0, 3)]
+            flux_sfc_dn_rt: XR_DATAARRAY = calc_sw_flux_sfc_dn(rad_tran_infile,
+                rad_tran_outfile,
+                mnn_indices[jj],
+                solver = "rt") # Downwelling surface flux - ray-tracer; [W m^{-2}]; [time, y, x]
+            flux_sfc_dn_ts: XR_DATAARRAY = calc_sw_flux_sfc_dn(rad_tran_infile,
+                rad_tran_outfile,
+                mnn_indices[jj],
+                solver = "ts") # Downwelling surface flux - two-stream; [W m^{-2}]; [time, y, x]
 
-            flux_sfc_dn_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_sfc_dn(rad_tran_infile, rad_tran_outfile,
-                mnn_indices[jj], solver = "ts") # Downwelling surface flux; [W m^{-2}]; [time, y, x]
-            flux_sfc_dn_ts: list[NP_ARRAY[NP_REAL]] = [np.transpose(flux_sfc_dn_ts.isel(time = ll).to_numpy().astype(NP_REAL), axes = (1, 0)) for ll in range(0, 3)]
-            
+            #-------------------------------------------------------------------
+            # Transpose fields before plotting
+            #-------------------------------------------------------------------
+            vwp: XR_DATAARRAY = (vwp
+                .transpose("time", "x", "y")
+                .load()) # [g m^{-2}], [time, y, x]
+            flux_sfc_dn_rt: XR_DATAARRAY = (flux_sfc_dn_rt
+                .transpose("time", "x", "y")
+                .load()) # [W m^{-2}], [time, y, x]
+            flux_sfc_dn_ts: XR_DATAARRAY = (flux_sfc_dn_ts
+                .transpose("time", "x", "y")
+                .load()) # [W m^{-2}], [time, y, x]
+
             #-------------------------------------------------------------------
             # Obtain data bounds
             #-------------------------------------------------------------------
-            vwp_max: list[NP_REAL] = [vwp[ll].max() for ll in range(0, 3)]
-            vwp_min: list[NP_REAL] = [vwp[ll].min() for ll in range(0, 3)]
+            vwp_max: list[NP_REAL] = [NP_REAL(vwp.isel(time = ll).max()) for ll in range(0, 3)]
+            vwp_min: list[NP_REAL] = [NP_REAL(vwp.isel(time = ll).min()) for ll in range(0, 3)]
 
-            flux_sfc_dn_max: list[NP_REAL] = [max(flux_sfc_dn_rt[ll].max(), flux_sfc_dn_ts[ll].max()) for ll in range(0, 3)]
-            flux_sfc_dn_min: list[NP_REAL] = [min(flux_sfc_dn_rt[ll].min(), flux_sfc_dn_ts[ll].min()) for ll in range(0, 3)]
+            flux_sfc_dn_max: list[NP_REAL] = [max(
+                NP_REAL(flux_sfc_dn_rt.isel(time = ll).max()), 
+                NP_REAL(flux_sfc_dn_ts.isel(time = ll).max())) for ll in range(0, 3)]
+            flux_sfc_dn_min: list[NP_REAL] = [min(
+                NP_REAL(flux_sfc_dn_rt.isel(time = ll).min()), 
+                NP_REAL(flux_sfc_dn_ts.isel(time = ll).min())) for ll in range(0, 3)]
+
+            #-------------------------------------------------------------------
+            # Rescale horizontal grids to have correct units
+            #-------------------------------------------------------------------
+            xh: XR_DATAARRAY = grid["xh"] * 1.e-3 # [m] => [km]
+            yh: XR_DATAARRAY = grid["yh"] * 1.e-3 # [m] => [km]
 
             #-------------------------------------------------------------------
             # Plot the data
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Plotting data...".format(current_time)
-            print(msg, flush = True)
+            msg: str = "Plotting data..."
+            print_msg(msg)
 
             nrows: NP_INT = NP_INT(3)
             ncols: NP_INT = NP_INT(3)
             fig_height: NP_REAL = NP_REAL(5.)
-            fig_base_size = np.array([(ncols / nrows) * fig_height, fig_height])
+            fig_base_size = np.array([fig_height, fig_height])
             fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
@@ -178,25 +195,25 @@ def main():
             vwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                vwp_pcm[ll] = axs[0, ll].pcolormesh(y, x, vwp[ll],
+                vwp_pcm[ll] = axs[0, ll].pcolormesh(xh, yh, vwp.isel(time = ll),
                     vmin = vwp_min[ll], vmax = vwp_max[ll],
-                    cmap = cw_cmap)
+                    cmap = cw_cmap, shading = "flat")
 
             # Row 1: Two-Stream
             flux_sfc_dn_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                flux_sfc_dn_ts_pcm[ll] = axs[1, ll].pcolormesh(y, x, flux_sfc_dn_ts[ll],
+                flux_sfc_dn_ts_pcm[ll] = axs[1, ll].pcolormesh(xh, yh, flux_sfc_dn_ts.isel(time = ll),
                     norm = colors.LogNorm(vmin = flux_sfc_dn_min[ll], vmax = flux_sfc_dn_max[ll]),
-                    cmap = flux_cmap)
+                    cmap = flux_cmap, shading = "flat")
 
             # Row 2: Ray-Tracer
             flux_sfc_dn_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                flux_sfc_dn_rt_pcm[ll] = axs[2, ll].pcolormesh(y, x, flux_sfc_dn_rt[ll],
+                flux_sfc_dn_rt_pcm[ll] = axs[2, ll].pcolormesh(xh, yh, flux_sfc_dn_rt.isel(time = ll),
                     norm = colors.LogNorm(vmin = flux_sfc_dn_min[ll], vmax = flux_sfc_dn_max[ll]),
-                    cmap = flux_cmap)
+                    cmap = flux_cmap, shading = "flat")
 
             # Colorbars
             for ll in range(0, ncols):
@@ -204,7 +221,14 @@ def main():
                 flux_sfc_dn_cbar = fig.colorbar(flux_sfc_dn_ts_pcm[ll], ax = axs[1:3,ll])
 
             # Labels
-            fig.suptitle("RTE-RRTMGP-CPP Atmospheric Radiative Transfer")
+            dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
+            dx_str: str
+            if dx < 1.e3:
+                dx_str = r"{:.0f} $m$".format(dx)
+            else:
+                dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
+
+            fig.suptitle(r"RTE-RRTMGP-CPP Surface Snapshots - {}".format(dx_str))
             fig.supxlabel(r"x $\left[ km \right]$")
             fig.supylabel(r"y $\left[ km \right]$")
 
@@ -228,7 +252,7 @@ def main():
             #-------------------------------------------------------------------
             # Save the plot to file
             #-------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_sfc_day_{}.{}.png".format(jj, lr_str)
+            plt_filename = "rte_rrtmgp_cpp_sfc.{}.{}.png".format(day_str, lr_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)
             plt.close(fig)

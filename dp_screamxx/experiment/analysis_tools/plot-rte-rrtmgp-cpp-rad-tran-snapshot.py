@@ -22,7 +22,7 @@ from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.numeric import NP_SMALL
 from consts.visual import flux_cmap, heating_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, find_grid, find_y_slice, print_msg
+    calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, find_grid, find_y_islice, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-snapshot"
@@ -131,12 +131,13 @@ def main():
             print_msg(msg)
 
             cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], z_max = z_max) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+            z_max: NP_REAL = NP_REAL(cloud_wc["lay"].max()) * 1.e-3 # Overwrite z_max with the highest layer midpoint lower than original z_max; [m] => [km]
         
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(0, 3)])
             y_slice_width: NP_REAL = 3. * z_max # Width of y-slices [km]
-            y_slices: list[slice] = [[] for _ in range(0, 3)]
+            y_islices: list[slice] = [[] for _ in range(0, 3)]
             for ll in range(0, 3):
-                y_slices[ll] = find_y_slice(grid["yh"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
+                y_islices[ll] = find_y_islice(grid["y"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
 
             #-------------------------------------------------------------------
             # Calculate desired atmospheric and radiative quantities
@@ -175,24 +176,20 @@ def main():
             # Trim fields to the yz-slice
             #-------------------------------------------------------------------
             cloud_wc: list[XR_DATAARRAY] = [(cloud_wc
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]   
             sw_heating_rt: list[XR_DATAARRAY] = [(sw_heating_rt
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]
             sw_heating_ts: list[XR_DATAARRAY] = [(sw_heating_ts
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]
 
             #-------------------------------------------------------------------
             # Trim grids to the yz-slice
             #-------------------------------------------------------------------
             yh_islices: list[slice] = [slice(
-                    grid["yh"].to_index().searchsorted(y_slices[ll].start, side = "right") - 1,
-                    grid["yh"].to_index().searchsorted(y_slices[ll].stop, side = "left") + 1
+                    y_islices[ll].start, y_islices[ll].stop + 1
                 ) for ll in range(0, 3)]
             yh: list[XR_DATAARRAY] = [(grid["yh"]
                 .isel(yh = yh_islices[ll])
@@ -200,7 +197,7 @@ def main():
 
             zh_islices: list[slice] = [slice(
                     0,
-                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") # [km] => [m]
+                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") + 1 # [km] => [m]
                 ) for ll in range(0, 3)]
             zh: list[XR_DATAARRAY] = [(grid["zh"]
                 .isel(zh = zh_islices[ll])

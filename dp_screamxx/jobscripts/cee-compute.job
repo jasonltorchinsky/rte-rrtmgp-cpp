@@ -1,13 +1,13 @@
 # Run parameters
-# SCREAM_RUN_NAME=scream_dpxx_GATEIII_300x300_corrupt
-# SCREAM_START_TIME=1974-08-30-00000
-# RADTRAN_RUN_NAME=debug-1974-08-30
-# CASE_NAME="GATEIII"
+SCREAM_RUN_NAME=scream_dpxx_GATEIII_300x300_corrupt
+SCREAM_START_TIME=1974-08-30-00000
+RADTRAN_RUN_NAME=debug-1974-08-30
+CASE_NAME="GATEIII"
 
-SCREAM_RUN_NAME=scream_dpxx_COMBLE_400x400
-SCREAM_START_TIME=2020-03-12-79200
-RADTRAN_RUN_NAME=debug-2020-03-12
-CASE_NAME="COMBLE"
+# SCREAM_RUN_NAME=scream_dpxx_COMBLE_400x400
+# SCREAM_START_TIME=2020-03-12-79200
+# RADTRAN_RUN_NAME=debug-2020-03-12
+# CASE_NAME="COMBLE"
 
 # Machine-specific DP-SCREAMXX directories - Abbreviated to SCREAM
 SCREAM_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
@@ -182,8 +182,8 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set coarsening factors
-COARSE_FACTORS=4
-ZMAX=16
+COARSE_FACTORS=2
+ZMAX=10
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
@@ -201,12 +201,12 @@ ZMAX=16
 #  --coarse-factors ${COARSE_FACTORS} \
 #  --z-max ${ZMAX}
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: Atmosphere Vertical Profile:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-vert-profile.py \
- --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
- --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_vert_profile \
- --coarse-factors ${COARSE_FACTORS}
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Vertical Profile:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-vert-profile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_vert_profile \
+#  --coarse-factors ${COARSE_FACTORS}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
@@ -232,8 +232,8 @@ STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
 echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # Set plotting options
-COARSE_FACTORS=4
-ZMAX=16
+COARSE_FACTORS=16
+ZMAX=10
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
@@ -253,13 +253,13 @@ ZMAX=16
 #  --coarse-factors ${COARSE_FACTORS} \
 #  --z-max ${ZMAX}
 
-# CURRENT_TIME=$(date +"%T")
-# echo "[${CURRENT_TIME}]: Surface Snapshot:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-sfc-snapshot.py \
-#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
-#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/sfc_snapshot \
-#  --coarse-factors ${COARSE_FACTORS}
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Surface Snapshot:"
+python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-sfc-snapshot.py \
+ --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+ --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+ --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/sfc_snapshot \
+ --coarse-factors ${COARSE_FACTORS}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Atmosphere Radiative Transfer Z-Profile:"

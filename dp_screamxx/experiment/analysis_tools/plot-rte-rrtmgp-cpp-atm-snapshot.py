@@ -7,7 +7,6 @@ if experiment_dir not in sys.path:
     sys.path.append(experiment_dir)
 
 # Standard Library Imports
-from datetime import datetime
 import re
 from argparse import ArgumentParser, Namespace
 
@@ -22,7 +21,7 @@ from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.numeric import NP_SMALL
 from consts.visual import lw_cmap, iw_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_dei, calc_rel, find_grid, find_y_slice, print_msg
+    calc_cloud_wc, calc_dei, calc_rel, find_grid, find_y_islice, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-atm-snapshot"
@@ -46,7 +45,7 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", nargs = "?", default = False, type = bool,
         help = "Re-calculate surface heating rates.")
-    parser.add_argument("--z-max", nargs = "?", default = 16., type = float,
+    parser.add_argument("--z-max", nargs = "?", default = 40., type = float,
         help = "Maximum height for calculations [km].")
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
@@ -123,12 +122,13 @@ def main():
             print_msg(msg)
 
             cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], z_max = z_max) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
-        
+            z_max: NP_REAL = NP_REAL(cloud_wc["lay"].max()) * 1.e-3 # Overwrite z_max with the highest layer midpoint lower than original z_max; [m] => [km]
+            
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(0, 3)])
             y_slice_width: NP_REAL = 3. * z_max # Width of y-slices [km]
-            y_slices: list[slice] = [[] for _ in range(0, 3)]
+            y_islices: list[slice] = [[] for _ in range(0, 3)]
             for ll in range(0, 3):
-                y_slices[ll] = find_y_slice(grid["yh"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
+                y_islices[ll] = find_y_islice(grid["y"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
 
             #-------------------------------------------------------------------
             # Calculate desired atmospheric quantities
@@ -153,24 +153,20 @@ def main():
             # Trim fields to the yz-slice
             #-------------------------------------------------------------------
             cloud_wc: list[XR_DATAARRAY] = [(cloud_wc
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]   
             rel: list[XR_DATAARRAY] = [(rel
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]
             dei: list[XR_DATAARRAY] = [(dei
-                .sel(y = y_slices[ll])
-                .isel(slice = ll)
+                .isel(y = y_islices[ll], slice = ll)
                 .load()) for ll in range(0, 3)]
 
             #-------------------------------------------------------------------
             # Trim grids to the yz-slice
             #-------------------------------------------------------------------
             yh_islices: list[slice] = [slice(
-                    grid["yh"].to_index().searchsorted(y_slices[ll].start, side = "right") - 1,
-                    grid["yh"].to_index().searchsorted(y_slices[ll].stop, side = "left") + 1
+                    y_islices[ll].start, y_islices[ll].stop + 1
                 ) for ll in range(0, 3)]
             yh: list[XR_DATAARRAY] = [(grid["yh"]
                 .isel(yh = yh_islices[ll])
@@ -178,7 +174,7 @@ def main():
 
             zh_islices: list[slice] = [slice(
                     0,
-                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") # [km] => [m]
+                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") + 1 # [km] => [m]
                 ) for ll in range(0, 3)]
             zh: list[XR_DATAARRAY] = [(grid["zh"]
                 .isel(zh = zh_islices[ll])

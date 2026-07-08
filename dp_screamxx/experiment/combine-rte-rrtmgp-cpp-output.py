@@ -107,7 +107,7 @@ def main():
         rad_tran_combined_infile_name: str = [file_name for file_name in os.listdir(rad_tran_combined_indir) if coarse_factor_str in file_name][0]
         rad_tran_combined_infile_path: str = os.path.join(rad_tran_combined_indir, rad_tran_combined_infile_name)
         with xr.open_dataset(rad_tran_combined_infile_path, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran_combined_in:
-            time: XR_DATARRAY = xr_rad_tran_combined_in["time"]
+            time: XR_DATARRAY = xr_rad_tran_combined_in["time"].load()
         ntime: NP_INT = NP_INT(time.size)
 
         xr_rad_tran_separate_out: list[XR_DATASET] = [
