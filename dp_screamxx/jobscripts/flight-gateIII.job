@@ -9,6 +9,7 @@
 #SBATCH --error=%j.err
 
 export HDF5_USE_FILE_LOCKING=FALSE
+set -euo pipefail
 
 # Run parameters
 SCREAM_RUN_NAME=scream_dpxx_GATEIII_300x300_corrupt
@@ -30,8 +31,6 @@ RADTRAN_SEPARATE_OUTPUT_DIR=${RADTRAN_RUN_DIR}/separate_output
 RADTRAN_COMBINED_OUTPUT_DIR=${RADTRAN_RUN_DIR}/combined_output
 RADTRAN_VIZ_DIR=${RADTRAN_RUN_DIR}/viz
 RADTRAN_VIZ_INPUT_DIR=${RADTRAN_VIZ_DIR}/input
-RADTRAN_FILE_BASE=${SCREAM_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}
-RADTRAN_INPUT_FILE_PATH_BASE=${RADTRAN_INPUT_DIR}/${RADTRAN_FILE_BASE}
 
 mkdir -p ${RADTRAN_DATA_DIR}
 mkdir -p ${RADTRAN_SEPARATE_INPUT_DIR}
@@ -112,7 +111,7 @@ echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 # Set coarsening factors
 COARSE_FACTORS=1
 
-python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output.py \
+python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output-large.py \
   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \
   --rad-tran-separate-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
   --rad-tran-combined-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \

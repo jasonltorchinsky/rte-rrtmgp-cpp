@@ -6,11 +6,12 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
+from consts.numeric import NP_INF
 
 def calc_dei(rad_tran_infile: str, 
     time_indices: Optional[NP_ARRAY[NP_INT]] = None,
     x_indices: Optional[NP_ARRAY[NP_INT]] = None, 
-    z_max: Optional[NP_REAL] = None) -> XR_DATAARRAY:
+    z_max_info: Optional[dict] = None) -> XR_DATAARRAY:
     # z_max is in [km], convert to [m] locally
     #---------------------------------------------------------------------------
     # Get indexers for xarray data arrays
@@ -25,10 +26,10 @@ def calc_dei(rad_tran_infile: str,
         isel_indexers["x"] = XR_DATAARRAY(x_indices, dims = "x")
 
     sel_indexers: dict = {}
-    if z_max is not None:
-        sel_indexers["lay"] = slice(0, z_max * 1.e3) # [km] => [m]
+    if z_max_info is not None:
+        sel_indexers["lay"] = z_max_info["sel_indexers"]["lay"]
     else:
-        sel_indexers["lay"] = slice(0, None)
+        sel_indexers["lay"] = slice(-NP_INF, None)
 
     #---------------------------------------------------------------------------
     # Extract relevant fields from RTE-RRTMGP-CPP file

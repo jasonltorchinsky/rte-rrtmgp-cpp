@@ -37,6 +37,7 @@ from matplotlib.contour import QuadContourSet as MPL_CONTOUR
 from matplotlib.pyplot import pcolormesh as MPL_PCOLORMESH
 from mpi4py.MPI import Intracomm as MPI_COMM
 from netCDF4 import Dataset as NC_DATASET
+from netCDF4._netCDF4 import Dimension as NC_DIMENSION
 from netCDF4._netCDF4 import Variable as NC_VARIABLE
 from numpy import ndarray as NP_ARRAY
 NP_DATETIME = np.dtype('datetime64[ns]')

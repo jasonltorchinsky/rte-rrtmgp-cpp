@@ -22,7 +22,7 @@ from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.numeric import NP_SMALL
 from consts.visual import plot_colors
 from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, \
-    calc_t, calc_vmr, find_grid, print_msg
+    calc_cloud_top, calc_cloud_wc, calc_t, calc_vmr, calc_tropopause, find_grid, print_msg
 
 # Script variables
 prog_name: str = "plot-rte-rrtmgp-cpp-atm-vert-profile"
@@ -104,8 +104,14 @@ def main():
         t_lev: XR_DATAARRAY = calc_t(rad_tran_infile) # Temperature at layer interfaces; [K]; [time, lev, y, x]
         t_vert_profile: XR_DATAARRAY = t_lev.mean(dim = ["time", "y", "x"]) # Horizontal mean temperature at layer interfaces; [K]; [lev]
         
-        vmr: XRDATAARRAY = calc_vmr(rad_tran_infile) # Trace gas molar dry mixing ration; [mol mol^{-1}]; [time, lay, y, x]
-        vmr_vert_profile: XR_DATAARRAY = vmr.mean(dim = ["time", "y", "x"]) # Horizontal mean trace gas molar dry mixing ration; [mol mol^{-1}]; [lay]
+        vmr: XR_DATAARRAY = calc_vmr(rad_tran_infile) # Trace gas molar dry mixing ration; [mol mol^{-1}]; [time, lay, y, x]
+        vmr_vert_profile: XR_DATAARRAY = vmr.mean(dim = ["time", "y", "x"]) # Horizontal mean trace gas molar dry mixing ratio; [mol mol^{-1}]; [lay]
+
+        cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile) # Clouc water content; [g m^{-3}]; [time, lay, y, x]
+        cloud_wc_vert_profile: XR_DATAARRAY = cloud_wc.mean(dim = ["time", "y", "x"]) # Horizontal mean cloud water content; [g m^{-3}]; [lay]
+
+        z_tropopause: NP_REAL = calc_tropopause(rad_tran_infile) # Tropopause height; [km]
+        z_cloud_top: NP_REAL = calc_cloud_top(rad_tran_infile) # Cloud top height; [km]
 
         #-----------------------------------------------------------------------
         # Plot the data
@@ -114,7 +120,7 @@ def main():
         print_msg(msg)
 
         nrows: NP_INT = NP_INT(1)
-        ncols: NP_INT = NP_INT(2)
+        ncols: NP_INT = NP_INT(3)
         fig_height: NP_REAL = NP_REAL(3.)
         fig_base_size = np.array([fig_height, fig_height])
         fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
@@ -124,6 +130,8 @@ def main():
 
         # Plot 0: Temperature
         axs[0].plot(t_vert_profile, grid["zh"] * 1.e-3, color = "black")
+        axs[0].axhline(z_tropopause, color = "black", linewidth = 1.0)
+        axs[0].axhline(z_cloud_top, color = "red", linewidth = 1.0)
 
         # Plot 1: Volume Mixing Ratios
         ncolors: NP_INT = NP_INT(len(plot_colors))
@@ -134,6 +142,13 @@ def main():
             axs[1].plot(vmr_vert_profile[vmr_key], grid["z"] * 1.e-3,
                 color = plot_colors[ll%ncolors],
                 linewidth = 2.0, label = vmr_key)
+        axs[1].axhline(z_tropopause, color = "black", linewidth = 1.0)
+        axs[1].axhline(z_cloud_top, color = "red", linewidth = 1.0)
+
+        # Plot 1: Cloud Water Content
+        axs[2].plot(cloud_wc_vert_profile, grid["z"] * 1.e-3, color = "black")
+        axs[2].axhline(z_tropopause, color = "black", linewidth = 1.0)
+        axs[2].axhline(z_cloud_top, color = "red", linewidth = 1.0)
 
         # Labels
         dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
@@ -148,6 +163,7 @@ def main():
 
         axs[0].set_xlabel(r"Temperature $\left[ K \right ]$")
         axs[1].set_xlabel(r"Mixing Ratio $\left[ mol\,mol^{-1} \right ]$")
+        axs[2].set_xlabel(r"Cloud Water Content $\left[ g\,m^{-3} \right ]$")
 
         # Set axis scales
         axs[1].set_xscale("log")

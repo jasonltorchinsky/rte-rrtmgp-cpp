@@ -8,38 +8,17 @@ import xarray as xr
 from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 from consts.physical import g, R_d, R_v, cp_d, cp_v, cp_lw, cp_iw, sec_per_day
 from consts.numeric import NP_SMALL, NP_INF
-from .calc_mass_moist_air import calc_mass_moist_air
 
 """
 Calculate shortwave heating rates.
 """
-def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str,
+def calc_sw_heating(rad_tran_infile: str,
+    rad_tran_outfile: str,
     time_indices: Optional[NP_ARRAY[NP_INT]] = None,
     x_indices: Optional[NP_ARRAY[NP_INT]] = None,
-    z_max: Optional[NP_REAL] = None,
+    z_max_info: Optional[dict] = None,
     solver: str = "rt") -> XR_DATAARRAY:
     assert(solver in ["rt", "ts"])
-    # z_max is in [km], convert to [m] locally
-    #---------------------------------------------------------------------------
-    # z_max corresponds to layers, find the z_max that corresponds to levels
-    #---------------------------------------------------------------------------
-    if z_max is not None:
-        xr_rad_tran: XR_DATASET
-        with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
-            lay: XR_DATAARRAY = (xr_rad_tran["lay"]
-                .load()) # Layer midpoints; [lay]; [m]
-            lev: XR_DATAARRAY = (xr_rad_tran["lev"]
-                .load()) # Layer interfaces; [lev]; [m]
-            
-        diff_arr: NP_ARRAY[NP_REAL] = NP_REAL(lay.to_numpy()) - z_max * 1.e3
-        neg_diff: NP_ARRAY[NP_REAL] = np.where(diff_arr <= NP_SMALL, diff_arr, -NP_INF)
-
-        z_max_index: NP_INT = NP_INT(np.argmax(neg_diff))
-        z_max: NP_REAL = NP_REAL(lay[z_max_index] + NP_SMALL) * 1.e-3 # [m] => [km]
-
-        zh_max_index: NP_INT = z_max_index + 1
-        zh_max: NP_REAL = (NP_REAL(lev[zh_max_index]) + NP_SMALL) * 1.e-3 # [m] => [km]
-
     #---------------------------------------------------------------------------
     # Get indexers for xarray data arrays
     #---------------------------------------------------------------------------
@@ -54,14 +33,14 @@ def calc_sw_heating(rad_tran_infile: str, rad_tran_outfile: str,
 
     sel_indexers: dict = {}
     out_isel_indexers: dict = {}
-    if z_max is not None:
-        sel_indexers["z"] = slice(-NP_INF, z_max * 1.e3) # [km] => [m]
-        sel_indexers["zh"] = slice(-NP_INF, zh_max * 1.e3) # [km] => [m]
-        sel_indexers["lay"] = slice(-NP_INF, z_max * 1.e3) # [km] => [m]
-        sel_indexers["lev"] = slice(-NP_INF, zh_max * 1.e3) # [km] => [m]
+    if z_max_info is not None:
+        sel_indexers["z"] = z_max_info["sel_indexers"]["z"]
+        sel_indexers["zh"] = z_max_info["sel_indexers"]["zh"]
+        sel_indexers["lay"] = z_max_info["sel_indexers"]["lay"]
+        sel_indexers["lev"] = z_max_info["sel_indexers"]["lev"]
 
-        out_isel_indexers["lay"] = slice(0, z_max_index + 1) # "lay" is messed up in output and doesn't have a coordinate
-        out_isel_indexers["lev"] = slice(0, zh_max_index + 1) # "lev" is messed up in output and doesn't have a coordinate
+        out_isel_indexers["lay"] = z_max_info["isel_indexers"]["lay"]
+        out_isel_indexers["lev"] = z_max_info["isel_indexers"]["lev"]
     else:
         sel_indexers["z"] = slice(-NP_INF, None)
         sel_indexers["zh"] = slice(-NP_INF, None)

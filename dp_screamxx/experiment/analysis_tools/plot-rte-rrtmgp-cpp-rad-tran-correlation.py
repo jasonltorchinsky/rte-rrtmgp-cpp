@@ -18,15 +18,15 @@ import numpy as np
 import xarray as xr
 
 # Local imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY
 from consts.numeric import NP_SMALL
-from consts.visual import flux_cmap, heating_cmap, cw_cmap
-from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
-    calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, calc_z_max_info, find_grid, find_y_islice, print_msg
+from consts.visual import plot_colors
+from rte_rrtmgp_cpp import find_inout_pairs, \
+    calc_sw_heating, calc_sw_flux_abs, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-snapshot"
-prog_desc: str = "Visualize absorbed shortwave flux and atmospheric heating rates for RTE-RRTMGP-CPP."
+prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-correlation"
+prog_desc: str = "Visualize correlations between ray-tracer and two-stream solvers of RTE-RRTMGP-CPP."
 
 def main():
     #---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", nargs = "?", default = False, type = bool,
         help = "Re-calculate surface heating rates.")
-    parser.add_argument("--z-max", nargs = "?", default = 0., type = float,
+    parser.add_argument("--z-max", nargs = "?", default = 16., type = float,
         help = "Maximum height for calculations [km].")
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
@@ -63,7 +63,7 @@ def main():
     rad_tran_vizdir: str = os.path.normpath(args.rad_tran_vizdir)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
-    z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
+    z_max: NP_REAL = NP_REAL(args.z_max)
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
     if args.coarse_factors is not None:
@@ -116,7 +116,6 @@ def main():
         mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
         ndays: NP_INT = NP_INT(mnn_indices.shape[0])
-        z_max_info: dict = calc_z_max_info(rad_tran_infile, method = "cloud_top")
 
         #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
@@ -131,12 +130,11 @@ def main():
             msg: str = "Calculating plot spatial extent for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile,
-                time_indices = mnn_indices[jj],
-                z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], z_max = z_max) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+            z_max: NP_REAL = NP_REAL(cloud_wc["lay"].max()) * 1.e-3 # Overwrite z_max with the highest layer midpoint lower than original z_max; [m] => [km]
         
             x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(0, 3)])
-            y_slice_width: NP_REAL = 3. * z_max_info["zh_max"] # Width of y-slices [km]
+            y_slice_width: NP_REAL = 3. * z_max # Width of y-slices [km]
             y_islices: list[slice] = [[] for _ in range(0, 3)]
             for ll in range(0, 3):
                 y_islices[ll] = find_y_islice(grid["y"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
@@ -150,18 +148,18 @@ def main():
             cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, 
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
-                z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [slice, lay, y]
+                z_max = z_max) # Cloud water content; [g m^{-3}]; [slice, lay, y]
             sw_heating_rt: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
                 rad_tran_outfile,
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
-                z_max_info = z_max_info,
+                z_max = z_max,
                 solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [slice, lay, y]
             sw_heating_ts: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
                 rad_tran_outfile,
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
-                z_max_info = z_max_info,
+                z_max = z_max,
                 solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [slice, lay, y]
 
             # current_time: str = datetime.now().strftime("%H:%M:%S")
@@ -197,8 +195,12 @@ def main():
                 .isel(yh = yh_islices[ll])
                 .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
 
+            zh_islices: list[slice] = [slice(
+                    0,
+                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") + 1 # [km] => [m]
+                ) for ll in range(0, 3)]
             zh: list[XR_DATAARRAY] = [(grid["zh"]
-                .isel(zh = z_max_info["isel_indexers"]["zh"])
+                .isel(zh = zh_islices[ll])
                 .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
             
             #-------------------------------------------------------------------
@@ -222,7 +224,7 @@ def main():
             nrows: NP_INT = NP_INT(3)
             ncols: NP_INT = NP_INT(3)
             fig_height: NP_REAL = NP_REAL(6.)
-            fig_base_size = np.array([(y_slice_width / z_max_info["zh_max"]) * fig_height, fig_height])
+            fig_base_size = np.array([(y_slice_width / z_max) * fig_height, fig_height])
             fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
@@ -233,7 +235,7 @@ def main():
             ll: int
             for ll in range(0, ncols):
                 cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(yh[ll], zh[ll], cloud_wc[ll],
-                    norm = colors.LogNorm(vmin = max(1.e-6, cloud_wc_min[ll]), vmax = cloud_wc_max[ll]),
+                    vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
                     cmap = cw_cmap, shading = "flat")
 
             # Row 1: Heating, Two-Stream
@@ -270,7 +272,7 @@ def main():
 
             # Colorbars
             for ll in range(0, ncols):
-                cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll], extend = "min")
+                cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll])
                 sw_heating_cbar = fig.colorbar(sw_heating_ts_pcm[ll], ax = axs[1:3,ll])
                 # sw_flux_abs_cbar = fig.colorbar(sw_flux_abs_ts_pcm[ll], ax = axs[3:5,ll])
 
@@ -311,7 +313,7 @@ def main():
             #-------------------------------------------------------------------
             # Save the plot to file
             #-------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_rad_tran_snapshot.{}.{}.png".format(lr_str, day_str)
+            plt_filename = "rte_rrtmgp_cpp_rad_tran_snapshot.{}.{}.png".format(day_str, lr_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)
             plt.close(fig)

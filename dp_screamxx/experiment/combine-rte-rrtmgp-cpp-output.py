@@ -1,6 +1,7 @@
 # Standard Library Imports
 import os
 import re
+import resource
 import shutil
 import subprocess
 
@@ -13,12 +14,21 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET, XR_DATAARRAY
-from consts.numeric import MPI_ROOT
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
 
 # Script variables
 prog_name: str = "combine-rte-rrtmgp-cpp-output"
 prog_desc: str = "Combine RTE-RRTMGP-CPP+RT output into a single time-series file."
+
+def log_mem(label: str):
+    rss_kib: NP_REAL = NP_REAL(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss) # [KiB]
+
+    # On Linux, ru_maxrss is usually KiB.
+    rss_mib: NP_REAL = rss_kib / 1024.0 # [KiB] => [MiB]
+
+    current_time = datetime.now().strftime("%H:%M:%S")
+    msg: str = "[{}]: [{}] : Memory - max RSS = {:0.2f} MiB".format(current_time, label, rss_mib)
+    print(msg, flush = True)
 
 def main():
     #---------------------------------------------------------------------------
@@ -93,6 +103,8 @@ def main():
     msg: str = "[{}]: Looping through coarsening factors...".format(current_time)
     print(msg, flush = True)
 
+    log_mem("Pre-Coarse Factor Loop")
+
     coarse_factor: NP_INT
     for coarse_factor in coarse_factors:
         #-----------------------------------------------------------------------
@@ -110,6 +122,8 @@ def main():
             time: XR_DATARRAY = xr_rad_tran_combined_in["time"].load()
         ntime: NP_INT = NP_INT(time.size)
 
+        log_mem("Pre-Output Opening")
+
         xr_rad_tran_separate_out: list[XR_DATASET] = [
             (xr.open_dataset(rad_tran_separate_outfiles[coarse_factor_str][ii],
                 engine = "netcdf4",
@@ -123,7 +137,11 @@ def main():
         for ii in range(0, ntime):
             xr_rad_tran_separate_out[ii]["time"].attrs.update(time.attrs)
 
+        log_mem("Post-Output Opening")
+
         xr_rad_tran_combined_out: XR_DATASET = xr.combine_by_coords(xr_rad_tran_separate_out, data_vars = "all")
+
+        log_mem("Post-Output Combining")
         
         rad_tran_combined_outfile_name: str = re.sub(".t_...", "", 
             os.path.basename(rad_tran_separate_outfiles[coarse_factor_str][0]))
@@ -131,6 +149,8 @@ def main():
             rad_tran_combined_outfile_name)
 
         xr_rad_tran_combined_out.to_netcdf(rad_tran_combined_outfile_path)
+
+        log_mem("Post-Output Saving")
 
 if __name__ == "__main__":
     main()
