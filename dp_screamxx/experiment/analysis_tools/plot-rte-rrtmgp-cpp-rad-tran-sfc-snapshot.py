@@ -18,12 +18,12 @@ import xarray as xr
 
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
-from consts.visual import flux_cmap, cw_cmap
+from consts.visual import diff_cmap, flux_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
     calc_cloud_wc, calc_sw_flux_sfc_dn, find_grid, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-sfc-snapshot"
+prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-sfc-snapshot"
 prog_desc: str = "Visualize surface state for RTE-RRTMGP-CPP."
 
 def main():
@@ -135,11 +135,11 @@ def main():
             msg: str = "Calculating downwelling surface flux for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            flux_sfc_dn_rt: XR_DATAARRAY = calc_sw_flux_sfc_dn(rad_tran_infile,
+            flux_sfc_dn_rt: XR_DATAARRAY = calc_sw_flux_sfc_dn(
                 rad_tran_outfile,
                 mnn_indices[jj],
                 solver = "rt") # Downwelling surface flux - ray-tracer; [W m^{-2}]; [time, y, x]
-            flux_sfc_dn_ts: XR_DATAARRAY = calc_sw_flux_sfc_dn(rad_tran_infile,
+            flux_sfc_dn_ts: XR_DATAARRAY = calc_sw_flux_sfc_dn(
                 rad_tran_outfile,
                 mnn_indices[jj],
                 solver = "ts") # Downwelling surface flux - two-stream; [W m^{-2}]; [time, y, x]
@@ -158,6 +158,11 @@ def main():
                 .load()) # [W m^{-2}], [time, y, x]
 
             #-------------------------------------------------------------------
+            # Calculate differences
+            #-------------------------------------------------------------------
+            flux_sfc_dn_diff: XR_DATAARRAY = flux_sfc_dn_rt - flux_sfc_dn_ts
+
+            #-------------------------------------------------------------------
             # Obtain data bounds
             #-------------------------------------------------------------------
             vwp_max: list[NP_REAL] = [NP_REAL(vwp.isel(time = ll).max()) for ll in range(0, 3)]
@@ -170,9 +175,15 @@ def main():
                 NP_REAL(flux_sfc_dn_rt.isel(time = ll).min()), 
                 NP_REAL(flux_sfc_dn_ts.isel(time = ll).min())) for ll in range(0, 3)]
 
+            flux_sfc_dn_diff_max: list[NP_REAL] = [
+                NP_REAL(np.abs(flux_sfc_dn_diff).isel(time = ll).max())
+                for ll in range(0, 3)]
+
             #-------------------------------------------------------------------
             # Rescale horizontal grids to have correct units
             #-------------------------------------------------------------------
+            x: XR_DATAARRAY = grid["x"] * 1.e-3 # [m] => [km]
+            y: XR_DATAARRAY = grid["y"] * 1.e-3 # [m] => [km]
             xh: XR_DATAARRAY = grid["xh"] * 1.e-3 # [m] => [km]
             yh: XR_DATAARRAY = grid["yh"] * 1.e-3 # [m] => [km]
 
@@ -182,43 +193,86 @@ def main():
             msg: str = "Plotting data..."
             print_msg(msg)
 
-            nrows: NP_INT = NP_INT(3)
-            ncols: NP_INT = NP_INT(3)
-            fig_height: NP_REAL = NP_REAL(5.)
-            fig_base_size = np.array([fig_height, fig_height])
-            fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
+            nrows: NP_INT = NP_INT(4)
+            ncols: NP_INT = NP_INT(2)
+            fig_width: NP_REAL = NP_REAL(5.5)
+            fig_height: NP_REAL = NP_REAL(8.)
+            fig_size: list[NP_REAL] = [fig_width, fig_height]
+            fig, axs = plt.subplots(
+                nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
-                figsize = 3. * fig_base_size)
+                figsize = fig_size)
+
+            if ncols == 1:
+                axs = axs[...,None]
+            elif nrows == 1:
+                axs = axs[None,...]
+
+            linthresh: NP_REAL = NP_REAL(100.)
 
             # Row 0: Vertical Water Path
             vwp_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
                 vwp_pcm[ll] = axs[0, ll].pcolormesh(xh, yh, vwp.isel(time = ll),
-                    vmin = vwp_min[ll], vmax = vwp_max[ll],
+                    norm = colors.LogNorm(
+                        vmin = max(1.e1, min(vwp_min)),
+                        vmax = max(vwp_max)),
                     cmap = cw_cmap, shading = "flat")
 
-            # Row 1: Two-Stream
+            # Row 1: Downwelling surface flux, Two-Stream
             flux_sfc_dn_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                flux_sfc_dn_ts_pcm[ll] = axs[1, ll].pcolormesh(xh, yh, flux_sfc_dn_ts.isel(time = ll),
-                    norm = colors.LogNorm(vmin = flux_sfc_dn_min[ll], vmax = flux_sfc_dn_max[ll]),
+                flux_sfc_dn_ts_pcm[ll] = axs[1,ll].pcolormesh(
+                    xh, 
+                    yh, 
+                    flux_sfc_dn_ts.isel(time = ll),
+                    norm = colors.LogNorm(
+                        vmin = min(flux_sfc_dn_min),
+                        vmax = max(flux_sfc_dn_max)),
                     cmap = flux_cmap, shading = "flat")
 
-            # Row 2: Ray-Tracer
+            # Row 2: Downwelling surface flux, Ray-Tracer
             flux_sfc_dn_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                flux_sfc_dn_rt_pcm[ll] = axs[2, ll].pcolormesh(xh, yh, flux_sfc_dn_rt.isel(time = ll),
-                    norm = colors.LogNorm(vmin = flux_sfc_dn_min[ll], vmax = flux_sfc_dn_max[ll]),
+                flux_sfc_dn_rt_pcm[ll] = axs[2,ll].pcolormesh(
+                    xh, 
+                    yh, 
+                    flux_sfc_dn_rt.isel(time = ll),
+                    norm = colors.LogNorm(
+                        vmin = min(flux_sfc_dn_min),
+                        vmax = max(flux_sfc_dn_max)),
                     cmap = flux_cmap, shading = "flat")
 
-            # Colorbars
+            # Row 3: Downwelling surface flux, Difference
+            flux_sfc_dn_diff_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+            ll: int
             for ll in range(0, ncols):
-                vwp_cbar = fig.colorbar(vwp_pcm[ll], ax = axs[0,ll])
-                flux_sfc_dn_cbar = fig.colorbar(flux_sfc_dn_ts_pcm[ll], ax = axs[1:3,ll])
+                flux_sfc_dn_diff_pcm[ll] = axs[3,ll].pcolormesh(
+                    xh, 
+                    yh, 
+                    flux_sfc_dn_diff.isel(time = ll),
+                    norm = colors.SymLogNorm(
+                        linthresh = linthresh,
+                        vmin = -max(flux_sfc_dn_diff_max),
+                        vmax = max(flux_sfc_dn_diff_max)),
+                    cmap = diff_cmap, shading = "flat")
+                axs[3,ll].contour(
+                    x,
+                    y,
+                    flux_sfc_dn_diff.isel(time = ll),
+                    levels = [-linthresh, linthresh],
+                    colors = "k",
+                    linewidths = 1.0,
+                    negative_linestyles = "dashed"
+                )
+
+            vwp_cbar = fig.colorbar(vwp_pcm[0], ax = axs[0,:], extend = "min")
+            flux_sfc_dn_cbar = fig.colorbar(flux_sfc_dn_ts_pcm[0], ax = axs[1:3,:])
+            flux_sfc_dn_diff_cbar = fig.colorbar(flux_sfc_dn_diff_pcm[0], ax = axs[3,:])
 
             # Labels
             dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
@@ -228,20 +282,39 @@ def main():
             else:
                 dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
 
-            fig.suptitle(r"RTE-RRTMGP-CPP Surface Snapshots - {}".format(dx_str))
+            fig.suptitle(r"Downwelling Surface Flux $\left[ W\,m^{-2} \right]$" + " - {}".format(dx_str))
             fig.supxlabel(r"x $\left[ km \right]$")
             fig.supylabel(r"y $\left[ km \right]$")
 
             for ll in range(0, ncols):
-                col_title: str = (r"{:.2f} Hours - ".format(mnn_times[jj,ll])
-                    + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[jj,ll]))
+                col_title: str = (r"SZA {:.1f}$^{{\circ}}$".format(mnn_szas[jj,ll]))
                 axs[0,ll].set_title(col_title)
             axs[1,0].set_ylabel(r"Two-Stream")
             axs[2,0].set_ylabel(r"Ray-Tracer")
+            axs[3,0].set_ylabel(r"Ray-Tracer - Two-Stream")
 
-            vwp_cbar.ax.set_ylabel(r"Vertical Cloud Water Path $\left[ g\,m^{-2} \right]$")
-            flux_sfc_dn_cbar.ax.set_ylabel(r"Surface Downwelling Flux $\left[ W\,m^{-2} \right]$")
+            vwp_cbar.ax.set_ylabel(r"Vertical CWP $\left[ g\,m^{-2} \right]$")
+            flux_sfc_dn_diff_cbar.ax.set_ylabel(r"Difference")
 
+            #-------------------------------------------------------------------
+            # Additional Colorbar Elements
+            #-------------------------------------------------------------------
+            flux_sfc_dn_diff_cbar.ax.axhline(
+                linthresh,
+                color = "k",
+                linestyle = "solid",
+                linewidth = 1.0
+            )
+            flux_sfc_dn_diff_cbar.ax.axhline(
+                -linthresh,
+                color = "k",
+                linestyle = "dashed",
+                linewidth = 1.0
+            )
+
+            #-------------------------------------------------------------------
+            # Additional figure styling
+            #-------------------------------------------------------------------
             # Aspect ratio
             ll: int
             mm: int
@@ -252,7 +325,7 @@ def main():
             #-------------------------------------------------------------------
             # Save the plot to file
             #-------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_sfc.{}.{}.png".format(day_str, lr_str)
+            plt_filename = "rte_rrtmgp_cpp_rad_tran_sfc_snapshot.{}.{}.png".format(lr_str, day_str)
             plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
             fig.savefig(plt_filepath, dpi = 200)
             plt.close(fig)

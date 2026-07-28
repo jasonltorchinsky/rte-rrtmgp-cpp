@@ -18,23 +18,22 @@ import numpy as np
 import xarray as xr
 
 # Local imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY
-from consts.numeric import NP_SMALL
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_FIGURE, MPL_AXES
 from consts.visual import plot_colors
-from rte_rrtmgp_cpp import find_inout_pairs, \
-    calc_sw_heating, calc_sw_flux_abs, print_msg
+from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_szas, find_times, \
+    calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, calc_sw_flux_sfc_dn, \
+    calc_sw_reflectance, calc_z_max_info, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-correlation"
-prog_desc: str = "Visualize correlations between ray-tracer and two-stream solvers of RTE-RRTMGP-CPP."
+prog_name: str = "plot-rte-rrtmgp-cpp-error-timeseries"
+prog_desc: str = "Visualize error for radiative transfer for RTE-RRTMGP-CPP."
 
 def main():
     #---------------------------------------------------------------------------
     # Parse command-line input
     #---------------------------------------------------------------------------
-    current_time: str = datetime.now().strftime("%H:%M:%S")
-    msg: str = "[{}]: Parsing command-line input...".format(current_time)
-    print(msg, flush = True)
+    msg: str = "Parsing command-line input..."
+    print_msg(msg)
 
     parser: ArgumentParser = ArgumentParser(prog = prog_name,
         description = prog_desc)
@@ -50,12 +49,15 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", nargs = "?", default = False, type = bool,
         help = "Re-calculate surface heating rates.")
-    parser.add_argument("--z-max", nargs = "?", default = 16., type = float,
+    parser.add_argument("--z-max", nargs = "?", default = 0., type = float,
         help = "Maximum height for calculations [km].")
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Coarsening factors to process, e.g., 1,2,8,64.")
-        
+    parser.add_argument("--error-types", action = "store",
+        nargs = "?", type = str, required = False, default = None,
+        help = "Error types to calculate, e.g., mae,mbe,rmse.")
+
     args: Namespace = parser.parse_args()
 
     rad_tran_indir: str = os.path.normpath(args.rad_tran_indir)
@@ -63,11 +65,17 @@ def main():
     rad_tran_vizdir: str = os.path.normpath(args.rad_tran_vizdir)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
-    z_max: NP_REAL = NP_REAL(args.z_max)
+    z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
     if args.coarse_factors is not None:
         coarse_factors = np.sort(np.array(args.coarse_factors.split(","), dtype = NP_INT))[::-1]
+
+    error_types: list[str]
+    if args.error_types is not None:
+        error_types = args.error_types.split(",")
+    else:
+        error_types = ["mae", "mbe", "rmse"]
 
     #---------------------------------------------------------------------------
     # Ensure directories exist
@@ -89,234 +97,295 @@ def main():
 
     lr_re: re.Pattern = re.compile("lr_..")
 
+    #---------------------------------------------------------------------------
+    # Calculate relevant quantities at each resolution for each day
+    #---------------------------------------------------------------------------
+    reflectance_rt: dict = {}
+    reflectance_ts: dict = {}
+    reflectance_corr: dict = {}
+    flux_sfc_dn_rt: dict = {}
+    flux_sfc_dn_ts: dict = {}
+    flux_sfc_dn_corr: dict = {}
+    heating_rt: dict = {}
+    heating_ts: dict = {}
+    heating_corr: dict = {}
+
+    reflectance_anticorr: bool = False
+    flux_sfc_dn_anticorr: bool = False
+    flux_abs_anticorr: bool = False
+    heating_anticorr: bool = False
+
+    #---------------------------------------------------------------------------
+    # Loop through resolutions
+    #---------------------------------------------------------------------------
     int: ii
     for ii in range(0, nfiles):
         rad_tran_infile: str = rad_tran_infiles[ii]
         rad_tran_outfile: str = rad_tran_outfiles[ii]
 
-        lr_str: str = lr_re.search(rad_tran_infile).group()
+        coarse_factor_str: str = lr_re.search(rad_tran_infile).group()
 
-        msg: str = "Processing {}...".format(lr_str)
+        msg: str = "Processing {}...".format(coarse_factor_str)
         print_msg(msg)
 
         #-----------------------------------------------------------------------
-        # Obtain grid information
+        # Set up dicts for this resolution
         #-----------------------------------------------------------------------
-        msg: str = "Obtaining grid information..."
+        reflectance_rt[coarse_factor_str] = {}
+        reflectance_ts[coarse_factor_str] = {}
+        reflectance_corr[coarse_factor_str] = {}
+        flux_sfc_dn_rt[coarse_factor_str] = {}
+        flux_sfc_dn_ts[coarse_factor_str] = {}
+        flux_sfc_dn_corr[coarse_factor_str] = {}
+        heating_rt[coarse_factor_str] = {}
+        heating_ts[coarse_factor_str] = {}
+        heating_corr[coarse_factor_str] = {}
+
+        #-----------------------------------------------------------------------
+        # Obtain daytime indices, times, SZAs
+        #-----------------------------------------------------------------------
+        msg: str = "Obtaining daytime information..."
         print_msg(msg)
-        grid: dict = find_grid(rad_tran_infile)
+
+        daytime_indices: NP_ARRAY[NP_INT] = find_daytime_indices(rad_tran_infile) # Time indices for each day; [ndays; time_per_day]
+        daytime_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, daytime_indices) # Time since simulation start; [h]; [ndays, 3]
+        daytime_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, daytime_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
+        ndays: NP_INT = NP_INT(daytime_indices.shape[0])
+        z_max_info: dict = calc_z_max_info(rad_tran_infile, z_max = z_max)
 
         #-----------------------------------------------------------------------
-        # Obtain Morning-Noon-Night time indices, times, SZAs, z_max index
+        # Calculate fields for each each day
         #-----------------------------------------------------------------------
-        msg: str = "Obtaining morning-noon-night information..."
-        print_msg(msg)
-
-        mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
-        mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
-        mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
-        ndays: NP_INT = NP_INT(mnn_indices.shape[0])
-
-        #-----------------------------------------------------------------------
-        # Calculate fields for each MNN of each day
-        #-----------------------------------------------------------------------
-        int: jj
+        jj: int
         for jj in range(0, ndays):
-            day_str: str = "day_{}".format(jj)
-
             #-------------------------------------------------------------------
-            # Calculate spatial extent of plots based on maximal cloud water content
+            # Calculate upwelling top-of-domain flux
             #-------------------------------------------------------------------
-            msg: str = "Calculating plot spatial extent for day {} of {}...".format(jj, ndays - 1)
+            msg: str = "Calculating reflectance for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj], z_max = z_max) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
-            z_max: NP_REAL = NP_REAL(cloud_wc["lay"].max()) * 1.e-3 # Overwrite z_max with the highest layer midpoint lower than original z_max; [m] => [km]
+            reflectance_rt[coarse_factor_str][jj] = calc_sw_reflectance(
+                rad_tran_infile,
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "rt") # Shortwave upwelling top-of-domain flux, ray-tracer; [W m^{-2}]; [time, y, x]
+
+            reflectance_ts[coarse_factor_str][jj] = calc_sw_reflectance(
+                rad_tran_infile,
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "ts") # Shortwave upwelling top-of-domain flux, two-stream; [W m^{-2}]; [time, y, x]
+
+            reflectance_corr[coarse_factor_str][jj] = xr.corr(
+                reflectance_rt[coarse_factor_str][jj],
+                reflectance_ts[coarse_factor_str][jj],
+                dim = ["y", "x"]
+            )
+
+            if reflectance_corr[coarse_factor_str][jj].min() < 0.0:
+                reflectance_anticorr = True
+
+            #-------------------------------------------------------------------
+            # Calculate downwelling surface flux
+            #-------------------------------------------------------------------
+            msg: str = "Calculating downwelling surface fluxes for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
+
+            flux_sfc_dn_rt[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "rt") # Shortwave downwelling surface flux, ray-tracer; [W m^{-2}]; [time, y, x]
+
+            flux_sfc_dn_ts[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "ts") # Shortwave downwelling surface flux, two-stream; [W m^{-2}]; [time, y, x]
+
+            flux_sfc_dn_corr[coarse_factor_str][jj] = xr.corr(
+                flux_sfc_dn_rt[coarse_factor_str][jj],
+                flux_sfc_dn_ts[coarse_factor_str][jj],
+                dim = ["y", "x"]
+            )
+
+            if flux_sfc_dn_corr[coarse_factor_str][jj].min() < 0.0:
+                flux_sfc_dn_anticorr = True
+
+            #-------------------------------------------------------------------
+            # Calculate heating rates
+            #-------------------------------------------------------------------
+            msg: str = "Calculating heating rates for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
+
+            heating_rt[coarse_factor_str][jj] = calc_sw_heating(
+                rad_tran_infile,
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                z_max_info = z_max_info,
+                solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [ntime, lay, y, x]
+
+            heating_ts[coarse_factor_str][jj] = calc_sw_heating(
+                rad_tran_infile,
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                z_max_info = z_max_info,
+                solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [ntime, lay, y, x]
+
+            heating_corr[coarse_factor_str][jj] = xr.corr(
+                heating_rt[coarse_factor_str][jj],
+                heating_ts[coarse_factor_str][jj],
+                dim = ["lay", "y", "x"]
+            )
+
+            if heating_corr[coarse_factor_str][jj].min() < 0.0:
+                heating_anticorr = True
         
-            x_indices: NP_ARRAY[NP_INT] = np.array([np.unravel_index(np.argmax(cloud_wc.isel(time = ll).to_numpy()), cloud_wc.shape[1:])[2] for ll in range(0, 3)])
-            y_slice_width: NP_REAL = 3. * z_max # Width of y-slices [km]
-            y_islices: list[slice] = [[] for _ in range(0, 3)]
-            for ll in range(0, 3):
-                y_islices[ll] = find_y_islice(grid["y"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
+    #-----------------------------------------------------------------------
+    # Set up figure for plotting
+    #-----------------------------------------------------------------------
+    msg: str = "Setting up figure..."
+    print_msg(msg)
 
-            #-------------------------------------------------------------------
-            # Calculate desired atmospheric and radiative quantities
-            #-------------------------------------------------------------------
-            msg: str = "Calculating desired atmospheric quantities for day {} of {}...".format(jj, ndays - 1)
-            print_msg(msg)
+    nrows: NP_INT = NP_INT(3)
+    ncols: NP_INT = NP_INT(ndays)
+    fig_height: NP_REAL = NP_REAL(8.)
+    fig_width: NP_REAL = (NP_REAL(ncols) / NP_REAL(nrows)) * fig_height
+    fig_size: list[NP_REAL] = [fig_width, fig_height]
+    fig: MPL_FIGURE
+    axs: MPL_AXES
+    fig, axs = plt.subplots(
+        nrows = nrows, ncols = ncols,
+        sharex = "col", sharey = "row",
+        constrained_layout = True,
+        figsize = fig_size)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, 
-                time_indices = mnn_indices[jj], 
-                x_indices = x_indices, 
-                z_max = z_max) # Cloud water content; [g m^{-3}]; [slice, lay, y]
-            sw_heating_rt: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
-                rad_tran_outfile,
-                time_indices = mnn_indices[jj], 
-                x_indices = x_indices, 
-                z_max = z_max,
-                solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [slice, lay, y]
-            sw_heating_ts: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
-                rad_tran_outfile,
-                time_indices = mnn_indices[jj], 
-                x_indices = x_indices, 
-                z_max = z_max,
-                solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [slice, lay, y]
+    if ncols == 1:
+        axs = axs[...,None]
+    elif nrows == 1:
+        axs = axs[None,...]
 
-            # current_time: str = datetime.now().strftime("%H:%M:%S")
-            # msg: str = "[{}]: Calculating absorbed fluxes for day {} of {}...".format(current_time, jj, ndays - 1)
-            # print(msg, flush = True)
-
-            # sw_flux_abs_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-            #     mnn_indices[jj], x_indices, solver = "rt", z_max = z_max) # Shortwave absorbed flux, ray-tracer; [W m^{-3}]; 3 * [lev, y]
-
-            # sw_flux_abs_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-            #     mnn_indices[jj], x_indices, solver = "ts", z_max = z_max) # Shortwave absorbed flux, two-stream; [W m^{-3}]; 3 * [lev, y]
-
-            #-------------------------------------------------------------------
-            # Trim fields to the yz-slice
-            #-------------------------------------------------------------------
-            cloud_wc: list[XR_DATAARRAY] = [(cloud_wc
-                .isel(y = y_islices[ll], slice = ll)
-                .load()) for ll in range(0, 3)]   
-            sw_heating_rt: list[XR_DATAARRAY] = [(sw_heating_rt
-                .isel(y = y_islices[ll], slice = ll)
-                .load()) for ll in range(0, 3)]
-            sw_heating_ts: list[XR_DATAARRAY] = [(sw_heating_ts
-                .isel(y = y_islices[ll], slice = ll)
-                .load()) for ll in range(0, 3)]
-
-            #-------------------------------------------------------------------
-            # Trim grids to the yz-slice
-            #-------------------------------------------------------------------
-            yh_islices: list[slice] = [slice(
-                    y_islices[ll].start, y_islices[ll].stop + 1
-                ) for ll in range(0, 3)]
-            yh: list[XR_DATAARRAY] = [(grid["yh"]
-                .isel(yh = yh_islices[ll])
-                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
-
-            zh_islices: list[slice] = [slice(
-                    0,
-                    grid["zh"].to_index().searchsorted(z_max * 1.e3, side = "left") + 1 # [km] => [m]
-                ) for ll in range(0, 3)]
-            zh: list[XR_DATAARRAY] = [(grid["zh"]
-                .isel(zh = zh_islices[ll])
-                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
-            
-            #-------------------------------------------------------------------
-            # Obtain data bounds
-            #-------------------------------------------------------------------
-            cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(0, 3)]
-            cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(0, 3)]
-
-            sw_heating_max: list[NP_REAL] = [max(NP_REAL(sw_heating_ts[ll].max()), NP_REAL(sw_heating_rt[ll].max())) for ll in range(0, 3)]
-            sw_heating_min: list[NP_REAL] = [min(NP_REAL(sw_heating_ts[ll].min()), NP_REAL(sw_heating_rt[ll].min())) for ll in range(0, 3)]
-
-            # sw_flux_abs_max: list[NP_REAL] = [max(sw_flux_abs_ts[ll].max(), sw_flux_abs_rt[ll].max()) for ll in range(3)]
-            # sw_flux_abs_min: list[NP_REAL] = [min(sw_flux_abs_ts[ll].min(), sw_flux_abs_rt[ll].min()) for ll in range(3)]
-
-            #-------------------------------------------------------------------
-            # Plot the data
-            #-------------------------------------------------------------------
-            msg: str = "Plotting data..."
-            print_msg(msg)
-
-            nrows: NP_INT = NP_INT(3)
-            ncols: NP_INT = NP_INT(3)
-            fig_height: NP_REAL = NP_REAL(6.)
-            fig_base_size = np.array([(y_slice_width / z_max) * fig_height, fig_height])
-            fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
-                sharex = "col", sharey = True,
-                constrained_layout = True,
-                figsize = 3. * fig_base_size)
-
-            # Row 0: Cloud Water Content
-            cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            ll: int
-            for ll in range(0, ncols):
-                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(yh[ll], zh[ll], cloud_wc[ll],
-                    vmin = cloud_wc_min[ll], vmax = cloud_wc_max[ll],
-                    cmap = cw_cmap, shading = "flat")
-
-            # Row 1: Heating, Two-Stream
-            sw_heating_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            ll: int
-            for ll in range(0, ncols):
-                sw_heating_ts_pcm[ll] = axs[1, ll].pcolormesh(yh[ll], zh[ll], sw_heating_ts[ll],
-                    norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
-                    cmap = heating_cmap, shading = "flat")
-
-            # Row 2: Heating, Ray-Tracer
-            sw_heating_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            ll: int
-            for ll in range(0, ncols):
-                sw_heating_rt_pcm[ll] = axs[2, ll].pcolormesh(yh[ll], zh[ll], sw_heating_rt[ll],
-                    norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
-                    cmap = heating_cmap, shading = "flat")
-
-            # # Row 3: Absorbed Flux, Two-Stream
-            # sw_flux_abs_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            # ll: int
-            # for ll in range(0, ncols):
-            #     sw_flux_abs_ts_pcm[ll] = axs[3, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_ts[ll],
-            #         norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
-            #         cmap = flux_cmap)
-
-            # # Row 4: Absorbed Flux, Ray-Tracer
-            # sw_flux_abs_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            # ll: int
-            # for ll in range(0, ncols):
-            #     sw_flux_abs_rt_pcm[ll] = axs[4, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_rt[ll],
-            #         norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
-            #         cmap = flux_cmap)
-
-            # Colorbars
-            for ll in range(0, ncols):
-                cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll])
-                sw_heating_cbar = fig.colorbar(sw_heating_ts_pcm[ll], ax = axs[1:3,ll])
-                # sw_flux_abs_cbar = fig.colorbar(sw_flux_abs_ts_pcm[ll], ax = axs[3:5,ll])
-
-            # Labels
-            dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
-            dx_str: str
-            if dx < 1.e3:
-                dx_str = r"{:.0f} $m$".format(dx)
+    #---------------------------------------------------------------------------
+    # Loop through days
+    #---------------------------------------------------------------------------
+    jj: int
+    for jj in range(0, ndays):
+        #-----------------------------------------------------------------------
+        # Obtain quantities common across plots
+        #-----------------------------------------------------------------------
+        hres_str_list: list[str] = []
+        coarse_factor_str: str
+        for coarse_factor_str in flux_sfc_dn_rt.keys():
+            x: XR_DATAARRAY = flux_sfc_dn_rt[coarse_factor_str][jj]["x"] # [n_x]; [m]
+            dx: NP_REAL = NP_REAL(x[1] - x[0]) # [m]
+            if dx < 1.0e3:
+                hres_str_list += [r"{:.0f} $m$".format(dx)]
             else:
-                dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
+                hres_str_list += [r"{:.2f} $km$".format(dx * 1.e-3)]
+        time: XR_DATAARRAY = flux_sfc_dn_rt[coarse_factor_str][jj]["time"] # [time]; [h]
 
-            fig.suptitle("RTE-RRTMGP-CPP Radiative Transfer Snapshots - {}".format(dx_str))
-            fig.supxlabel(r"y $\left[ km \right]$")
-            fig.supylabel(r"z $\left[ km \right]$")
+        #-----------------------------------------------------------------------
+        # Plot errors at each resolution
+        #-----------------------------------------------------------------------
+        msg: str = "Plotting correlation for day {} of {}...".format(jj, ndays - 1)
+        print_msg(msg)
 
-            for ll in range(0, ncols):
-                x_pos: NP_REAL = NP_REAL(grid["x"].isel(x = x_indices[ll])) * 1.e-3 # [m] => [km]
-                col_title: str = (r"{:.2f} Hours - ".format(mnn_times[jj,ll])
-                    + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[jj,ll])
-                    + r"$x$ = {:.2f} $\left[ km \right]$".format(x_pos))
-                axs[0,ll].set_title(col_title)
-            axs[1,0].set_ylabel(r"Two-Stream")
-            axs[2,0].set_ylabel(r"Ray-Tracer")
-            # axs[3,0].set_ylabel(r"Two-Stream")
-            # axs[4,0].set_ylabel(r"Ray-Tracer")
+        nplot_colors: NP_INT = NP_INT(len(plot_colors))
 
-            cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")
-            sw_heating_cbar.ax.set_ylabel(r"Atmospheric Heating Rate $\left[ K\,d^{-1} \right]$")
-            # sw_flux_abs_cbar.ax.set_ylabel(r"Absorbed Shortwave Flux $\left[ W\,m^{-3} \right]$")
+        # Row 0 - Reflectance
+        ii: int
+        for ii in range(0, coarse_factors.size):
+            coarse_factor: NP_INT = coarse_factors[ii]
+            coarse_factor_str: str = "lr_{:02}".format(coarse_factor)
 
-            # Aspect ratio
-            ll: int
-            mm: int
-            for ll in range(0, nrows):
-                for mm in range(0, ncols):
-                    axs[ll,mm].set_aspect("equal")
+            axs[0,jj].plot(time, reflectance_corr[coarse_factor_str][jj],
+                linewidth = 1.0,
+                color = plot_colors[ii % nplot_colors],
+                label = hres_str_list[ii])
 
-            #-------------------------------------------------------------------
-            # Save the plot to file
-            #-------------------------------------------------------------------
-            plt_filename = "rte_rrtmgp_cpp_rad_tran_snapshot.{}.{}.png".format(day_str, lr_str)
-            plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
-            fig.savefig(plt_filepath, dpi = 200)
-            plt.close(fig)
+        # Row 1 - Downwelling Surface Flux
+        ii: int
+        for ii in range(0, coarse_factors.size):
+            coarse_factor: NP_INT = coarse_factors[ii]
+            coarse_factor_str: str = "lr_{:02}".format(coarse_factor)
+
+            axs[1,jj].plot(time, flux_sfc_dn_corr[coarse_factor_str][jj],
+                linewidth = 1.0,
+                color = plot_colors[ii % nplot_colors],
+                label = hres_str_list[ii])
+
+        # Row 3 - Heating Rate
+        ii: int
+        for ii in range(0, coarse_factors.size):
+            coarse_factor: NP_INT = coarse_factors[ii]
+            coarse_factor_str: str = "lr_{:02}".format(coarse_factor)
+
+            axs[2,jj].plot(time, heating_corr[coarse_factor_str][jj],
+                linewidth = 1.0,
+                color = plot_colors[ii % nplot_colors],
+                label = hres_str_list[ii])
+
+        # Common column-wise plot elements
+        # x-ticks
+        time: NP_ARRAY[NP_REAL] = daytime_times[jj]
+        sza: NP_ARRAY[NP_REAL] = daytime_szas[jj]
+        xlim: list[NP_REAL] = np.array([time[0], time[-1]], dtype = NP_REAL)
+        time_xticks: NP_ARRAY[NP_REAL] = np.array([time[0], time[NP_INT(time.size/2)], time[-1]], dtype = NP_REAL)
+        sza_xticks: NP_ARRAY[NP_REAL] = np.array([sza[0], sza[NP_INT(time.size/2)], sza[-1]], dtype = NP_REAL)
+        sza_xtick_labels: list[str] = [r"{:.1f}$^{{\circ}}$".format(solar_zenith_angle) for solar_zenith_angle in sza_xticks]
+        ll: int
+        for ll in range(0, nrows):
+            axs[ll,jj].set_xticks(time_xticks)
+            axs[ll,jj].axvline(
+                time_xticks[1], 
+                color = "gray", 
+                linestyle = "solid", 
+                linewidth = 0.5)
+
+            ax_2: MPL_AXES = axs[ll,jj].secondary_xaxis("top")
+            if ll == 0:
+                ax_2.set_xticks(time_xticks, labels = sza_xtick_labels)
+            else:
+                ax_2.set_xticks(time_xticks, labels = [None, None, None])
+
+    #---------------------------------------------------------------------------
+    # Add plot elements
+    #---------------------------------------------------------------------------
+    fig.suptitle("Ray-Tracer / Two-Stream Correlation")
+    fig.supxlabel(r"Time $\left[ h \right]$")
+
+    ii: int
+    for ii in range(0, ndays):
+        col_title: str = "Day {}".format(ii)
+        axs[0,ii].set_title(col_title)
+    axs[0,0].set_ylabel(r"Reflectance")
+    axs[1,0].set_ylabel(r"Downwelling Surface Flux")
+    axs[2,0].set_ylabel(r"Heating Rate")
+
+    axs[0,0].legend()
+
+    anticorr_list: list[bool] = [reflectance_anticorr, flux_sfc_dn_anticorr, heating_anticorr]
+    ii: int
+    for ii in range(0, len(anticorr_list)):
+        anticorr: bool = anticorr_list[ii]
+        if anticorr:
+            for ax in axs[ii,...]:
+                ax.axhline(
+                    0, 
+                    color = "gray", 
+                    linestyle = "solid", 
+                    linewidth = 0.5
+                )
+        #         ax.set_yscale("symlog", linthresh = 1.e-1)
+        # else:
+        #     for ax in axs[ii,...]:
+        #         ax.set_yscale("log")
+
+    #---------------------------------------------------------------------------
+    # Save the plot to file
+    #---------------------------------------------------------------------------
+    plt_filename = "rte_rrtmgp_cpp_rad_tran_correlation.png"
+    plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
+    fig.savefig(plt_filepath, dpi = 256)
+    plt.close(fig)
 
 if __name__ == "__main__":
     main()

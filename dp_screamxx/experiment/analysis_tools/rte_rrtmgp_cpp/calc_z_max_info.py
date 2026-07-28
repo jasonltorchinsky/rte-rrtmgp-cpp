@@ -17,14 +17,16 @@ Calculate appropriate z_max information
 """
 def calc_z_max_info(rad_tran_infile: str,
     z_max: Optional[NP_REAL] = None,
-    method: Optional[str] = None) -> dict:
+    method: Optional[str] = "default") -> dict:
     # z_max is in [km], convert to [m] locally
 
     if z_max is None:
-        assert(method in ["tropopause", "cloud_top"])
+        assert(method in ["default", "tropopause", "cloud_top"])
 
         z_max: NP_REAL
-        if method == "tropopause":
+        if method == "default": # Maximum of tropopause height and cloud top height; [km]
+            z_max = max(calc_tropopause(rad_tran_infile), calc_cloud_top(rad_tran_infile))
+        elif method == "tropopause":
             z_max = calc_tropopause(rad_tran_infile) # Tropopause height; [km]
         else: # method == "cloud_top"
             z_max = calc_cloud_top(rad_tran_infile) # Cloud top height; [km]

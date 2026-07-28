@@ -13,5 +13,7 @@ NP_INF: NP_REAL = np.finfo(NP_REAL).max
 NP_SMALL: NP_REAL = np.sqrt(NP_EPS)
 NP_LARGE: NP_REAL = np.sqrt(NP_INF)
 
+NP_PI: NP_REAL = NP_REAL(np.pi)
+
 # MPI constants
 MPI_ROOT: NP_INT = NP_INT(0)

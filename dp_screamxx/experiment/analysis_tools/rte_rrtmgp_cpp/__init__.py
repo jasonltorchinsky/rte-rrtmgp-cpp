@@ -21,6 +21,7 @@ from .calc_sw_flux_abs import calc_sw_flux_abs
 from .calc_sw_flux_sfc_dn import calc_sw_flux_sfc_dn
 from .calc_sw_flux_tod_up import calc_sw_flux_tod_up
 from .calc_sw_heating import calc_sw_heating
+from .calc_sw_reflectance import calc_sw_reflectance
 from .calc_t import calc_t
 from .calc_tropopause import calc_tropopause
 from .calc_vmr import calc_vmr

@@ -10,8 +10,7 @@ from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATASET, XR_DAT
 """
 Calculate downwelling surface flux
 """
-def calc_sw_flux_sfc_dn(rad_tran_infile: str,
-    rad_tran_outfile: str, 
+def calc_sw_flux_sfc_dn(rad_tran_outfile: str, 
     time_indices: Optional[NP_ARRAY[NP_INT]] = None,
     solver: str = "rt") -> XR_DATAARRAY:
     assert(solver in ["rt", "ts"])

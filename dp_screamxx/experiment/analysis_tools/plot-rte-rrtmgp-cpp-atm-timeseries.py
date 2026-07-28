@@ -21,20 +21,20 @@ from scipy import ndimage
 # Local imports
 from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
 from consts.visual import flux_cmap, heating_cmap, cw_cmap
-from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, \
-    calc_cloud_wc
+from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_times, \
+    calc_cloud_wc, calc_z_max_info, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-rad-tran-snapshot"
-prog_desc: str = "Visualize absorbed shortwave flux and atmospheric heating rates for RTE-RRTMGP-CPP."
+prog_name: str = "plot-rte-rrtmgp-cpp-atm-timeseries"
+prog_desc: str = "Visualize atmsopheric state throughout the simulation."
 
 def main():
     #---------------------------------------------------------------------------
     # Parse command-line input
     #---------------------------------------------------------------------------
     current_time: str = datetime.now().strftime("%H:%M:%S")
-    msg: str = "[{}]: Parsing command-line input...".format(current_time)
-    print(msg, flush = True)
+    msg: str = "Parsing command-line input..."
+    print_msg(msg)
 
     parser: ArgumentParser = ArgumentParser(prog = prog_name,
         description = prog_desc)
@@ -47,7 +47,7 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", nargs = "?", default = False, type = bool,
         help = "Re-calculate surface heating rates.")
-    parser.add_argument("--zmax", nargs = "?", default = 16., type = float,
+    parser.add_argument("--z-max", nargs = "?", default = 0., type = float,
         help = "Maximum height for calculations [km].")
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
@@ -59,7 +59,7 @@ def main():
     rad_tran_vizdir: str = os.path.normpath(args.rad_tran_vizdir)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
-    zmax: NP_REAL = NP_REAL(args.zmax)
+    z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
     if args.coarse_factors is not None:
@@ -89,38 +89,40 @@ def main():
 
         coarse_factor_str: str = lr_re.search(rad_tran_infile).group()
 
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Processing {}...".format(current_time, coarse_factor_str)
-        print(msg, flush = True)
+        msg: str = "Processing {}...".format(coarse_factor_str)
+        print_msg(msg)
 
         #-----------------------------------------------------------------------
         # Obtain daytime indices, times, SZAs
         #-----------------------------------------------------------------------
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Obtaining daytime information...".format(current_time)
-        print(msg, flush = True)
+        msg: str = "Obtaining daytime information..."
+        print_msg(msg)
 
         daytime_indices: NP_ARRAY[NP_INT] = find_daytime_indices(rad_tran_infile) # Time indices for each day; [ndays; time_per_day]
+        daytime_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, daytime_indices) # Time since simulation start; [h]; [ndays, 3]
         ndays: NP_INT = NP_INT(daytime_indices.shape[0])
+        z_max_info: dict = calc_z_max_info(rad_tran_infile, z_max = z_max)
 
         #-----------------------------------------------------------------------
         # Set up figure for plotting
         #-----------------------------------------------------------------------
-        current_time: str = datetime.now().strftime("%H:%M:%S")
-        msg: str = "[{}]: Setting up figure...".format(current_time)
-        print(msg, flush = True)
+        msg: str = "Setting up figure..."
+        print_msg(msg)
 
         nrows: NP_INT = NP_INT(4)
         ncols: NP_INT = NP_INT(ndays)
-        fig_height: NP_REAL = NP_REAL(6.)
-        fig_base_size = np.array([(ncols / nrows) * fig_height, fig_height])
+        fig_width: NP_REAL = NP_REAL(4.25)
+        fig_height: NP_REAL = (NP_REAL(nrows) / NP_REAL(ncols)) * fig_width
+        fig_size: list[NP_REAL] = [fig_width, fig_height]
         fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
             sharex = "col", sharey = "row",
             constrained_layout = True,
-            figsize = 3. * fig_base_size)
+            figsize = fig_size)
 
-        if len(axs.shape) == 1:
+        if ncols == 1:
             axs = axs[...,None]
+        elif nrows == 1:
+            axs = axs[None,...]
 
         #-----------------------------------------------------------------------
         # Calculate fields for each each day
@@ -130,18 +132,20 @@ def main():
             #-------------------------------------------------------------------
             # Calculate cloud water content
             #-------------------------------------------------------------------
-            current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud water content for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
+            msg: str = "Calculating cloud water content for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, daytime_indices[jj,...], zmax = zmax) # Cloud water content; [g m^{-3}]; [ntime, lay, y, x]
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(
+                rad_tran_infile,
+                time_indices = daytime_indices[jj],
+                z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
 
             #-------------------------------------------------------------------
             # Calculate cloud quantities
             #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Calculating cloud water statistics for day {} of {}...".format(current_time, jj, ndays - 1)
-            print(msg, flush = True)
+            msg: str = "Calculating cloud water statistics for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
 
             # Obtain grid information
             x: XR_DATAARRAY = cloud_wc["x"] # x-coordinate of column-midpoints; [n_x]; [m]
@@ -187,8 +191,8 @@ def main():
             # Plot the data
             #-------------------------------------------------------------------
             current_time: str = datetime.now().strftime("%H:%M:%S")
-            msg: str = "[{}]: Plotting data...".format(current_time)
-            print(msg, flush = True)
+            msg: str = "Plotting data..."
+            print_msg(msg)
 
             # Row 0: Total Cloud Mass
             row: NP_INT = NP_INT(0)
@@ -232,24 +236,32 @@ def main():
 
             # Common column-wise plot elements
             # x-ticks
-            time: XR_DATARRAY = cloud_wc["time"]
-            xlim: list[NP_REAL] = np.array([time.min(), time.max()], dtype = NP_REAL)
-            xticks: NP_ARRAY[NP_REAL] = np.array([xlim[0], (xlim[0] + xlim[1]) / 2., xlim[1]], dtype = NP_REAL)
+            time: NP_ARRAY[NP_REAL] = daytime_times[jj]
+            xlim: list[NP_REAL] = np.array([time[0], time[-1]], dtype = NP_REAL)
+            time_xticks: NP_ARRAY[NP_REAL] = np.array([time[0], time[NP_INT(time.size/2)], time[-1]], dtype = NP_REAL)
             ll: int
             for ll in range(0, nrows):
-                axs[ll,jj].set_xticks(xticks)
-                axs[ll,jj].axvline(xticks[1], color = "gray", linestyle = "solid", linewidth = 0.5)
+                axs[ll,jj].set_xticks(time_xticks)
+                axs[ll,jj].axvline(time_xticks[1],
+                    color = "gray",
+                    linestyle = "solid",
+                    linewidth = 0.5)
 
         # Labels
-        fig.suptitle("RTE-RRTMGP-CPP Atmosphere Time Series")
+        dx_str: str
+        if dx < 1.e3:
+            dx_str = r"{:.0f} $m$".format(dx)
+        else:
+            dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
+        fig.suptitle("Cloud Distribution - {}".format(dx_str))
         fig.supxlabel(r"Time $\left[ h \right]$")
 
         for jj in range(0, ndays):
             col_title: str = "Day {}".format(jj)
             axs[0,jj].set_title(col_title)
-        axs[0,0].set_ylabel(r"Total Cloud Water Mass $\left[ kg \right]$")
-        axs[1,0].set_ylabel(r"Column Cloud Water Mass $\left[ kg \right]$")
-        axs[2,0].set_ylabel(r"Layer Cloud Water Mass $\left[ kg \right]$")
+        axs[0,0].set_ylabel(r"Total CWM $\left[ kg \right]$")
+        axs[1,0].set_ylabel(r"Column CWM $\left[ kg \right]$")
+        axs[2,0].set_ylabel(r"Layer CWM $\left[ kg \right]$")
         axs[3,0].set_ylabel(r"Number of Clouds")
 
         #-------------------------------------------------------------------

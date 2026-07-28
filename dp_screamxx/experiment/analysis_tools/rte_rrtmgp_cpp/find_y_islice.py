@@ -31,12 +31,14 @@ def find_y_islice(y: NP_ARRAY[NP_REAL], field: XR_DATAARRAY, slice_width: NP_REA
         # Don't have to worry about shifting window past the edge after this block
         # because the window is not as wide as the domain
         if y_slice_start < y.min():
-            y_slice_start += NP_REAL(y.min() - y_slice_start)
-            y_slice_end += NP_REAL(y.min() - y_slice_start)
+            dy: NP_REAL = NP_REAL(y.min() - y_slice_start)
+            y_slice_start += dy
+            y_slice_end += dy
 
         if y_slice_end > y.max():
-            y_slice_start += NP_REAL(y.max() - y_slice_end)
-            y_slice_end += NP_REAL(y.max() - y_slice_end)
+            dy: NP_REAL = NP_REAL(y_slice_end - y.max())
+            y_slice_start -= dy
+            y_slice_end -= dy
 
     y_islice_start: NP_INT = NP_INT(np.argmin(np.abs(NP_REAL(y.to_numpy()) - y_slice_start)))
     y_islice_end: NP_INT = NP_INT(np.argmin(np.abs(NP_REAL(y.to_numpy()) - y_slice_end))) + 1

@@ -18,9 +18,9 @@ import numpy as np
 import xarray as xr
 
 # Local imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_PCOLORMESH
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_FIGURE, MPL_AXES, MPL_PCOLORMESH
 from consts.numeric import NP_SMALL
-from consts.visual import flux_cmap, heating_cmap, cw_cmap
+from consts.visual import diff_cmap, flux_cmap, heating_cmap, cw_cmap
 from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_times, \
     calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, calc_z_max_info, find_grid, find_y_islice, print_msg
 
@@ -112,11 +112,19 @@ def main():
         msg: str = "Obtaining morning-noon-night information..."
         print_msg(msg)
 
-        mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
-        mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
+        mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(
+            rad_tran_infile
+            ) # [ndays, 3]
+        mnn_times: NP_ARRAY[NP_REAL] = find_times(
+            rad_tran_infile, 
+            mnn_indices
+            ) # Time since simulation start; [h]; [ndays, 3]
         mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
         ndays: NP_INT = NP_INT(mnn_indices.shape[0])
-        z_max_info: dict = calc_z_max_info(rad_tran_infile, method = "cloud_top")
+        z_max_info: dict = calc_z_max_info(
+            rad_tran_infile, 
+            z_max = z_max
+            )
 
         #-----------------------------------------------------------------------
         # Calculate fields for each MNN of each day
@@ -131,7 +139,8 @@ def main():
             msg: str = "Calculating plot spatial extent for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile,
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(
+                rad_tran_infile,
                 time_indices = mnn_indices[jj],
                 z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
         
@@ -139,7 +148,11 @@ def main():
             y_slice_width: NP_REAL = 3. * z_max_info["zh_max"] # Width of y-slices [km]
             y_islices: list[slice] = [[] for _ in range(0, 3)]
             for ll in range(0, 3):
-                y_islices[ll] = find_y_islice(grid["y"], cloud_wc.isel(time = ll, x = x_indices[ll]), slice_width = y_slice_width)
+                y_islices[ll] = find_y_islice(
+                    grid["y"],
+                    cloud_wc.isel(time = ll, x = x_indices[ll]),
+                    slice_width = y_slice_width
+                )
 
             #-------------------------------------------------------------------
             # Calculate desired atmospheric and radiative quantities
@@ -147,32 +160,26 @@ def main():
             msg: str = "Calculating desired atmospheric quantities for day {} of {}...".format(jj, ndays - 1)
             print_msg(msg)
 
-            cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, 
+            cloud_wc: XR_DATAARRAY = calc_cloud_wc(
+                rad_tran_infile, 
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
                 z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [slice, lay, y]
-            sw_heating_rt: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
+            sw_heating_rt: XR_DATAARRAY = calc_sw_heating(
+                rad_tran_infile,
                 rad_tran_outfile,
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
                 z_max_info = z_max_info,
                 solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [slice, lay, y]
-            sw_heating_ts: XR_DATAARRAY = calc_sw_heating(rad_tran_infile,
+            sw_heating_ts: XR_DATAARRAY = calc_sw_heating(
+                rad_tran_infile,
                 rad_tran_outfile,
                 time_indices = mnn_indices[jj], 
                 x_indices = x_indices, 
                 z_max_info = z_max_info,
                 solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [slice, lay, y]
 
-            # current_time: str = datetime.now().strftime("%H:%M:%S")
-            # msg: str = "[{}]: Calculating absorbed fluxes for day {} of {}...".format(current_time, jj, ndays - 1)
-            # print(msg, flush = True)
-
-            # sw_flux_abs_rt: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-            #     mnn_indices[jj], x_indices, solver = "rt", z_max = z_max) # Shortwave absorbed flux, ray-tracer; [W m^{-3}]; 3 * [lev, y]
-
-            # sw_flux_abs_ts: list[NP_ARRAY[NP_REAL]] = calc_sw_flux_abs(rad_tran_infile, rad_tran_outfile,
-            #     mnn_indices[jj], x_indices, solver = "ts", z_max = z_max) # Shortwave absorbed flux, two-stream; [W m^{-3}]; 3 * [lev, y]
 
             #-------------------------------------------------------------------
             # Trim fields to the yz-slice
@@ -188,6 +195,13 @@ def main():
                 .load()) for ll in range(0, 3)]
 
             #-------------------------------------------------------------------
+            # Calculate differences
+            #-------------------------------------------------------------------
+            sw_heating_diff: list[XR_DATAARRAY] = [
+                (sw_heating_rt[ll] - sw_heating_ts[ll])
+                for ll in range(0, 3)]
+
+            #-------------------------------------------------------------------
             # Trim grids to the yz-slice
             #-------------------------------------------------------------------
             yh_islices: list[slice] = [slice(
@@ -200,6 +214,14 @@ def main():
             zh: list[XR_DATAARRAY] = [(grid["zh"]
                 .isel(zh = z_max_info["isel_indexers"]["zh"])
                 .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
+
+            y: list[XR_DATAARRAY] = [(grid["y"]
+                .isel(y = y_islices[ll])
+                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
+
+            z: list[XR_DATAARRAY] = [(grid["z"]
+                .isel(z = z_max_info["isel_indexers"]["z"])
+                .load()) * 1.e-3 for ll in range(0, 3)] # [m] => [km]
             
             #-------------------------------------------------------------------
             # Obtain data bounds
@@ -207,11 +229,18 @@ def main():
             cloud_wc_max: list[NP_REAL] = [cloud_wc[ll].max() for ll in range(0, 3)]
             cloud_wc_min: list[NP_REAL] = [cloud_wc[ll].min() for ll in range(0, 3)]
 
-            sw_heating_max: list[NP_REAL] = [max(NP_REAL(sw_heating_ts[ll].max()), NP_REAL(sw_heating_rt[ll].max())) for ll in range(0, 3)]
-            sw_heating_min: list[NP_REAL] = [min(NP_REAL(sw_heating_ts[ll].min()), NP_REAL(sw_heating_rt[ll].min())) for ll in range(0, 3)]
+            sw_heating_max: list[NP_REAL] = [max(
+                NP_REAL(sw_heating_ts[ll].max()), 
+                NP_REAL(sw_heating_rt[ll].max())) 
+                for ll in range(0, 3)]
+            sw_heating_min: list[NP_REAL] = [min(
+                NP_REAL(sw_heating_ts[ll].min()), 
+                NP_REAL(sw_heating_rt[ll].min())) 
+                for ll in range(0, 3)]
 
-            # sw_flux_abs_max: list[NP_REAL] = [max(sw_flux_abs_ts[ll].max(), sw_flux_abs_rt[ll].max()) for ll in range(3)]
-            # sw_flux_abs_min: list[NP_REAL] = [min(sw_flux_abs_ts[ll].min(), sw_flux_abs_rt[ll].min()) for ll in range(3)]
+            sw_heating_diff_max: list[NP_REAL] = [
+                NP_REAL(np.abs(sw_heating_diff[ll]).max()) 
+                for ll in range(0, 3)]
 
             #-------------------------------------------------------------------
             # Plot the data
@@ -219,60 +248,86 @@ def main():
             msg: str = "Plotting data..."
             print_msg(msg)
 
-            nrows: NP_INT = NP_INT(3)
-            ncols: NP_INT = NP_INT(3)
-            fig_height: NP_REAL = NP_REAL(6.)
-            fig_base_size = np.array([(y_slice_width / z_max_info["zh_max"]) * fig_height, fig_height])
+            nrows: NP_INT = NP_INT(4)
+            ncols: NP_INT = NP_INT(2)
+            fig_height: NP_REAL = NP_REAL(6.5)
+            fig_width: NP_REAL = (y_slice_width / z_max_info["zh_max"]) * (NP_REAL(ncols) / NP_REAL(nrows)) * fig_height
+            fig_size: list[NP_REAL] = [fig_width, fig_height]
+            fig: MPL_FIGURE
+            axs: MPL_AXES
             fig, axs = plt.subplots(nrows = nrows, ncols = ncols,
                 sharex = "col", sharey = True,
                 constrained_layout = True,
-                figsize = 3. * fig_base_size)
+                figsize = fig_size)
+
+            linthresh: NP_REAL = 1.0 # Linear threshold for symlog scale
 
             # Row 0: Cloud Water Content
             cloud_wc_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(yh[ll], zh[ll], cloud_wc[ll],
-                    norm = colors.LogNorm(vmin = max(1.e-6, cloud_wc_min[ll]), vmax = cloud_wc_max[ll]),
+                cloud_wc_pcm[ll] = axs[0, ll].pcolormesh(
+                    yh[ll],
+                    zh[ll],
+                    cloud_wc[ll],
+                    norm = colors.LogNorm(
+                        vmin = max(1.e-2, min(cloud_wc_min)), 
+                        vmax = max(cloud_wc_max)),
                     cmap = cw_cmap, shading = "flat")
 
             # Row 1: Heating, Two-Stream
             sw_heating_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                sw_heating_ts_pcm[ll] = axs[1, ll].pcolormesh(yh[ll], zh[ll], sw_heating_ts[ll],
-                    norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
+                sw_heating_ts_pcm[ll] = axs[1,ll].pcolormesh(
+                    yh[ll], 
+                    zh[ll], 
+                    sw_heating_ts[ll],
+                    norm = colors.LogNorm(
+                        vmin = min(sw_heating_min), 
+                        vmax = max(sw_heating_max)),
                     cmap = heating_cmap, shading = "flat")
 
             # Row 2: Heating, Ray-Tracer
             sw_heating_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
             ll: int
             for ll in range(0, ncols):
-                sw_heating_rt_pcm[ll] = axs[2, ll].pcolormesh(yh[ll], zh[ll], sw_heating_rt[ll],
-                    norm = colors.LogNorm(vmin = sw_heating_min[ll], vmax = sw_heating_max[ll]),
+                sw_heating_rt_pcm[ll] = axs[2,ll].pcolormesh(
+                    yh[ll], 
+                    zh[ll], 
+                    sw_heating_rt[ll],
+                    norm = colors.LogNorm(
+                        vmin = min(sw_heating_min), 
+                        vmax = max(sw_heating_max)),
                     cmap = heating_cmap, shading = "flat")
 
-            # # Row 3: Absorbed Flux, Two-Stream
-            # sw_flux_abs_ts_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            # ll: int
-            # for ll in range(0, ncols):
-            #     sw_flux_abs_ts_pcm[ll] = axs[3, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_ts[ll],
-            #         norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
-            #         cmap = flux_cmap)
-
-            # # Row 4: Absorbed Flux, Ray-Tracer
-            # sw_flux_abs_rt_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
-            # ll: int
-            # for ll in range(0, ncols):
-            #     sw_flux_abs_rt_pcm[ll] = axs[4, ll].pcolormesh(y_slices[ll], z, sw_flux_abs_rt[ll],
-            #         norm = colors.LogNorm(vmin = sw_flux_abs_min[ll], vmax = sw_flux_abs_max[ll]),
-            #         cmap = flux_cmap)
-
-            # Colorbars
+            # Row 3: Heating, Difference
+            sw_heating_diff_pcm: list[MPL_PCOLORMESH] = [[] for _ in range(0, ncols)]
+            ll: int
             for ll in range(0, ncols):
-                cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[ll], ax = axs[0,ll], extend = "min")
-                sw_heating_cbar = fig.colorbar(sw_heating_ts_pcm[ll], ax = axs[1:3,ll])
-                # sw_flux_abs_cbar = fig.colorbar(sw_flux_abs_ts_pcm[ll], ax = axs[3:5,ll])
+                sw_heating_diff_pcm[ll] = axs[3,ll].pcolormesh(
+                    yh[ll], 
+                    zh[ll], 
+                    sw_heating_diff[ll],
+                    norm = colors.SymLogNorm(
+                        linthresh = linthresh,
+                        vmin = -max(sw_heating_diff_max),
+                        vmax = max(sw_heating_diff_max)),
+                    cmap = diff_cmap, shading = "flat")
+
+                axs[3,ll].contour(
+                    y[ll],
+                    z[ll],
+                    sw_heating_diff[ll],
+                    levels = [-linthresh, linthresh],
+                    colors = "k",
+                    linewidths = 1.0,
+                    negative_linestyles = "dashed"
+                )
+
+            cloud_wc_cbar = fig.colorbar(cloud_wc_pcm[0], ax = axs[0,:], extend = "min")
+            sw_heating_cbar = fig.colorbar(sw_heating_ts_pcm[0], ax = axs[1:3,:])
+            sw_heating_diff_cbar = fig.colorbar(sw_heating_diff_pcm[0], ax = axs[3,:])
 
             # Labels
             dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
@@ -282,24 +337,47 @@ def main():
             else:
                 dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
 
-            fig.suptitle("RTE-RRTMGP-CPP Radiative Transfer Snapshots - {}".format(dx_str))
+            fig.suptitle(r"Heating Rate $\left[ K\,d^{-1} \right]$" + " - {}".format(dx_str))
             fig.supxlabel(r"y $\left[ km \right]$")
             fig.supylabel(r"z $\left[ km \right]$")
 
             for ll in range(0, ncols):
                 x_pos: NP_REAL = NP_REAL(grid["x"].isel(x = x_indices[ll])) * 1.e-3 # [m] => [km]
-                col_title: str = (r"{:.2f} Hours - ".format(mnn_times[jj,ll])
-                    + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[jj,ll])
-                    + r"$x$ = {:.2f} $\left[ km \right]$".format(x_pos))
+                # col_title: str = (r"{:.2f} Hours - ".format(mnn_times[jj,ll])
+                #     + r"Solar Zenith Angle {:.1f}$^{{\circ}}$ - ".format(mnn_szas[jj,ll])
+                #     + r"$x$ = {:.2f} $\left[ km \right]$".format(x_pos))
+                col_title: str = r"SZA {:.1f}$^{{\circ}}$".format(mnn_szas[jj,ll])
                 axs[0,ll].set_title(col_title)
             axs[1,0].set_ylabel(r"Two-Stream")
             axs[2,0].set_ylabel(r"Ray-Tracer")
-            # axs[3,0].set_ylabel(r"Two-Stream")
-            # axs[4,0].set_ylabel(r"Ray-Tracer")
+            axs[3,0].set_ylabel(r"Ray-Tracer - Two-Stream")
 
-            cloud_wc_cbar.ax.set_ylabel(r"Cloud Water Content $\left[ g\,m^{-3} \right]$")
-            sw_heating_cbar.ax.set_ylabel(r"Atmospheric Heating Rate $\left[ K\,d^{-1} \right]$")
-            # sw_flux_abs_cbar.ax.set_ylabel(r"Absorbed Shortwave Flux $\left[ W\,m^{-3} \right]$")
+            cloud_wc_cbar.ax.set_ylabel(r"CWC $\left[ g\,m^{-3} \right]$")
+            sw_heating_diff_cbar.ax.set_ylabel(r"Difference")
+
+            #-------------------------------------------------------------------
+            # Additional Colorbar Elements
+            #-------------------------------------------------------------------
+            sw_heating_diff_cbar.ax.axhline(
+                linthresh,
+                color = "k",
+                linestyle = "solid",
+                linewidth = 1.0
+            )
+            sw_heating_diff_cbar.ax.axhline(
+                -linthresh,
+                color = "k",
+                linestyle = "dashed",
+                linewidth = 1.0
+            )
+
+            #-------------------------------------------------------------------
+            # Additional figure styling
+            #-------------------------------------------------------------------
+            ll: int
+            for ll in range(0, ncols):
+                for ax in axs[:,ll]:
+                    ax.set_xlim([yh[ll].min(), yh[ll].max()])
 
             # Aspect ratio
             ll: int
