@@ -84,6 +84,10 @@ def main():
         required = False,
         help = "Re-calculate timesteps for which RTE-RRTMGP-CPP input is already present."
     )
+    parser.add_argument("--preview", action = "store_true",
+        required = False,
+        help = "Preview optimal parameters for the run."
+    )
     
     args: Namespace = parser.parse_args()
 

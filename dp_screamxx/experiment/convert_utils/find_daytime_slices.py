@@ -7,6 +7,7 @@ def find_daytime_slices(infile, tol = 1.e-3, mode = "rte-rrtmgp-cpp"):
         key = "mu0"
         mu0 = xr.open_dataset(infile, engine = "netcdf4", decode_timedelta = False)[key].isel(x = 0, y = 0)
     elif mode == "dp-scream":
+        breakpoint()
         key = "cosine_solar_zenith_angle"
         mu0 = xr.open_dataset(infile, engine = "netcdf4", decode_timedelta = False)[key].isel(ncol = 0)
 

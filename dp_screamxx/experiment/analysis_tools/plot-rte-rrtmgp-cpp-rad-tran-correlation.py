@@ -10,6 +10,7 @@ if experiment_dir not in sys.path:
 from datetime import datetime
 import re
 from argparse import ArgumentParser, Namespace
+from typing import Optional
 
 # Third-Party Library Imports
 import matplotlib.colors as colors
@@ -18,7 +19,7 @@ import numpy as np
 import xarray as xr
 
 # Local imports
-from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPL_FIGURE, MPL_AXES
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATAARRAY, MPL_FIGURE, MPL_AXES
 from consts.visual import plot_colors
 from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_szas, find_times, \
     calc_cloud_wc, calc_sw_heating, calc_sw_flux_abs, calc_sw_flux_sfc_dn, \
@@ -186,31 +187,6 @@ def main():
                 reflectance_anticorr = True
 
             #-------------------------------------------------------------------
-            # Calculate downwelling surface flux
-            #-------------------------------------------------------------------
-            msg: str = "Calculating downwelling surface fluxes for day {} of {}...".format(jj, ndays - 1)
-            print_msg(msg)
-
-            flux_sfc_dn_rt[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
-                rad_tran_outfile,
-                time_indices = daytime_indices[jj,...],
-                solver = "rt") # Shortwave downwelling surface flux, ray-tracer; [W m^{-2}]; [time, y, x]
-
-            flux_sfc_dn_ts[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
-                rad_tran_outfile,
-                time_indices = daytime_indices[jj,...],
-                solver = "ts") # Shortwave downwelling surface flux, two-stream; [W m^{-2}]; [time, y, x]
-
-            flux_sfc_dn_corr[coarse_factor_str][jj] = xr.corr(
-                flux_sfc_dn_rt[coarse_factor_str][jj],
-                flux_sfc_dn_ts[coarse_factor_str][jj],
-                dim = ["y", "x"]
-            )
-
-            if flux_sfc_dn_corr[coarse_factor_str][jj].min() < 0.0:
-                flux_sfc_dn_anticorr = True
-
-            #-------------------------------------------------------------------
             # Calculate heating rates
             #-------------------------------------------------------------------
             msg: str = "Calculating heating rates for day {} of {}...".format(jj, ndays - 1)
@@ -238,6 +214,31 @@ def main():
 
             if heating_corr[coarse_factor_str][jj].min() < 0.0:
                 heating_anticorr = True
+
+            #-------------------------------------------------------------------
+            # Calculate downwelling surface flux
+            #-------------------------------------------------------------------
+            msg: str = "Calculating downwelling surface fluxes for day {} of {}...".format(jj, ndays - 1)
+            print_msg(msg)
+
+            flux_sfc_dn_rt[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "rt") # Shortwave downwelling surface flux, ray-tracer; [W m^{-2}]; [time, y, x]
+
+            flux_sfc_dn_ts[coarse_factor_str][jj] = calc_sw_flux_sfc_dn(
+                rad_tran_outfile,
+                time_indices = daytime_indices[jj,...],
+                solver = "ts") # Shortwave downwelling surface flux, two-stream; [W m^{-2}]; [time, y, x]
+
+            flux_sfc_dn_corr[coarse_factor_str][jj] = xr.corr(
+                flux_sfc_dn_rt[coarse_factor_str][jj],
+                flux_sfc_dn_ts[coarse_factor_str][jj],
+                dim = ["y", "x"]
+            )
+
+            if flux_sfc_dn_corr[coarse_factor_str][jj].min() < 0.0:
+                flux_sfc_dn_anticorr = True
         
     #-----------------------------------------------------------------------
     # Set up figure for plotting
@@ -258,7 +259,9 @@ def main():
         constrained_layout = True,
         figsize = fig_size)
 
-    if ncols == 1:
+    if (ncols == 1) and (nrows == 1):
+        axs = np.array([[axs]])
+    elif ncols == 1:
         axs = axs[...,None]
     elif nrows == 1:
         axs = axs[None,...]
@@ -301,24 +304,24 @@ def main():
                 color = plot_colors[ii % nplot_colors],
                 label = hres_str_list[ii])
 
-        # Row 1 - Downwelling Surface Flux
+        # Row 1 - Heating Rate
         ii: int
         for ii in range(0, coarse_factors.size):
             coarse_factor: NP_INT = coarse_factors[ii]
             coarse_factor_str: str = "lr_{:02}".format(coarse_factor)
 
-            axs[1,jj].plot(time, flux_sfc_dn_corr[coarse_factor_str][jj],
+            axs[1,jj].plot(time, heating_corr[coarse_factor_str][jj],
                 linewidth = 1.0,
                 color = plot_colors[ii % nplot_colors],
                 label = hres_str_list[ii])
 
-        # Row 3 - Heating Rate
+        # Row 2 - Downwelling Surface Flux
         ii: int
         for ii in range(0, coarse_factors.size):
             coarse_factor: NP_INT = coarse_factors[ii]
             coarse_factor_str: str = "lr_{:02}".format(coarse_factor)
 
-            axs[2,jj].plot(time, heating_corr[coarse_factor_str][jj],
+            axs[2,jj].plot(time, flux_sfc_dn_corr[coarse_factor_str][jj],
                 linewidth = 1.0,
                 color = plot_colors[ii % nplot_colors],
                 label = hres_str_list[ii])
@@ -349,20 +352,33 @@ def main():
     #---------------------------------------------------------------------------
     # Add plot elements
     #---------------------------------------------------------------------------
-    fig.suptitle("Ray-Tracer / Two-Stream Correlation")
+    fig.suptitle("Correlation",
+        y = 1.065)
     fig.supxlabel(r"Time $\left[ h \right]$")
 
     ii: int
     for ii in range(0, ndays):
         col_title: str = "Day {}".format(ii)
-        axs[0,ii].set_title(col_title)
+        axs[0,ii].set_title(col_title,
+            pad = 24.0)
+
     axs[0,0].set_ylabel(r"Reflectance")
-    axs[1,0].set_ylabel(r"Downwelling Surface Flux")
-    axs[2,0].set_ylabel(r"Heating Rate")
+    axs[1,0].set_ylabel(r"Heating Rate")
+    axs[2,0].set_ylabel(r"Downwelling Surface Flux")
 
-    axs[0,0].legend()
+    handles, labels = axs[0,0].get_legend_handles_labels()
+    fig.legend(
+        handles,
+        labels,
+        loc = "upper center",
+        bbox_to_anchor = (0.5, 1.04),
+        ncol = len(labels),
+        handlelength = 2.0,
+        columnspacing = 1.2,
+        handletextpad = 0.4
+    )
 
-    anticorr_list: list[bool] = [reflectance_anticorr, flux_sfc_dn_anticorr, heating_anticorr]
+    anticorr_list: list[bool] = [reflectance_anticorr, heating_anticorr, flux_sfc_dn_anticorr]
     ii: int
     for ii in range(0, len(anticorr_list)):
         anticorr: bool = anticorr_list[ii]
@@ -374,17 +390,13 @@ def main():
                     linestyle = "solid", 
                     linewidth = 0.5
                 )
-        #         ax.set_yscale("symlog", linthresh = 1.e-1)
-        # else:
-        #     for ax in axs[ii,...]:
-        #         ax.set_yscale("log")
 
     #---------------------------------------------------------------------------
     # Save the plot to file
     #---------------------------------------------------------------------------
     plt_filename = "rte_rrtmgp_cpp_rad_tran_correlation.png"
     plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
-    fig.savefig(plt_filepath, dpi = 256)
+    fig.savefig(plt_filepath, dpi = 512, bbox_inches = "tight")
     plt.close(fig)
 
 if __name__ == "__main__":

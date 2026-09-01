@@ -35,6 +35,9 @@ from matplotlib.colorbar import Colorbar as MPL_COLORBAR
 from matplotlib.figure import Figure as MPL_FIGURE
 from matplotlib.contour import QuadContourSet as MPL_CONTOUR
 from matplotlib.pyplot import pcolormesh as MPL_PCOLORMESH
+from matplotlib.colors import LinearSegmentedColormap as MPL_LINEAR_SEGMENTED_COLORMAP
+from matplotlib.colors import Normalize as MPL_NORMALIZE
+from matplotlib.colors import LogNorm as MPL_LOGNORM
 from mpi4py.MPI import Intracomm as MPI_COMM
 from netCDF4 import Dataset as NC_DATASET
 from netCDF4._netCDF4 import Dimension as NC_DIMENSION

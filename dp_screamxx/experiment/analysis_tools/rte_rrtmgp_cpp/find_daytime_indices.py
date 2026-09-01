@@ -5,16 +5,20 @@ import numpy as np
 import xarray as xr
 
 # Local imports
-from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, XR_DATASET, XR_DATAARRAY
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, \
+    XR_DATASET, XR_DATAARRAY
 
 """
 Find time indices for each day of the simulation.
 """
-def find_daytime_indices(rad_tran_infile: str, tol: NP_REAL = NP_REAL(1.e-3)) -> NP_ARRAY[NP_INT]:
+def find_daytime_indices(
+    rad_tran_infile: str, 
+    tol: NP_REAL = NP_REAL(1.e-3)
+    ) -> NP_ARRAY[NP_INT]:
     # tol: Tolerance of cosine solar zenith angle (SZA) to mark daytime
     xr_rad_tran: XR_DATASET
     with xr.open_dataset(rad_tran_infile, engine = "netcdf4", decode_timedelta = False) as xr_rad_tran:
-        mu0: XR_DATARRAY = xr_rad_tran["mu0"].isel(x = 0, y = 0) # Cosine SZA; [nt]; ASSUME- Constant throughout domain
+        mu0: XR_DATAARRAY = xr_rad_tran["mu0"].isel(x = 0, y = 0) # Cosine SZA; [nt]; ASSUME- Constant throughout domain
 
     mu0_diff: NP_ARRAY[NP_REAL] = NP_REAL(mu0.diff(dim = "time").to_numpy())
     dayends: NP_ARRAY[NP_INT] = np.where((mu0_diff[:-1] < 0) & (mu0_diff[1:] > 0))[0] + 1
