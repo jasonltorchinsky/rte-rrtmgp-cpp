@@ -711,9 +711,9 @@ def main():
                 col_title: str = (r"SZA {:.1f}$^{{\circ}}$".format(mnn_szas[jj,ll]))
                 axs[0,ll].set_title(col_title)
 
-            axs[1,0].set_ylabel(r"Two-Stream")
-            axs[2,0].set_ylabel(r"Ray-Tracer")
-            axs[3,0].set_ylabel(r"Two-Stream - Ray-Tracer")
+            axs[1,0].set_ylabel(r"TSA")
+            axs[2,0].set_ylabel(r"RT")
+            axs[3,0].set_ylabel(r"TSA - RT")
 
             vwp_cbar.ax.set_ylabel(r"Vertical CWP $\left[ g\,m^{-2} \right]$")
             reflectance_diff_cbar.ax.set_ylabel(r"Difference")

@@ -27,8 +27,8 @@ from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_t
     find_grid, print_msg
 
 # Script variables
-prog_name: str = "plot-ml3drt-reflectance-snapshot"
-prog_desc: str = "Visualize top-of-atmosphere ML3DRT reflectance state."
+prog_name: str = "plot-ml3drt-snapshot-reflectance"
+prog_desc: str = "Visualize top-of-atmosphere ML3DRT reflectance snapshot."
 
 def main():
     #---------------------------------------------------------------------------
@@ -54,6 +54,9 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", action = "store_true", default = False,
         help = "Re-calculate necessary quantities for plotting.")
+    parser.add_argument("--time-steps", action = "store", nargs = "+",
+        type = str, default = None,
+        help = "Comma-separated list of time-step indices to plot, e.g., 4,12,16,18.")
     
         
     args: Namespace = parser.parse_args()
@@ -64,6 +67,27 @@ def main():
     ml3drt_outfile: str = os.path.normpath(args.ml3drt_outfile)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
+
+    time_steps: Optional[NP_ARRAY[NP_INT]] = None
+    if args.time_steps is not None:
+        time_step_strs: list[str] = []
+        time_steps_arg: str
+        for time_steps_arg in args.time_steps:
+            time_step_strs.extend([time_step_str.strip()
+                for time_step_str in time_steps_arg.split(",")
+                if time_step_str.strip() != ""])
+
+        if len(time_step_strs) < 1:
+            raise RuntimeError("No time-step indices were provided to --time-steps.")
+
+        try:
+            time_steps = np.asarray([NP_INT(time_step_str)
+                for time_step_str in time_step_strs], dtype = NP_INT)
+        except ValueError:
+            raise RuntimeError("Unable to parse --time-steps as a list of integers.")
+
+        if np.any(time_steps < 0):
+            raise RuntimeError("--time-steps must contain non-negative integers.")
 
     #---------------------------------------------------------------------------
     # Extract coarse factor from ML3DRT output file name
@@ -118,26 +142,38 @@ def main():
         dz: NP_REAL = NP_REAL(grid["zh"][1] - grid["zh"][0])
 
         #-----------------------------------------------------------------------
-        # Obtain Morning-Noon-Night time indices, times, SZAs
+        # Obtain time indices, times, and SZAs
         #-----------------------------------------------------------------------
-        msg: str = "Obtaining morning-noon-night information..."
-        print_msg(msg)
+        if time_steps is None:
+            msg: str = "Obtaining morning-noon-night information..."
+            print_msg(msg)
 
-        mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
-        mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
-        mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
-        ndays: NP_INT = NP_INT(mnn_indices.shape[0])
+            mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
+            mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
+            mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
+            ndays: NP_INT = NP_INT(mnn_indices.shape[0])
+            ntime_groups: NP_INT = ndays
+        else:
+            msg: str = "Obtaining requested time-step information..."
+            print_msg(msg)
+
+            ntime_groups: NP_INT = NP_INT(time_steps.size)
 
         #-----------------------------------------------------------------------
-        # Calculate fields for each MNN of each day
+        # Calculate fields for each requested group of times
         #-----------------------------------------------------------------------
         jj: int
-        for jj in range(0, ndays):
-            day_str: str = "day_{}".format(jj)
+        for jj in range(0, ntime_groups):
+            if time_steps is None:
+                snapshot_str: str = "day_{}".format(jj)
+                nplots: NP_INT = NP_INT(2)
+            else:
+                time_step: NP_INT = NP_INT(time_steps[jj])
+                snapshot_str: str = "t_{:03d}".format(time_step)
+                nplots: NP_INT = NP_INT(1)
 
-            nplots: NP_INT = NP_INT(2)
             working_filename: str = "ml3drt_reflectance_snapshot.{}.{}.nc".format(
-                lr_str, day_str)
+                lr_str, snapshot_str)
             working_filepath: str = os.path.join(working_dir, working_filename)
 
             calculate: bool = recalculate or not os.path.exists(working_filepath)
@@ -146,14 +182,27 @@ def main():
                 #---------------------------------------------------------------
                 # Select times to plot
                 #---------------------------------------------------------------
-                mnn_indices_plot: NP_ARRAY[NP_INT] = mnn_indices[jj,0:nplots]
-                mnn_times_plot: NP_ARRAY[NP_REAL] = mnn_times[jj,0:nplots]
-                mnn_szas_plot: NP_ARRAY[NP_REAL] = mnn_szas[jj,0:nplots]
+                if time_steps is None:
+                    mnn_indices_plot: NP_ARRAY[NP_INT] = mnn_indices[jj,0:nplots]
+                    mnn_times_plot: NP_ARRAY[NP_REAL] = mnn_times[jj,0:nplots]
+                    mnn_szas_plot: NP_ARRAY[NP_REAL] = mnn_szas[jj,0:nplots]
+                else:
+                    mnn_indices_plot: NP_ARRAY[NP_INT] = np.array([time_step],
+                        dtype = NP_INT)
+                    mnn_times_plot: NP_ARRAY[NP_REAL] = np.asarray(
+                        find_times(rad_tran_infile, mnn_indices_plot),
+                        dtype = NP_REAL)
+                    mnn_szas_plot: NP_ARRAY[NP_REAL] = np.asarray(
+                        find_szas(rad_tran_infile, mnn_indices_plot),
+                        dtype = NP_REAL)
 
                 #---------------------------------------------------------------
                 # Calculate vertical water path
                 #---------------------------------------------------------------
-                msg: str = "Calculating vertical water path for day {} of {}...".format(jj, ndays - 1)
+                if time_steps is None:
+                    msg: str = "Calculating vertical water path for day {} of {}...".format(jj, ndays - 1)
+                else:
+                    msg: str = "Calculating vertical water path for time-step {}...".format(time_step)
                 print_msg(msg)
 
                 cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices_plot) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
@@ -162,7 +211,10 @@ def main():
                 #---------------------------------------------------------------
                 # Calculate reflectance
                 #---------------------------------------------------------------
-                msg: str = "Calculating reflectance for day {} of {}...".format(jj, ndays - 1)
+                if time_steps is None:
+                    msg: str = "Calculating reflectance for day {} of {}...".format(jj, ndays - 1)
+                else:
+                    msg: str = "Calculating reflectance for time-step {}...".format(time_step)
                 print_msg(msg)
 
                 reflectance_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_reflectance(
@@ -519,6 +571,7 @@ def main():
                 # Reflectance Difference
                 reflectance_diff_levels: NP_ARRAY[NP_REAL] = NP_REAL(
                     reflectance_diff_cbar.ax.get_yticks())
+                reflectance_diff_levels = reflectance_diff_levels[np.abs(reflectance_diff_levels) > 1.e-3]
 
                 axs[1,1].contour(
                     x,
@@ -584,7 +637,7 @@ def main():
                 #---------------------------------------------------------------
                 sza_str: str = "sza_{:02d}".format(NP_INT(np.round(mnn_szas_plot[ll])))
                 plt_filename: str = "ml3drt_reflectance_snapshot.{}.{}.{}.png".format(
-                    lr_str, day_str, sza_str)
+                    lr_str, snapshot_str, sza_str)
                 plt_filepath: str = os.path.join(rad_tran_vizdir, plt_filename)
                 fig.savefig(plt_filepath, dpi = 200)
                 plt.close(fig)

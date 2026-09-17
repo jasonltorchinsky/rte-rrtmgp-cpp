@@ -654,24 +654,32 @@ def main():
                     linewidth = 0.5, 
                     linestyle = "solid")
         elif error_type in ["corr"]:
-            for ax in axs.flatten():
-                ax.set_yscale("linear")
-
+            row: int
+            for row in range(0, nrows):
                 has_negative: bool = False
-                for line in ax.get_lines():
-                    ydata: NP_ARRAY[NP_REAL] = np.array(
-                        line.get_ydata(), dtype = NP_REAL)
 
-                    if np.any(np.isfinite(ydata) & (ydata < 0)):
-                        has_negative = True
+                col: int
+                for col in range(0, ncols):
+                    axs[row,col].set_yscale("linear")
+
+                    for line in axs[row,col].get_lines():
+                        ydata: NP_ARRAY[NP_REAL] = np.array(
+                            line.get_ydata(), dtype = NP_REAL)
+
+                        if np.any(np.isfinite(ydata) & (ydata < 0)):
+                            has_negative = True
+                            break
+
+                    if has_negative:
                         break
 
                 if has_negative:
-                    ax.axhline(
-                        0, 
-                        color = "gray", 
-                        linewidth = 0.5, 
-                        linestyle = "solid")
+                    for col in range(0, ncols):
+                        axs[row,col].axhline(
+                            0, 
+                            color = "gray", 
+                            linewidth = 0.5, 
+                            linestyle = "solid")
 
         #-----------------------------------------------------------------------
         # Save the plot to file

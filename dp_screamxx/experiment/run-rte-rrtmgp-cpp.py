@@ -47,7 +47,7 @@ def main():
         help = "Path for RTE-RRTMGP-CPP+RT output directory."
     )
     parser.add_argument("--rad-tran-exec", action = "store",
-        nargs = "?", type = str, required = True, 
+        nargs = "?", type = str, required = True,
         help = "Path for RTE-RRTMGP-CPP+RT executable."
     )
     parser.add_argument("--coarse-factors", action = "store",
@@ -68,7 +68,11 @@ def main():
     )
     parser.add_argument("--raytracing", action = "store",
         nargs = "?", type = int, required = False, default = 128,
-        help = "Number of rays-per-pixel: Default 128."
+        help = "Number of rays-per-pixel: Default 128. If 0, ray-tracing is disabled."
+    )
+    parser.add_argument("--no-raytracing", action = "store_true",
+        required = False, default = False,
+        help = "Disable ray-tracing."
     )
     parser.add_argument("--work-dir", action = "store",
         nargs = "?", type = str, required = False, default = ".working",
@@ -82,7 +86,9 @@ def main():
     rrtmgp_data_dir: str = os.path.normpath(args.rrtmgp_data_dir)
     rte_data_dir: str = os.path.normpath(args.rte_data_dir)
     work_dir: str = os.path.join(rad_tran_outdir, os.path.normpath(args.work_dir))
+    log_dir: str = os.path.join(work_dir, ".logs")
     raytracing: int = args.raytracing
+    do_raytracing: bool = (not args.no_raytracing) and (raytracing != 0)
     gpus: NP_ARRAY[NP_INT] = np.sort(np.array(args.gpus.split(","), dtype = NP_INT))
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]]
@@ -97,11 +103,13 @@ def main():
     # Create directories that don't exist
     #---------------------------------------------------------------------------
     if l_rank == MPI_ROOT:
-        dir_names: list[str] = [rad_tran_outdir, work_dir]
+        dir_names: list[str] = [rad_tran_outdir, work_dir, log_dir]
         dir_name: str
         for dir_name in dir_names:
             if not os.path.exists(dir_name):
                 os.makedirs(dir_name)
+
+    comm.Barrier()
 
     #---------------------------------------------------------------------------
     # Get RTE-RRTMGP-CPP+RT input files
@@ -184,19 +192,24 @@ def main():
     # Loop through local queue and run RTE-RRTMGP-CPP+RT on the input
     # Have to move output file when process is done
     #---------------------------------------------------------------------------
-    cmd: list[str] = [rad_tran_exec, "--cloud-optics", "--single-gpt", "--raytracing", str(raytracing)]
-    stdout: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".out")
-    stderr: str = os.path.join(l_work_dir, os.path.basename(rad_tran_exec) + ".err")
+    cmd: list[str] = [rad_tran_exec, "--cloud-optics", "--single-gpt"]
+    if do_raytracing:
+        cmd += ["--raytracing", str(raytracing)]
+
     for rad_tran_infile in rad_tran_infiles:
+        coarse_str: str = re.search(r'lr_(\d{2})', os.path.basename(rad_tran_infile)).group()
         for tt in l_time_idxs:
             current_time = datetime.now().strftime("%H:%M:%S")
             msg: str = "[{}], [Rank {}]: Processing {}, time index {}.".format(current_time, l_rank, os.path.basename(rad_tran_infile), tt)
             print(msg, flush = True)
 
-            with (xr.open_dataset(rad_tran_infile, engine = "netcdf4", 
+            with (xr.open_dataset(rad_tran_infile, engine = "netcdf4",
                 decode_timedelta = False).isel(time = tt)) as xr_rad_tran_in:
                 xr_rad_tran_in.to_netcdf(os.path.join(l_work_dir, "rte_rrtmgp_input.nc"))
-            
+
+            stdout: str = os.path.join(log_dir, os.path.basename(rad_tran_exec) + ".{}.t_{:03}.out".format(coarse_str, tt))
+            stderr: str = os.path.join(log_dir, os.path.basename(rad_tran_exec) + ".{}.t_{:03}.err".format(coarse_str, tt))
+
             with open(stdout, "w") as f_out, open(stderr, "w") as f_err:
                 proc: subprocess.Popen = subprocess.Popen(cmd, env = l_env,
                     cwd = l_work_dir, stdout = f_out, stderr = f_err,

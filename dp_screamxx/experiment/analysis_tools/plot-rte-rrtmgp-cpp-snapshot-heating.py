@@ -746,9 +746,9 @@ def main():
                 #     + r"$x$ = {:.2f} $\left[ km \right]$".format(x_pos))
                 col_title: str = r"SZA {:.1f}$^{{\circ}}$".format(NP_REAL(plot_ds["mnn_szas"].isel(day = jj, plot_slice = ll)))
                 axs[0,ll].set_title(col_title)
-            axs[1,0].set_ylabel(r"Two-Stream")
-            axs[2,0].set_ylabel(r"Ray-Tracer")
-            axs[3,0].set_ylabel(r"Two-Stream - Ray-Tracer")
+            axs[1,0].set_ylabel(r"TSA")
+            axs[2,0].set_ylabel(r"RT")
+            axs[3,0].set_ylabel(r"TSA - RT")
 
             cloud_wc_cbar.ax.set_ylabel(r"CWC $\left[ g\,m^{-3} \right]$")
             heating_diff_cbar.ax.set_ylabel(r"Difference")

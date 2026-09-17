@@ -1,23 +1,26 @@
-# Run parameters - GATEIII
+# Run parameters - GATEIII_300x300
 SCREAM_RUN_NAME=scream_dpxx_GATEIII_300x300_corrupt
 SCREAM_START_TIME=1974-08-30-00000
 RADTRAN_RUN_NAME=debug-1974-08-30
 CASE_NAME="GATEIII"
 SCENE_NAME=scene_002_lr_04
+TEST_TSTEPS=0,8,15,21,42,54,55,67,76,89
 
-# Run parameters - COMBLE
+# Run parameters - COMBLE_400x400
 # SCREAM_RUN_NAME=scream_dpxx_COMBLE_400x400
 # SCREAM_START_TIME=2020-03-12-79200
 # RADTRAN_RUN_NAME=debug-2020-03-12
 # CASE_NAME="COMBLE"
 # SCENE_NAME=scene_000_lr_04
+# TEST_TSTEPS=1,3,18,37
 
-# Run parameters - RICO
-# SCREAM_RUN_NAME=scream_dpxx_RICO_200x200
+# Run parameters - RICO_50x50
+# SCREAM_RUN_NAME=scream_dpxx_RICO_50x50
 # SCREAM_START_TIME=2004-12-16-00000
-# RADTRAN_RUN_NAME=debug-2004-12-16
+# RADTRAN_RUN_NAME=rt-2004-12-16
 # CASE_NAME="RICO"
 # SCENE_NAME=scene_001_lr_01
+# TEST_TSTEPS=2
 
 # Machine-specific DP-SCREAMXX directories - Abbreviated to SCREAM
 SCREAM_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
@@ -55,6 +58,22 @@ RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
 SCREAM_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
 EXPERIMENT_DIR=${SCREAM_DIR}/experiment
 EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analysis_tools
+
+RTE_RRTMGP_CPP_DIORAMA_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/diorama
+RTE_RRTMGP_CPP_SNAPSHOT_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/snapshot
+RTE_RRTMGP_CPP_TIMESERIES_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/timeseries
+
+mkdir -p ${RTE_RRTMGP_CPP_DIORAMA_DIR}
+mkdir -p ${RTE_RRTMGP_CPP_SNAPSHOT_DIR}
+mkdir -p ${RTE_RRTMGP_CPP_TIMESERIES_DIR}
+
+ML3DRT_DIORAMA_DIR=${RADTRAN_VIZ_DIR}/ml3drt/diorama
+ML3DRT_SNAPSHOT_DIR=${RADTRAN_VIZ_DIR}/ml3drt/snapshot
+ML3DRT_TIMESERIES_DIR=${RADTRAN_VIZ_DIR}/ml3drt/timeseries
+
+mkdir -p ${ML3DRT_DIORAMA_DIR}
+mkdir -p ${ML3DRT_SNAPSHOT_DIR}
+mkdir -p ${ML3DRT_TIMESERIES_DIR}
 
 #-------------------------------------------------------------------------------
 # CHECK DIRECTORIES AND CASE FOR ERRORS
@@ -111,7 +130,7 @@ echo "CASE NAME: ${CASE_NAME}"
 # STAGE_NAME="RTE-RRTMGP-CPP+RT Execution"
 # echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
-# mpirun -np 7 \
+# mpirun -np 11 \
 #   python ${EXPERIMENT_DIR}/run-rte-rrtmgp-cpp.py \
 #     --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #     --rad-tran-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
@@ -119,7 +138,8 @@ echo "CASE NAME: ${CASE_NAME}"
 #     --rrtmgp-data-dir ${RRTMGP_DATA_DIR} \
 #     --rte-data-dir ${RTE_DATA_DIR} \
 #     --raytracing 4096 \
-#     --gpus 9,10,11,12,13,14,15
+#     --coarse-factors 1,2,4,8,16 \
+#     --gpus 1,2,3,4,5,6,7,8,9,10,11
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
@@ -187,13 +207,12 @@ echo "CASE NAME: ${CASE_NAME}"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%T")
-STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
-echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
-# Set coarsening factors
-COARSE_FACTORS=32,64
-ZMAX=18.12996571130856
+# # Set coarsening factors
+# COARSE_FACTORS=32,64
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
@@ -251,18 +270,17 @@ ZMAX=18.12996571130856
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%T")
-STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
-echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
-# Set plotting options
-COARSE_FACTORS=2
-ZMAX=16
+# # Set plotting options
+# COARSE_FACTORS=2
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Radiative Transfer Snapshot:"
@@ -333,44 +351,44 @@ ZMAX=16
 #  --z-max 16 \
 #  --lr 16
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%T")
-STAGE_NAME="ML3DRT OUTPUT VISUALIZATION"
-echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-
-# Set plotting options
-ZMAX=16
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="ML3DRT OUTPUT VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Reflectance Snapshot:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-reflectance-snapshot.py \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-snapshot-reflectance.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/ml3drt_reflectance_snapshot \
-#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
+#  --rad-tran-vizdir ${ML3DRT_SNAPSHOT_DIR}/reflectance \
+#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH} \
+#  --time-steps ${TEST_TSTEPS}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Heating Snapshot:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-heating-snapshot.py \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-snapshot-heating.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/ml3drt_heating_snapshot \
-#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
+#  --rad-tran-vizdir ${ML3DRT_SNAPSHOT_DIR}/heating \
+#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH} \
+#  --time-steps ${TEST_TSTEPS}
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: Downwelling Surface Flux Snapshot:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-flux-sfc-dn-snapshot.py \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-snapshot-flux-sfc-dn.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/ml3drt_flux_sfc_dn_snapshot \
-#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
+#  --rad-tran-vizdir ${ML3DRT_SNAPSHOT_DIR}/flux_sfc_dn \
+#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH} \
+#  --time-steps ${TEST_TSTEPS}
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
@@ -415,35 +433,47 @@ ZMAX=16
 #  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_correlation \
 #  --coarse-factors ${COARSE_FACTORS}
 
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: RTE-RRTMGP-CPP+RT Quantile Timeseries:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-timeseries-quantile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_TIMESERIES_DIR}/quantile \
+#  --coarse-factors ${COARSE_FACTORS}
+
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------
 
 #-------------------------------------------------------------------------------
-CURRENT_TIME=$(date +"%T")
-STAGE_NAME="ML3DRT ANALYSIS VISUALIZATION"
-echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
-
-# Set plotting options
-ZMAX=16
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="ML3DRT ANALYSIS VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
 
 # CURRENT_TIME=$(date +"%T")
 # echo "[${CURRENT_TIME}]: ML3DRT Error Time Series:"
-# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-error-timeseries.py \
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-timeseries-error.py \
 #  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
 #  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
-#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/ml3drt_error_timeseries \
+#  --rad-tran-vizdir ${ML3DRT_TIMESERIES_DIR}/error \
+#  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ML3DRT Interquantile Timeseries:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-timeseries-interquantile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${ML3DRT_TIMESERIES_DIR}/interquantile \
 #  --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
 
 CURRENT_TIME=$(date +"%T")
 echo "[${CURRENT_TIME}]: ML3DRT Quantile Timeseries:"
-python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-quantile-timeseries.py \
+python ${EXPERIMENT_ANALYZE_DIR}/plot-ml3drt-timeseries-quantile.py \
  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
- --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/ml3drt_quantile_timeseries \
- --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH} \
- --recalculate
+ --rad-tran-vizdir ${ML3DRT_TIMESERIES_DIR}/quantile \
+ --ml3drt-outfile ${ML3DRT_OUTPUT_FILE_PATH}
 
-CURRENT_TIME=$(date +"%T")
-echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
 #-------------------------------------------------------------------------------

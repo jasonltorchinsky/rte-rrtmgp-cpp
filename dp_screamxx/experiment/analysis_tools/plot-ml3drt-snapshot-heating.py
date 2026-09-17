@@ -16,6 +16,7 @@ from typing import Optional
 # Third-Party Library Imports
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
+import matplotlib.ticker as ticker
 import numpy as np
 import xarray as xr
 
@@ -29,8 +30,8 @@ from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_t
 from ml3drt import calc_sw_heating as ml3drt_calc_sw_heating
 
 # Script variables
-prog_name: str = "plot-ml3drt-heating-snapshot"
-prog_desc: str = "Visualize atmospheric heating rates for ML3DRT."
+prog_name: str = os.path.splitext(os.path.basename(__file__))[0]
+prog_desc: str = "Visualize atmospheric heating-rate snapshots for ML3DRT."
 
 def main():
     #---------------------------------------------------------------------------
@@ -63,6 +64,9 @@ def main():
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Ignored. Coarsening factor is extracted from --ml3drt-outfile.")
+    parser.add_argument("--time-steps", action = "store",
+        nargs = "?", type = str, required = False, default = None, const = "",
+        help = "Comma- or whitespace-separated list of time-step indices to plot, e.g., 4,12,16,18.")
         
     args: Namespace = parser.parse_args()
 
@@ -73,6 +77,28 @@ def main():
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
     z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
+
+    time_steps: Optional[NP_ARRAY[NP_INT]] = None
+    if args.time_steps is not None:
+        time_step_strs: list[str] = [
+            time_step_str for time_step_str in re.split(r"[,\s]+", args.time_steps.strip())
+            if len(time_step_str) > 0
+        ]
+
+        if len(time_step_strs) == 0:
+            msg: str = "--time-steps was provided, but no time-step indices were specified."
+            raise ValueError(msg)
+
+        time_steps = np.array([NP_INT(time_step_str) for time_step_str in time_step_strs],
+            dtype = NP_INT)
+
+        if np.any(time_steps < 0):
+            msg: str = "--time-steps must contain non-negative integer indices."
+            raise ValueError(msg)
+
+        if len(np.unique(time_steps)) != len(time_steps):
+            msg: str = "--time-steps contains duplicate time-step indices."
+            raise ValueError(msg)
 
     #---------------------------------------------------------------------------
     # Extract coarse factor from ML3DRT output file name
@@ -119,14 +145,26 @@ def main():
         msg: str = "Processing {}...".format(lr_str)
         print_msg(msg)
 
-        cached_working_filepaths: list[str] = sorted(
-            glob.glob(os.path.join(
-                working_dir,
-                "ml3drt_heating_snapshot.{}.day_*.nc".format(lr_str))),
-            key = lambda fp: int(re.search(
-                r"\.day_([0-9]+)\.nc$",
-                os.path.basename(fp)).group(1))
-        )
+        if time_steps is None:
+            cached_working_filepaths: list[str] = sorted(
+                glob.glob(os.path.join(
+                    working_dir,
+                    "ml3drt_heating_snapshot.{}.day_*.nc".format(lr_str))),
+                key = lambda fp: int(re.search(
+                    r"\.day_([0-9]+)\.nc$",
+                    os.path.basename(fp)).group(1))
+            )
+            cached_snapshot_re: re.Pattern = re.compile(r"\.day_([0-9]+)\.nc$")
+        else:
+            cached_working_filepaths: list[str] = sorted(
+                glob.glob(os.path.join(
+                    working_dir,
+                    "ml3drt_heating_snapshot.{}.t_*.nc".format(lr_str))),
+                key = lambda fp: int(re.search(
+                    r"\.t_([0-9]+)\.nc$",
+                    os.path.basename(fp)).group(1))
+            )
+            cached_snapshot_re: re.Pattern = re.compile(r"\.t_([0-9]+)\.nc$")
 
         use_cached_files: bool = False
         if not recalculate and len(cached_working_filepaths) > 0:
@@ -169,18 +207,29 @@ def main():
                     and all([attr_name in cache_check_ds.attrs for attr_name in required_cache_attrs])
                 )
 
-            cached_day_indices: NP_ARRAY[NP_INT] = np.array([
-                NP_INT(re.search(
-                    r"\.day_([0-9]+)\.nc$",
+            cached_snapshot_indices: NP_ARRAY[NP_INT] = np.array([
+                NP_INT(cached_snapshot_re.search(
                     os.path.basename(working_filepath)).group(1))
                 for working_filepath in cached_working_filepaths], dtype = NP_INT)
 
+            if time_steps is None:
+                cache_has_expected_snapshots: bool = (
+                    len(cached_working_filepaths) == ndays_expected
+                    and np.array_equal(
+                        cached_snapshot_indices,
+                        np.arange(0, ndays_expected, dtype = NP_INT))
+                )
+            else:
+                cache_has_expected_snapshots: bool = (
+                    len(cached_working_filepaths) == len(time_steps)
+                    and np.array_equal(
+                        cached_snapshot_indices,
+                        np.sort(time_steps))
+                )
+
             use_cached_files = (
                 cache_has_required_fields
-                and len(cached_working_filepaths) == ndays_expected
-                and np.array_equal(
-                    cached_day_indices,
-                    np.arange(0, ndays_expected, dtype = NP_INT))
+                and cache_has_expected_snapshots
                 and os.path.normpath(cached_ml3drt_outfile) == ml3drt_outfile
                 and os.path.normpath(cached_rad_tran_infile) == rad_tran_infile
                 and os.path.normpath(cached_rad_tran_outfile) == rad_tran_outfile
@@ -205,25 +254,55 @@ def main():
             grid: dict = find_grid(rad_tran_infile)
 
             #-------------------------------------------------------------------
-            # Obtain Morning-Noon-Night time indices, times, SZAs, z_max index
+            # Obtain requested time indices, times, SZAs, z_max index
             #-------------------------------------------------------------------
-            msg: str = "Obtaining morning-noon-night information..."
-            print_msg(msg)
+            if time_steps is None:
+                msg: str = "Obtaining morning-noon-night information..."
+                print_msg(msg)
 
-            mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(
-                rad_tran_infile
-                ) # [ndays, 3]
-            mnn_times: NP_ARRAY[NP_REAL] = find_times(
-                rad_tran_infile, 
-                mnn_indices
-                ) # Time since simulation start; [h]; [ndays, 3]
-            mnn_szas: NP_ARRAY[NP_REAL] = find_szas(
-                rad_tran_infile, 
-                mnn_indices
-                ) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
+                mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(
+                    rad_tran_infile
+                    ) # [ndays, 3]
+                mnn_times: NP_ARRAY[NP_REAL] = find_times(
+                    rad_tran_infile, 
+                    mnn_indices
+                    ) # Time since simulation start; [h]; [ndays, 3]
+                mnn_szas: NP_ARRAY[NP_REAL] = find_szas(
+                    rad_tran_infile, 
+                    mnn_indices
+                    ) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
 
-            ndays: NP_INT = NP_INT(mnn_indices.shape[0])
-            nszas: NP_INT = NP_INT(2)
+                nsnapshots: NP_INT = NP_INT(mnn_indices.shape[0])
+                nszas: NP_INT = NP_INT(2)
+
+                snapshot_indices: NP_ARRAY[NP_INT] = mnn_indices[:,0:nszas]
+                snapshot_times: NP_ARRAY[NP_REAL] = mnn_times[:,0:nszas]
+                snapshot_szas: NP_ARRAY[NP_REAL] = mnn_szas[:,0:nszas]
+                snapshot_strs: list[str] = [
+                    "day_{}".format(jj) for jj in range(0, nsnapshots)]
+                time_selection_mode: str = "morning_noon"
+            else:
+                msg: str = "Obtaining requested time-step information..."
+                print_msg(msg)
+
+                snapshot_indices: NP_ARRAY[NP_INT] = time_steps.reshape(
+                    (len(time_steps), 1))
+                snapshot_times: NP_ARRAY[NP_REAL] = np.asarray(find_times(
+                    rad_tran_infile,
+                    snapshot_indices
+                    ), dtype = NP_REAL).reshape(snapshot_indices.shape)
+                snapshot_szas: NP_ARRAY[NP_REAL] = np.asarray(find_szas(
+                    rad_tran_infile,
+                    snapshot_indices
+                    ), dtype = NP_REAL).reshape(snapshot_indices.shape)
+
+                nsnapshots: NP_INT = NP_INT(snapshot_indices.shape[0])
+                nszas: NP_INT = NP_INT(1)
+
+                snapshot_strs: list[str] = [
+                    "t_{:03d}".format(NP_INT(snapshot_indices[jj,0]))
+                    for jj in range(0, nsnapshots)]
+                time_selection_mode: str = "time_steps"
 
             z_max_info: dict = calc_z_max_info(
                 rad_tran_infile, 
@@ -233,28 +312,29 @@ def main():
             working_filepaths: list[str] = []
 
             #-------------------------------------------------------------------
-            # Calculate fields for each requested SZA of each day
+            # Calculate fields for each requested SZA of each snapshot
             #-------------------------------------------------------------------
             jj: int
-            for jj in range(0, ndays):
-                day_str: str = "day_{}".format(jj)
+            for jj in range(0, nsnapshots):
+                snapshot_str: str = snapshot_strs[jj]
                 working_filename: str = "ml3drt_heating_snapshot.{}.{}.nc".format(
-                    lr_str, day_str)
+                    lr_str, snapshot_str)
                 working_filepath: str = os.path.join(working_dir, working_filename)
 
-                msg: str = "Calculating plotting data for day {} of {}...".format(
-                    jj, ndays - 1)
+                msg: str = "Calculating plotting data for {} of {}...".format(
+                    snapshot_str, snapshot_strs[-1])
                 print_msg(msg)
 
                 #---------------------------------------------------------------
                 # Calculate spatial extent of plots based on maximal cloud water content
                 #---------------------------------------------------------------
-                msg: str = "Calculating plot spatial extent for day {} of {}...".format(jj, ndays - 1)
+                msg: str = "Calculating plot spatial extent for {} of {}...".format(
+                    snapshot_str, snapshot_strs[-1])
                 print_msg(msg)
 
                 cloud_wc: XR_DATAARRAY = calc_cloud_wc(
                     rad_tran_infile,
-                    time_indices = mnn_indices[jj, 0:nszas],
+                    time_indices = snapshot_indices[jj, 0:nszas],
                     z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
             
                 x_indices: NP_ARRAY[NP_INT] = np.array([
@@ -307,19 +387,20 @@ def main():
                 #---------------------------------------------------------------
                 # Calculate desired atmospheric and radiative quantities
                 #---------------------------------------------------------------
-                msg: str = "Calculating desired atmospheric quantities for day {} of {}...".format(jj, ndays - 1)
+                msg: str = "Calculating desired atmospheric quantities for {} of {}...".format(
+                    snapshot_str, snapshot_strs[-1])
                 print_msg(msg)
 
                 cloud_wc: XR_DATAARRAY = calc_cloud_wc(
                     rad_tran_infile, 
-                    time_indices = mnn_indices[jj, 0:nszas], 
+                    time_indices = snapshot_indices[jj, 0:nszas], 
                     x_indices = x_indices, 
                     z_max_info = z_max_info) # Cloud water content; [g m^{-3}]; [slice, lay, y]
 
                 heating_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_heating(
                     rad_tran_infile,
                     rad_tran_outfile,
-                    time_indices = mnn_indices[jj, 0:nszas], 
+                    time_indices = snapshot_indices[jj, 0:nszas], 
                     x_indices = x_indices, 
                     z_max_info = z_max_info,
                     solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [slice, lay, y]
@@ -327,7 +408,7 @@ def main():
                 heating_ts: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_heating(
                     rad_tran_infile,
                     rad_tran_outfile,
-                    time_indices = mnn_indices[jj, 0:nszas], 
+                    time_indices = snapshot_indices[jj, 0:nszas], 
                     x_indices = x_indices, 
                     z_max_info = z_max_info,
                     solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [slice, lay, y]
@@ -335,7 +416,7 @@ def main():
                 heating_ml3drt: XR_DATAARRAY = ml3drt_calc_sw_heating(
                     rad_tran_infile,
                     ml3drt_outfile,
-                    time_indices = mnn_indices[jj, 0:nszas],
+                    time_indices = snapshot_indices[jj, 0:nszas],
                     x_indices = x_indices,
                     z_max_info = z_max_info) # Shortwave heating rate, ML3DRT; [K d^{-1}]; [slice, lay, y]
 
@@ -403,13 +484,13 @@ def main():
                             y_view_max),
                         "source_time_index": (
                             ["slice"],
-                            mnn_indices[jj, 0:nszas]),
+                            snapshot_indices[jj, 0:nszas]),
                         "time": (
                             ["slice"],
-                            mnn_times[jj, 0:nszas]),
+                            snapshot_times[jj, 0:nszas]),
                         "sza": (
                             ["slice"],
-                            mnn_szas[jj, 0:nszas]),
+                            snapshot_szas[jj, 0:nszas]),
                         "dx": (
                             [],
                             dx)
@@ -434,8 +515,10 @@ def main():
                         "rad_tran_outfile": rad_tran_outfile,
                         "ml3drt_outfile": ml3drt_outfile,
                         "lr_str": lr_str,
-                        "day_str": day_str,
-                        "ndays": ndays,
+                        "day_str": snapshot_str,
+                        "snapshot_str": snapshot_str,
+                        "time_selection_mode": time_selection_mode,
+                        "ndays": nsnapshots,
                         "y_view_slice_width": y_view_slice_width,
                         "y_data_slice_width": y_data_slice_width,
                         "y_extra_fraction": y_extra_fraction,
@@ -477,7 +560,8 @@ def main():
                 plot_ds: xr.Dataset = cache_ds.load()
 
             lr_str: str = str(plot_ds.attrs["lr_str"])
-            day_str: str = str(plot_ds.attrs["day_str"])
+            snapshot_str: str = str(plot_ds.attrs.get("snapshot_str",
+                plot_ds.attrs.get("day_str")))
             nszas: NP_INT = NP_INT(plot_ds.sizes["slice"])
 
             #-------------------------------------------------------------------
@@ -539,7 +623,7 @@ def main():
                 .load()) for ll in range(0, nszas)] # [km]
             
             #-------------------------------------------------------------------
-            # Obtain data bounds across both SZA view windows
+            # Obtain data bounds across all SZA view windows
             #-------------------------------------------------------------------
             cloud_wc_max: list[NP_REAL] = [
                 NP_REAL(cloud_wc[ll].isel(y = y_view_islices[ll]).max()) 
@@ -578,10 +662,40 @@ def main():
                 vmax = max(cloud_wc_max))
 
             heating_diff_bound: NP_REAL = max(NP_SMALL, max(heating_diff_max))
-            heating_diff_norm: colors.SymLogNorm = colors.SymLogNorm(
-                linthresh = linthresh,
-                vmin = -heating_diff_bound,
-                vmax = heating_diff_bound)
+            heating_diff_norm: colors.Normalize
+            heating_diff_contour_levels: NP_ARRAY[NP_REAL]
+            heating_diff_cbar_ticks: Optional[NP_ARRAY[NP_REAL]]
+            heating_diff_cbar_format: Optional[ticker.Formatter]
+
+            if heating_diff_bound < linthresh:
+                heating_diff_norm = colors.Normalize(
+                    vmin = -heating_diff_bound,
+                    vmax = heating_diff_bound)
+
+                heating_diff_contour_levels = np.array([
+                    -0.5 * heating_diff_bound,
+                    0.5 * heating_diff_bound
+                ], dtype = NP_REAL)
+
+                heating_diff_cbar_ticks = np.array([
+                    -0.5 * heating_diff_bound,
+                    0.0,
+                    0.5 * heating_diff_bound
+                ], dtype = NP_REAL)
+                heating_diff_cbar_format = ticker.FormatStrFormatter("%.2g")
+            else:
+                heating_diff_norm = colors.SymLogNorm(
+                    linthresh = linthresh,
+                    vmin = -heating_diff_bound,
+                    vmax = heating_diff_bound)
+
+                heating_diff_contour_levels = np.array([
+                    -linthresh,
+                    linthresh
+                ], dtype = NP_REAL)
+
+                heating_diff_cbar_ticks = None
+                heating_diff_cbar_format = None
 
             #-------------------------------------------------------------------
             # Plot one file for each SZA
@@ -722,7 +836,7 @@ def main():
                     y[ll],
                     z[ll],
                     heating_ts_diff[ll],
-                    levels = [-linthresh, linthresh],
+                    levels = heating_diff_contour_levels,
                     colors = "k",
                     linewidths = 1.0,
                     negative_linestyles = "dashed"
@@ -732,7 +846,7 @@ def main():
                     y[ll],
                     z[ll],
                     heating_ml3drt_diff[ll],
-                    levels = [-linthresh, linthresh],
+                    levels = heating_diff_contour_levels,
                     colors = "k",
                     linewidths = 1.0,
                     negative_linestyles = "dashed"
@@ -745,9 +859,17 @@ def main():
                     cloud_wc_pcm,
                     cax = cax_cloud_wc,
                     extend = "min")
-                heating_diff_cbar = fig.colorbar(
-                    heating_ts_diff_pcm,
-                    cax = cax_heating_diff)
+
+                if heating_diff_cbar_ticks is None:
+                    heating_diff_cbar = fig.colorbar(
+                        heating_ts_diff_pcm,
+                        cax = cax_heating_diff)
+                else:
+                    heating_diff_cbar = fig.colorbar(
+                        heating_ts_diff_pcm,
+                        cax = cax_heating_diff,
+                        ticks = heating_diff_cbar_ticks,
+                        format = heating_diff_cbar_format)
 
                 heating_cbar.ax.yaxis.set_ticks_position("left")
                 heating_cbar.ax.yaxis.set_label_position("left")
@@ -869,6 +991,7 @@ def main():
                 axs[1,0].set_title(r"Two-Stream")
                 axs[2,0].set_title(r"Emulator")
 
+                axs[0,1].set_title(r"Cloud Water Content")
                 axs[1,1].set_title(r"Two-Stream - Ray-Tracer")
                 axs[2,1].set_title(r"Emulator - Ray-Tracer")
 
@@ -878,18 +1001,14 @@ def main():
                 #---------------------------------------------------------------
                 # Additional Colorbar Elements
                 #---------------------------------------------------------------
-                heating_diff_cbar.ax.axhline(
-                    linthresh,
-                    color = "k",
-                    linestyle = "solid",
-                    linewidth = 1.0
-                )
-                heating_diff_cbar.ax.axhline(
-                    -linthresh,
-                    color = "k",
-                    linestyle = "dashed",
-                    linewidth = 1.0
-                )
+                level: NP_REAL
+                for level in heating_diff_contour_levels:
+                    heating_diff_cbar.ax.axhline(
+                        level,
+                        color = "k",
+                        linestyle = "dashed" if level < 0 else "solid",
+                        linewidth = 1.0
+                    )
 
                 #---------------------------------------------------------------
                 # Additional figure styling
@@ -907,7 +1026,7 @@ def main():
                 #---------------------------------------------------------------
                 sza_str: str = "sza_{:02d}".format(NP_INT(np.round(mnn_szas_plot[ll])))
                 plt_filename: str = "ml3drt_heating_snapshot.{}.{}.{}.png".format(
-                    lr_str, day_str, sza_str)
+                    lr_str, snapshot_str, sza_str)
                 plt_filepath: str = os.path.join(rad_tran_vizdir, plt_filename)
                 fig.savefig(plt_filepath, dpi = 200)
                 plt.close(fig)

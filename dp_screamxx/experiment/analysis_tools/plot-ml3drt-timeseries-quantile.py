@@ -23,13 +23,23 @@ from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, XR_DATAARRAY, \
     MPL_FIGURE, MPL_AXES
 from consts.numeric import NP_INF
 from consts.visual import plot_colors
-from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_szas, find_times, \
-    calc_sw_reflectance, calc_sw_heating, calc_sw_flux_sfc_dn, \
-    find_grid, calc_z_max_info, print_msg
+from ml3drt import calc_sw_reflectance as ml3drt_calc_sw_reflectance, \
+    calc_sw_heating as ml3drt_calc_sw_heating, \
+    calc_sw_flux_sfc_dn as ml3drt_calc_sw_flux_sfc_dn
+from rte_rrtmgp_cpp import find_inout_pairs as rte_rrtmgp_cpp_find_inout_pairs, \
+    find_daytime_indices as rte_rrtmgp_cpp_find_daytime_indices, \
+    find_szas as rte_rrtmgp_cpp_find_szas, \
+    find_times as rte_rrtmgp_cpp_find_times, \
+    calc_sw_reflectance as rte_rrtmgp_cpp_calc_sw_reflectance, \
+    calc_sw_heating as rte_rrtmgp_cpp_calc_sw_heating, \
+    calc_sw_flux_sfc_dn as rte_rrtmgp_cpp_calc_sw_flux_sfc_dn, \
+    find_grid as rte_rrtmgp_cpp_find_grid, \
+    calc_z_max_info as rte_rrtmgp_cpp_calc_z_max_info, \
+    print_msg as rte_rrtmgp_cpp_print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-timeseries-quantile"
-prog_desc: str = "Visualize quantiles of two-stream and ray-tracer solver differences for RTE-RRTMGP-CPP."
+prog_name: str = "plot-ml3drt-quantile-timeseries"
+prog_desc: str = "Visualize distributions of ML3DRT emulator and two-stream solver differences for RTE-RRTMGP-CPP."
 
 dist_stat_names: list[str] = [
     "min",
@@ -41,6 +51,16 @@ dist_stat_names: list[str] = [
     "p80",
     "p90",
     "max"
+]
+
+solver_names: list[str] = [
+    "emulator",
+    "two_stream"
+]
+
+solver_label_names: list[str] = [
+    "Emulator",
+    "Two-Stream"
 ]
 
 def calc_distribution_info(diff: XR_DATAARRAY) -> dict:
@@ -70,13 +90,14 @@ def calc_distribution_info(diff: XR_DATAARRAY) -> dict:
 
 def add_distribution_info_to_array(
     distribution_array: NP_ARRAY[NP_REAL],
+    solver_index: NP_INT,
     day_index: NP_INT,
     distribution_info: dict
 ):
     ss: int
     for ss in range(0, len(dist_stat_names)):
         stat_name: str = dist_stat_names[ss]
-        distribution_array[day_index,:,ss] = distribution_info[stat_name]
+        distribution_array[solver_index,day_index,:,ss] = distribution_info[stat_name]
 
 def calc_distribution_max(
     diff: XR_DATAARRAY
@@ -98,11 +119,17 @@ def calc_distribution_range_max_from_dataset(
         dtype = NP_REAL
     )
 
-    return NP_REAL(np.nanmax(max_values - min_values))
+    return NP_REAL(np.nanmax(np.abs(np.concatenate(
+        [
+            min_values.ravel(),
+            max_values.ravel()
+        ]
+    ))))
 
 def get_distribution_info_from_dataset(
     dataset: xr.Dataset,
     var_name: str,
+    solver_name: str,
     day_index: NP_INT
 ) -> dict:
     distribution_info: dict = {}
@@ -111,15 +138,20 @@ def get_distribution_info_from_dataset(
     for ss in range(0, len(dist_stat_names)):
         stat_name: str = dist_stat_names[ss]
         distribution_info[stat_name] = np.asarray(
-            dataset[var_name].sel(day = day_index, stat = stat_name),
+            dataset[var_name].sel(
+                solver = solver_name,
+                day = day_index,
+                stat = stat_name
+            ),
             dtype = NP_REAL
         )
 
     return distribution_info
 
-def calc_resolution_distribution_dataset(
+def calc_ml3drt_distribution_dataset(
     rad_tran_infile: str,
     rad_tran_outfile: str,
+    ml3drt_outfile: str,
     coarse_factor_str: str,
     daytime_indices: NP_ARRAY[NP_INT],
     daytime_times: NP_ARRAY[NP_REAL],
@@ -127,11 +159,13 @@ def calc_resolution_distribution_dataset(
     z_max_info: dict,
     z_max: Optional[NP_REAL]
 ) -> xr.Dataset:
+    nsolvers: NP_INT = NP_INT(len(solver_names))
     ndays: NP_INT = NP_INT(daytime_indices.shape[0])
     ntime: NP_INT = NP_INT(daytime_indices.shape[1])
     nstats: NP_INT = NP_INT(len(dist_stat_names))
 
-    distribution_shape: tuple[int, int, int] = (
+    distribution_shape: tuple[int, int, int, int] = (
+        int(nsolvers),
         int(ndays),
         int(ntime),
         int(nstats)
@@ -153,126 +187,204 @@ def calc_resolution_distribution_dataset(
         dtype = NP_REAL
     )
 
-    reflectance_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    heating_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    flux_sfc_dn_diff_max: NP_REAL = NP_REAL(-NP_INF)
+    reflectance_diff_max: NP_ARRAY[NP_REAL] = np.full(
+        nsolvers,
+        -NP_INF,
+        dtype = NP_REAL
+    )
+    heating_diff_max: NP_ARRAY[NP_REAL] = np.full(
+        nsolvers,
+        -NP_INF,
+        dtype = NP_REAL
+    )
+    flux_sfc_dn_diff_max: NP_ARRAY[NP_REAL] = np.full(
+        nsolvers,
+        -NP_INF,
+        dtype = NP_REAL
+    )
 
     jj: int
     for jj in range(0, ndays):
         msg: str = "- Day {}...".format(jj)
-        print_msg(msg)
+        rte_rrtmgp_cpp_print_msg(msg)
 
         #-----------------------------------------------------------------------
         # Calculate reflectance
         #-----------------------------------------------------------------------
         msg: str = "-- Reflectance..."
-        print_msg(msg)
+        rte_rrtmgp_cpp_print_msg(msg)
 
-        reflectance_rt: XR_DATAARRAY = calc_sw_reflectance(
+        reflectance_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_reflectance(
             rad_tran_infile,
             rad_tran_outfile,
             time_indices = daytime_indices[jj,...],
             solver = "rt") # Shortwave reflectance, ray-tracer; [N/A]; [time, y, x]
 
-        reflectance_ts: XR_DATAARRAY = calc_sw_reflectance(
+        reflectance_emulator: XR_DATAARRAY = ml3drt_calc_sw_reflectance(
+            rad_tran_infile,
+            ml3drt_outfile,
+            time_indices = daytime_indices[jj,...]) # Shortwave reflectance, emulator; [N/A]; [time, y, x]
+
+        reflectance_ts: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_reflectance(
             rad_tran_infile,
             rad_tran_outfile,
             time_indices = daytime_indices[jj,...],
             solver = "ts") # Shortwave reflectance, two-stream; [N/A]; [time, y, x]
 
-        reflectance_diff: XR_DATAARRAY = (
+        reflectance_emulator_diff: XR_DATAARRAY = (
+            (reflectance_emulator - reflectance_rt)
+            .stack(spatial = ("y", "x"))
+            .reset_index("spatial")
+        )
+
+        reflectance_ts_diff: XR_DATAARRAY = (
             (reflectance_ts - reflectance_rt)
             .stack(spatial = ("y", "x"))
             .reset_index("spatial")
         )
 
-        reflectance_diff_max = max(
-            reflectance_diff_max,
-            calc_distribution_max(reflectance_diff)
+        reflectance_diff_max[0] = max(
+            reflectance_diff_max[0],
+            calc_distribution_max(reflectance_emulator_diff)
+        )
+        reflectance_diff_max[1] = max(
+            reflectance_diff_max[1],
+            calc_distribution_max(reflectance_ts_diff)
         )
 
         add_distribution_info_to_array(
             reflectance_diff_array,
+            NP_INT(0),
             NP_INT(jj),
-            calc_distribution_info(reflectance_diff)
+            calc_distribution_info(reflectance_emulator_diff)
+        )
+        add_distribution_info_to_array(
+            reflectance_diff_array,
+            NP_INT(1),
+            NP_INT(jj),
+            calc_distribution_info(reflectance_ts_diff)
         )
 
         #-----------------------------------------------------------------------
         # Calculate heating rates
         #-----------------------------------------------------------------------
         msg: str = "-- Heating..."
-        print_msg(msg)
+        rte_rrtmgp_cpp_print_msg(msg)
 
-        heating_rt: XR_DATAARRAY = calc_sw_heating(
+        heating_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_heating(
             rad_tran_infile,
             rad_tran_outfile,
             z_max_info = z_max_info,
             time_indices = daytime_indices[jj,...],
             solver = "rt") # Shortwave heating rate, ray-tracer; [K d^{-1}]; [ntime, lay, y, x]
 
-        heating_ts: XR_DATAARRAY = calc_sw_heating(
+        heating_emulator: XR_DATAARRAY = ml3drt_calc_sw_heating(
+            rad_tran_infile,
+            ml3drt_outfile,
+            z_max_info = z_max_info,
+            time_indices = daytime_indices[jj,...]) # Shortwave heating rate, emulator; [K d^{-1}]; [ntime, lay, y, x]
+
+        heating_ts: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_heating(
             rad_tran_infile,
             rad_tran_outfile,
             z_max_info = z_max_info,
             time_indices = daytime_indices[jj,...],
             solver = "ts") # Shortwave heating rate, two-stream; [K d^{-1}]; [ntime, lay, y, x]
 
-        heating_diff: XR_DATAARRAY = (
+        heating_emulator_diff: XR_DATAARRAY = (
+            (heating_emulator - heating_rt)
+            .stack(spatial = ("lay", "y", "x"))
+            .reset_index("spatial")
+        )
+
+        heating_ts_diff: XR_DATAARRAY = (
             (heating_ts - heating_rt)
             .stack(spatial = ("lay", "y", "x"))
             .reset_index("spatial")
         )
 
-        heating_diff_max = max(
-            heating_diff_max,
-            calc_distribution_max(heating_diff)
+        heating_diff_max[0] = max(
+            heating_diff_max[0],
+            calc_distribution_max(heating_emulator_diff)
+        )
+        heating_diff_max[1] = max(
+            heating_diff_max[1],
+            calc_distribution_max(heating_ts_diff)
         )
 
         add_distribution_info_to_array(
             heating_diff_array,
+            NP_INT(0),
             NP_INT(jj),
-            calc_distribution_info(heating_diff)
+            calc_distribution_info(heating_emulator_diff)
+        )
+        add_distribution_info_to_array(
+            heating_diff_array,
+            NP_INT(1),
+            NP_INT(jj),
+            calc_distribution_info(heating_ts_diff)
         )
 
         #-----------------------------------------------------------------------
         # Calculate downwelling surface flux
         #-----------------------------------------------------------------------
         msg: str = "-- Downwelling Surface Flux..."
-        print_msg(msg)
+        rte_rrtmgp_cpp_print_msg(msg)
 
-        flux_sfc_dn_rt: XR_DATAARRAY = calc_sw_flux_sfc_dn(
+        flux_sfc_dn_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_flux_sfc_dn(
             rad_tran_outfile,
             time_indices = daytime_indices[jj,...],
             solver = "rt") # Shortwave downwelling surface flux, ray-tracer; [W m^{-2}]; [time, y, x]
 
-        flux_sfc_dn_ts: XR_DATAARRAY = calc_sw_flux_sfc_dn(
+        flux_sfc_dn_emulator: XR_DATAARRAY = ml3drt_calc_sw_flux_sfc_dn(
+            ml3drt_outfile,
+            time_indices = daytime_indices[jj,...]) # Shortwave downwelling surface flux, emulator; [W m^{-2}]; [time, y, x]
+
+        flux_sfc_dn_ts: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_flux_sfc_dn(
             rad_tran_outfile,
             time_indices = daytime_indices[jj,...],
             solver = "ts") # Shortwave downwelling surface flux, two-stream; [W m^{-2}]; [time, y, x]
 
-        flux_sfc_dn_diff: XR_DATAARRAY = (
+        flux_sfc_dn_emulator_diff: XR_DATAARRAY = (
+            (flux_sfc_dn_emulator - flux_sfc_dn_rt)
+            .stack(spatial = ("y", "x"))
+            .reset_index("spatial")
+        )
+
+        flux_sfc_dn_ts_diff: XR_DATAARRAY = (
             (flux_sfc_dn_ts - flux_sfc_dn_rt)
             .stack(spatial = ("y", "x"))
             .reset_index("spatial")
         )
 
-        flux_sfc_dn_diff_max = max(
-            flux_sfc_dn_diff_max,
-            calc_distribution_max(flux_sfc_dn_diff)
+        flux_sfc_dn_diff_max[0] = max(
+            flux_sfc_dn_diff_max[0],
+            calc_distribution_max(flux_sfc_dn_emulator_diff)
+        )
+        flux_sfc_dn_diff_max[1] = max(
+            flux_sfc_dn_diff_max[1],
+            calc_distribution_max(flux_sfc_dn_ts_diff)
         )
 
         add_distribution_info_to_array(
             flux_sfc_dn_diff_array,
+            NP_INT(0),
             NP_INT(jj),
-            calc_distribution_info(flux_sfc_dn_diff)
+            calc_distribution_info(flux_sfc_dn_emulator_diff)
+        )
+        add_distribution_info_to_array(
+            flux_sfc_dn_diff_array,
+            NP_INT(1),
+            NP_INT(jj),
+            calc_distribution_info(flux_sfc_dn_ts_diff)
         )
 
     #---------------------------------------------------------------------------
     # Obtain grid information
     #---------------------------------------------------------------------------
     msg: str = "Obtaining grid information..."
-    print_msg(msg)
-    grid: dict = find_grid(rad_tran_infile)
+    rte_rrtmgp_cpp_print_msg(msg)
+    grid: dict = rte_rrtmgp_cpp_find_grid(rad_tran_infile)
 
     dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
 
@@ -295,31 +407,32 @@ def calc_resolution_distribution_dataset(
                 }
             ),
             "reflectance_diff_dist": (
-                ("day", "time_index", "stat"),
+                ("solver", "day", "time_index", "stat"),
                 reflectance_diff_array,
                 {
-                    "long_name": "two-stream minus ray-tracer shortwave reflectance distribution",
+                    "long_name": "emulator or two-stream minus ray-tracer shortwave reflectance distribution",
                     "units": "1"
                 }
             ),
             "heating_diff_dist": (
-                ("day", "time_index", "stat"),
+                ("solver", "day", "time_index", "stat"),
                 heating_diff_array,
                 {
-                    "long_name": "two-stream minus ray-tracer shortwave heating rate distribution",
+                    "long_name": "emulator or two-stream minus ray-tracer shortwave heating rate distribution",
                     "units": "K d-1"
                 }
             ),
             "flux_sfc_dn_diff_dist": (
-                ("day", "time_index", "stat"),
+                ("solver", "day", "time_index", "stat"),
                 flux_sfc_dn_diff_array,
                 {
-                    "long_name": "two-stream minus ray-tracer shortwave downwelling surface flux distribution",
+                    "long_name": "emulator or two-stream minus ray-tracer shortwave downwelling surface flux distribution",
                     "units": "W m-2"
                 }
             )
         },
         coords = {
+            "solver": solver_names,
             "day": np.arange(0, ndays, dtype = NP_INT),
             "time_index": np.arange(0, ntime, dtype = NP_INT),
             "stat": dist_stat_names
@@ -328,15 +441,18 @@ def calc_resolution_distribution_dataset(
             "coarse_factor": coarse_factor_str,
             "dx_m": float(dx),
             "z_max_km": float(z_max) if z_max is not None else np.nan,
-            "reflectance_diff_max": float(reflectance_diff_max),
-            "heating_diff_max": float(heating_diff_max),
-            "flux_sfc_dn_diff_max": float(flux_sfc_dn_diff_max)
+            "reflectance_emulator_diff_max": float(reflectance_diff_max[0]),
+            "reflectance_twostream_diff_max": float(reflectance_diff_max[1]),
+            "heating_emulator_diff_max": float(heating_diff_max[0]),
+            "heating_twostream_diff_max": float(heating_diff_max[1]),
+            "flux_sfc_dn_emulator_diff_max": float(flux_sfc_dn_diff_max[0]),
+            "flux_sfc_dn_twostream_diff_max": float(flux_sfc_dn_diff_max[1])
         }
     )
 
     return dataset
 
-def plot_distribution_range_curves(
+def plot_distribution_quantile_curves(
     ax: MPL_AXES,
     time: NP_ARRAY[NP_REAL],
     distribution_info: dict,
@@ -464,9 +580,9 @@ def calc_linlog_ticks(
     positive_ticks = sorted(list(set(positive_ticks)))
 
     ticks: list[NP_REAL] = (
-        [-tick for tick in positive_ticks[::-1]]
-        + [NP_REAL(0.0)]
-        + positive_ticks
+        [-tick for tick in reversed(positive_ticks)] +
+        [NP_REAL(0.0)] +
+        positive_ticks
     )
 
     return np.array(ticks, dtype = NP_REAL)
@@ -494,7 +610,7 @@ def main():
     # Parse command-line input
     #---------------------------------------------------------------------------
     msg: str = "Parsing command-line input..."
-    print_msg(msg)
+    rte_rrtmgp_cpp_print_msg(msg)
 
     parser: ArgumentParser = ArgumentParser(prog = prog_name,
         description = prog_desc)
@@ -506,27 +622,36 @@ def main():
         help = "Path for RTE-RRTMGP-CPP+RT combined output directory.")
     parser.add_argument("--rad-tran-vizdir", nargs = "?", required = True, type = str,
         help = "Radiative Transfer visualization file directory.")
+    parser.add_argument("--ml3drt-outfile", action = "store",
+        nargs = "?", type = str, required = True,
+        help = "Path for ML3DRT output file.")
     parser.add_argument("--working-dir", nargs = "?", default = ".working", type = str,
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", action = "store_true",
         help = "Re-calculate distribution quantities and save them to NetCDF files.")
     parser.add_argument("--z-max", nargs = "?", default = 0., type = float,
         help = "Maximum height for calculations [km].")
-    parser.add_argument("--coarse-factors", action = "store",
-        nargs = "?", type = str, required = False, default = None,
-        help = "Coarsening factors to process, e.g., 1,2,8,64.")
 
     args: Namespace = parser.parse_args()
 
     rad_tran_indir: str = os.path.normpath(args.rad_tran_indir)
     rad_tran_outdir: str = os.path.normpath(args.rad_tran_outdir)
     rad_tran_vizdir: str = os.path.normpath(args.rad_tran_vizdir)
+    ml3drt_outfile: str = os.path.normpath(args.ml3drt_outfile)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
 
-    coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
-    if args.coarse_factors is not None:
-        coarse_factors = np.sort(np.array(args.coarse_factors.split(","), dtype = NP_INT))[::-1]
+    lr_re: re.Pattern = re.compile(r"lr_[0-9]+")
+    lr_match: Optional[re.Match] = lr_re.search(os.path.basename(ml3drt_outfile))
+    if lr_match is None:
+        lr_match = lr_re.search(ml3drt_outfile)
+
+    if lr_match is None:
+        raise ValueError("Could not extract lr coarsening factor from ML3DRT output file path.")
+
+    coarse_factor_str: str = lr_match.group()
+    coarse_factor: NP_INT = NP_INT(int(coarse_factor_str.replace("lr_", "")))
+    coarse_factors: NP_ARRAY[NP_INT] = np.array([coarse_factor], dtype = NP_INT)
 
     #---------------------------------------------------------------------------
     # Ensure directories exist
@@ -537,136 +662,109 @@ def main():
             os.makedirs(dir_name)
 
     #---------------------------------------------------------------------------
-    # Find file pairs at requested resolutions
+    # Find file pair at requested resolution
     #---------------------------------------------------------------------------
     rad_tran_infiles: list[str]
     rad_tran_outfiles: list[str]
-    [rad_tran_infiles, rad_tran_outfiles] = find_inout_pairs(rad_tran_indir,
-        rad_tran_outdir, coarse_factors)
+    [rad_tran_infiles, rad_tran_outfiles] = rte_rrtmgp_cpp_find_inout_pairs(
+        rad_tran_indir,
+        rad_tran_outdir,
+        coarse_factors)
 
     nfiles: NP_INT = NP_INT(len(rad_tran_infiles))
 
-    lr_re: re.Pattern = re.compile("lr_..")
+    if nfiles <= 0:
+        raise ValueError("No RTE-RRTMGP-CPP input/output file pairs were found for {}.".format(coarse_factor_str))
+
+    if nfiles > 1:
+        raise ValueError("Multiple RTE-RRTMGP-CPP input/output file pairs were found for {}; expected exactly one.".format(coarse_factor_str))
+
+    rad_tran_infile: str = rad_tran_infiles[0]
+    rad_tran_outfile: str = rad_tran_outfiles[0]
 
     #---------------------------------------------------------------------------
-    # Determine which resolutions need to be calculated
+    # Determine whether distribution information needs to be calculated
     #---------------------------------------------------------------------------
-    coarse_factor_strs: list[str] = []
-    nc_filepaths: list[str] = []
-    recalculate_resolution: list[bool] = []
+    nc_filename: str = "ml3drt_quantile_timeseries.{}.nc".format(coarse_factor_str)
+    nc_filepath: str = os.path.join(working_dir, nc_filename)
 
-    ii: int
-    for ii in range(0, nfiles):
-        coarse_factor_str: str = lr_re.search(rad_tran_infiles[ii]).group()
-        nc_filename: str = "rte_rrtmgp_cpp_error_ribbon.{}.nc".format(coarse_factor_str)
-        nc_filepath: str = os.path.join(working_dir, nc_filename)
-
-        coarse_factor_strs.append(coarse_factor_str)
-        nc_filepaths.append(nc_filepath)
-        recalculate_resolution.append(args.recalculate or not os.path.exists(nc_filepath))
-
-    need_calculation: bool = any(recalculate_resolution)
+    recalculate_distribution: bool = args.recalculate or not os.path.exists(nc_filepath)
 
     #---------------------------------------------------------------------------
-    # Calculate quantities that should be common across all resolutions
-    #---------------------------------------------------------------------------
-    daytime_indices: Optional[NP_ARRAY[NP_INT]] = None
-    daytime_times: Optional[NP_ARRAY[NP_REAL]] = None
-    daytime_szas: Optional[NP_ARRAY[NP_REAL]] = None
-    z_max_info: Optional[dict] = None
-
-    if need_calculation:
-        msg: str = "Calculating quantities common across all resolutions..."
-        print_msg(msg)
-
-        daytime_indices = find_daytime_indices(
-            rad_tran_infiles[0]) # Time indices for each day; [ndays; time_per_day]
-        daytime_times = find_times(
-            rad_tran_infiles[0],
-            daytime_indices) # Time since simulation start; [h]; [ndays, time_per_day]
-        daytime_szas = find_szas(
-            rad_tran_infiles[0],
-            daytime_indices) # Solar zenith angle (SZA); [degrees]; [ndays, time_per_day]
-        z_max_info = calc_z_max_info(
-            rad_tran_infiles[0],
-            z_max = z_max) #
-
-    #---------------------------------------------------------------------------
-    # Load or calculate distribution information for each requested resolution
+    # Load or calculate distribution information
     #---------------------------------------------------------------------------
     msg: str = "Loading or calculating distributions..."
-    print_msg(msg)
+    rte_rrtmgp_cpp_print_msg(msg)
 
-    distribution_datasets: dict = {}
-
-    ii: int
-    for ii in range(0, nfiles):
-        rad_tran_infile: str = rad_tran_infiles[ii]
-        rad_tran_outfile: str = rad_tran_outfiles[ii]
-        coarse_factor_str: str = coarse_factor_strs[ii]
-        nc_filepath: str = nc_filepaths[ii]
-
-        if recalculate_resolution[ii]:
-            if args.recalculate:
-                msg: str = "Recalculating {}...".format(coarse_factor_str)
-            else:
-                msg: str = "NetCDF file not found for {}; calculating...".format(coarse_factor_str)
-            print_msg(msg)
-
-            distribution_dataset: xr.Dataset = calc_resolution_distribution_dataset(
-                rad_tran_infile,
-                rad_tran_outfile,
-                coarse_factor_str,
-                daytime_indices,
-                daytime_times,
-                daytime_szas,
-                z_max_info,
-                z_max
-            )
-
-            msg: str = "Writing {}...".format(nc_filepath)
-            print_msg(msg)
-            distribution_dataset.to_netcdf(nc_filepath)
+    if recalculate_distribution:
+        if args.recalculate:
+            msg: str = "Recalculating {}...".format(coarse_factor_str)
         else:
-            msg: str = "Reading {}...".format(nc_filepath)
-            print_msg(msg)
+            msg: str = "NetCDF file not found for {}; calculating...".format(coarse_factor_str)
+        rte_rrtmgp_cpp_print_msg(msg)
 
-        distribution_datasets[coarse_factor_str] = xr.load_dataset(nc_filepath)
+        #-----------------------------------------------------------------------
+        # Calculate quantities common to the resolution
+        #-----------------------------------------------------------------------
+        msg: str = "Calculating quantities common to the resolution..."
+        rte_rrtmgp_cpp_print_msg(msg)
+
+        daytime_indices: NP_ARRAY[NP_INT] = rte_rrtmgp_cpp_find_daytime_indices(
+            rad_tran_infile) # Time indices for each day; [ndays; time_per_day]
+        daytime_times: NP_ARRAY[NP_REAL] = rte_rrtmgp_cpp_find_times(
+            rad_tran_infile,
+            daytime_indices) # Time since simulation start; [h]; [ndays, time_per_day]
+        daytime_szas: NP_ARRAY[NP_REAL] = rte_rrtmgp_cpp_find_szas(
+            rad_tran_infile,
+            daytime_indices) # Solar zenith angle (SZA); [degrees]; [ndays, time_per_day]
+        z_max_info: dict = rte_rrtmgp_cpp_calc_z_max_info(
+            rad_tran_infile,
+            z_max = z_max) #
+
+        distribution_dataset: xr.Dataset = calc_ml3drt_distribution_dataset(
+            rad_tran_infile,
+            rad_tran_outfile,
+            ml3drt_outfile,
+            coarse_factor_str,
+            daytime_indices,
+            daytime_times,
+            daytime_szas,
+            z_max_info,
+            z_max
+        )
+
+        msg: str = "Writing {}...".format(nc_filepath)
+        rte_rrtmgp_cpp_print_msg(msg)
+        distribution_dataset.to_netcdf(nc_filepath)
+    else:
+        msg: str = "Reading {}...".format(nc_filepath)
+        rte_rrtmgp_cpp_print_msg(msg)
+
+    distribution_dataset: xr.Dataset = xr.load_dataset(nc_filepath)
 
     #---------------------------------------------------------------------------
     # Calculate global y-axis limits from loaded distribution data
     #---------------------------------------------------------------------------
-    reflectance_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    heating_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    flux_sfc_dn_diff_max: NP_REAL = NP_REAL(-NP_INF)
-
-    ii: int
-    for ii in range(0, nfiles):
-        coarse_factor_str: str = coarse_factor_strs[ii]
-        distribution_dataset: xr.Dataset = distribution_datasets[coarse_factor_str]
-
-        reflectance_diff_max = max(
-            reflectance_diff_max,
-            NP_REAL(distribution_dataset.attrs["reflectance_diff_max"])
-        )
-        heating_diff_max = max(
-            heating_diff_max,
-            NP_REAL(distribution_dataset.attrs["heating_diff_max"])
-        )
-        flux_sfc_dn_diff_max = max(
-            flux_sfc_dn_diff_max,
-            NP_REAL(distribution_dataset.attrs["flux_sfc_dn_diff_max"])
-        )
+    reflectance_range_max: NP_REAL = calc_distribution_range_max_from_dataset(
+        distribution_dataset,
+        "reflectance_diff_dist"
+    )
+    heating_range_max: NP_REAL = calc_distribution_range_max_from_dataset(
+        distribution_dataset,
+        "heating_diff_dist"
+    )
+    flux_sfc_dn_range_max: NP_REAL = calc_distribution_range_max_from_dataset(
+        distribution_dataset,
+        "flux_sfc_dn_diff_dist"
+    )
 
     #---------------------------------------------------------------------------
     # Set up figure for plotting
     #---------------------------------------------------------------------------
     msg: str = "Setting up figure..."
-    print_msg(msg)
+    rte_rrtmgp_cpp_print_msg(msg)
 
-    reference_coarse_factor_str: str = coarse_factor_strs[0]
-    reference_dataset: xr.Dataset = distribution_datasets[reference_coarse_factor_str]
-    ndays: NP_INT = NP_INT(reference_dataset.sizes["day"])
+    ndays: NP_INT = NP_INT(distribution_dataset.sizes["day"])
 
     nrows: NP_INT = NP_INT(3)
     ncols: NP_INT = NP_INT(ndays)
@@ -683,63 +781,50 @@ def main():
         squeeze = False)
 
     #---------------------------------------------------------------------------
-    # Create resolution labels and legend handles
+    # Create solver labels and legend handles
     #---------------------------------------------------------------------------
-    hres_str_list: list[str] = []
     legend_handles: list = []
     legend_labels: list[str] = []
 
     nplot_colors: NP_INT = NP_INT(len(plot_colors))
+    nsolvers: NP_INT = NP_INT(len(solver_names))
 
     ii: int
-    for ii in range(0, nfiles):
-        coarse_factor_str: str = coarse_factor_strs[ii]
-        distribution_dataset: xr.Dataset = distribution_datasets[coarse_factor_str]
-
-        dx: NP_REAL = NP_REAL(distribution_dataset.attrs["dx_m"]) # [m]
-        hres_str: str
-        if dx < 1.e3:
-            hres_str = r"{:.0f} $m$".format(dx)
-        else:
-            hres_str = r"{:.2f} $km$".format(dx * 1.e-3)
-
-        hres_str_list += [hres_str]
-
+    for ii in range(0, nsolvers):
         legend_handles += [
             Patch(
                 facecolor = plot_colors[ii % nplot_colors],
                 edgecolor = plot_colors[ii % nplot_colors]
             )
         ]
-        legend_labels += [hres_str]
+        legend_labels += [solver_label_names[ii]]
 
     #---------------------------------------------------------------------------
     # Plot distributions across each day
     #---------------------------------------------------------------------------
     msg: str = "Plotting distribution quantile curves..."
-    print_msg(msg)
+    rte_rrtmgp_cpp_print_msg(msg)
 
     jj: int
     for jj in range(0, ndays):
         msg: str = "- Day {}...".format(jj)
-        print_msg(msg)
+        rte_rrtmgp_cpp_print_msg(msg)
 
         reference_time: NP_ARRAY[NP_REAL] = np.asarray(
-            reference_dataset["daytime_time"].sel(day = jj),
+            distribution_dataset["daytime_time"].sel(day = jj),
             dtype = NP_REAL
         )
         reference_sza: NP_ARRAY[NP_REAL] = np.asarray(
-            reference_dataset["daytime_sza"].sel(day = jj),
+            distribution_dataset["daytime_sza"].sel(day = jj),
             dtype = NP_REAL
         )
 
         #-----------------------------------------------------------------------
-        # Plot each resolution
+        # Plot each solver
         #-----------------------------------------------------------------------
         ii: int
-        for ii in range(0, nfiles):
-            coarse_factor_str: str = coarse_factor_strs[ii]
-            distribution_dataset: xr.Dataset = distribution_datasets[coarse_factor_str]
+        for ii in range(0, nsolvers):
+            solver_name: str = solver_names[ii]
             line_color: str = plot_colors[ii % nplot_colors]
 
             time: NP_ARRAY[NP_REAL] = np.asarray(
@@ -749,12 +834,13 @@ def main():
 
             # Row 0 - Reflectance
             row: NP_INT = NP_INT(0)
-            plot_distribution_range_curves(
+            plot_distribution_quantile_curves(
                 axs[row,jj],
                 time,
                 get_distribution_info_from_dataset(
                     distribution_dataset,
                     "reflectance_diff_dist",
+                    solver_name,
                     NP_INT(jj)
                 ),
                 line_color
@@ -762,12 +848,13 @@ def main():
 
             # Row 1 - Heating
             row: NP_INT = NP_INT(1)
-            plot_distribution_range_curves(
+            plot_distribution_quantile_curves(
                 axs[row,jj],
                 time,
                 get_distribution_info_from_dataset(
                     distribution_dataset,
                     "heating_diff_dist",
+                    solver_name,
                     NP_INT(jj)
                 ),
                 line_color
@@ -775,12 +862,13 @@ def main():
 
             # Row 2 - Downwelling Surface Flux
             row: NP_INT = NP_INT(2)
-            plot_distribution_range_curves(
+            plot_distribution_quantile_curves(
                 axs[row,jj],
                 time,
                 get_distribution_info_from_dataset(
                     distribution_dataset,
                     "flux_sfc_dn_diff_dist",
+                    solver_name,
                     NP_INT(jj)
                 ),
                 line_color
@@ -838,9 +926,9 @@ def main():
     #---------------------------------------------------------------------------
     # Add plot elements
     #---------------------------------------------------------------------------
-    title_str: str = r"TSA - RT Quantiles"
+    title_str: str = r"Difference Quantiles"
     fig.suptitle(title_str,
-        y = 1.12)
+        y = 1.10)
     fig.supxlabel(r"Time $\left[ h \right]$")
 
     axs[0,0].set_ylabel(r"Reflectance")
@@ -857,7 +945,7 @@ def main():
         legend_handles,
         legend_labels,
         loc = "upper center",
-        bbox_to_anchor = (0.5, 1.105),
+        bbox_to_anchor = (0.5, 1.085),
         ncol = nlegend_cols,
         handlelength = 2.0,
         columnspacing = 1.2,
@@ -872,9 +960,9 @@ def main():
 
     ylim_array: NP_ARRAY[NP_REAL] = np.array(
         [
-            reflectance_diff_max,
-            heating_diff_max,
-            flux_sfc_dn_diff_max
+            reflectance_range_max,
+            heating_range_max,
+            flux_sfc_dn_range_max
         ],
         dtype = NP_REAL
     )
@@ -928,18 +1016,6 @@ def main():
                 linestyle = "solid",
                 linewidth = 0.5
             )
-            axs[kk,jj].axhline(
-                eps_array[kk],
-                color = "gray",
-                linestyle = "solid",
-                linewidth = 0.5
-            )
-            axs[kk,jj].axhline(
-                -eps_array[kk],
-                color = "gray",
-                linestyle = "solid",
-                linewidth = 0.5
-            )
 
     # Line-style legend
     style_handles: list = [
@@ -966,9 +1042,9 @@ def main():
         )
     ]
     style_labels: list[str] = [
-        r"Min. / Max.",
+        "Min. / Max.",
         r"10% / 90% Quantile",
-        r"Median"
+        "Median"
     ]
 
     fig.legend(
@@ -985,7 +1061,7 @@ def main():
     #---------------------------------------------------------------------------
     # Save the plot to file
     #---------------------------------------------------------------------------
-    plt_filename = "rte_rrtmgp_cpp_timeseries_quantile.png"
+    plt_filename = "ml3drt_quantile_timeseries.png"
     plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
     fig.savefig(plt_filepath, dpi = 512, bbox_inches = "tight")
     plt.close(fig)

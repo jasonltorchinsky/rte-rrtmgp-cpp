@@ -578,9 +578,9 @@ def main():
             for ll in range(0, ncols):
                 col_title: str = (r"SZA {:.1f}$^{{\circ}}$".format(plot_data["mnn_szas"].isel(day = jj, mnn = ll)))
                 axs[0,ll].set_title(col_title)
-            axs[1,0].set_ylabel(r"Two-Stream")
-            axs[2,0].set_ylabel(r"Ray-Tracer")
-            axs[3,0].set_ylabel(r"Two-Stream - Ray-Tracer")
+            axs[1,0].set_ylabel(r"TSA")
+            axs[2,0].set_ylabel(r"RT")
+            axs[3,0].set_ylabel(r"TSA - RT")
 
             vwp_cbar.ax.set_ylabel(r"Vertical CWP $\left[ g\,m^{-2} \right]$")
             flux_sfc_dn_diff_cbar.ax.set_ylabel(r"Difference")

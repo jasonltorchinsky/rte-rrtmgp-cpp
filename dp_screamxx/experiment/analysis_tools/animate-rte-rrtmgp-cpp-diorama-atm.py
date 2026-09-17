@@ -13,8 +13,10 @@ from typing import Optional
 
 # Third-Party Library Imports
 import matplotlib as mpl
+import matplotlib.animation as animation
 import matplotlib.colors as colors
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import numpy as np
 import xarray as xr
@@ -25,12 +27,12 @@ from consts.dtypes import NP_INT, NP_REAL, NP_BOOL, NP_ARRAY, \
     MPL_AXES, MPL_FIGURE, MPL_LINEAR_SEGMENTED_COLORMAP, MPL_LOGNORM, \
     MPL_COLORBAR
 from consts.visual import cloud_cmap
-from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_times, \
+from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, \
     calc_cloud_wc, calc_z_max_info, find_grid, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-diorama-atm"
-prog_desc: str = "Create a diorama of the atmopsheric state for RTE-RRTMGP-CPP."
+prog_name: str = "animate-rte-rrtmgp-cpp-diorama-atm"
+prog_desc: str = "Create an animation of the atmospheric state for RTE-RRTMGP-CPP."
 
 def main():
     #---------------------------------------------------------------------------
@@ -55,6 +57,8 @@ def main():
     parser.add_argument("--coarse-factors", action = "store",
         nargs = "?", type = str, required = False, default = None,
         help = "Coarsening factors to process, e.g., 1,2,8,64.")
+    parser.add_argument("--frames", nargs = "?", default = 0, type = int,
+        help = "Number of frames per day to include in the animation. If <= 0, use all frames.")
         
     args: Namespace = parser.parse_args()
 
@@ -63,6 +67,7 @@ def main():
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
     z_max: Optional[NP_REAL] = NP_REAL(args.z_max) if args.z_max > 0 else None
+    nframes_day_req: NP_INT = NP_INT(args.frames)
 
     coarse_factors: Optional[NP_ARRAY[NP_INT]] = None
     if args.coarse_factors is not None:
@@ -87,31 +92,67 @@ def main():
     lr_re: re.Pattern = re.compile("lr_..")
 
     #-----------------------------------------------------------------------
-    # Obtain Morning-Noon-Night time indices, times, SZAs, z_max_info
+    # Obtain time index and z-max info
     #-----------------------------------------------------------------------
     msg: str = "Obtaining time index and z-max info..."
     print_msg(msg)
 
-    mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(
+    ds_time: xr.Dataset = xr.load_dataset(rad_tran_infiles[0])
+
+    time_var_name: str
+    if "time" in ds_time.variables:
+        time_var_name = "time"
+    elif "t" in ds_time.variables:
+        time_var_name = "t"
+    else:
+        ds_time.close()
+        raise ValueError("Could not determine time variable name in input file.")
+
+    time_all: NP_ARRAY[NP_REAL] = NP_REAL(ds_time[time_var_name].to_numpy())
+    nt_all: NP_INT = NP_INT(time_all.size)
+
+    if nt_all < 1:
+        ds_time.close()
+        raise ValueError("No time points found in input file.")
+
+    daytime_indices: NP_ARRAY[NP_INT] = find_daytime_indices(
         rad_tran_infiles[0]
-    ) # [ndays, 3]
-    mnn_times: NP_ARRAY[NP_REAL] = find_times(
-        rad_tran_infiles[0], 
-        mnn_indices) # Time since simulation start; [h]; [ndays, 3]
-    ndays: NP_INT = NP_INT(mnn_indices.shape[0])
+    ) # [ndays, ndaytime]
+    ndays: NP_INT = NP_INT(daytime_indices.shape[0])
     z_max_info: dict = calc_z_max_info(
         rad_tran_infiles[0],
-        z_max = z_max,
-        method = "cloud_top")
+        z_max = z_max)
 
-    # Only plot morning and noon.
-    # Flattened order is:
-    # day 0 morning, day 0 noon, day 1 morning, day 1 noon, ...
-    time_indices: NP_ARRAY[NP_INT] = mnn_indices[:,0:2].flatten()
-    times: NP_ARRAY[NP_REAL] = mnn_times[:,0:2].flatten()
+    time_indices_list: list[NP_ARRAY[NP_INT]] = []
+    day_frame_counts: list[int] = []
+
+    ii_day: int
+    for ii_day in range(0, ndays):
+        day_indices_full: NP_ARRAY[NP_INT] = NP_INT(daytime_indices[ii_day,:])
+
+        if (nframes_day_req is not None) and (nframes_day_req > 0) and (day_indices_full.size > nframes_day_req):
+            sample_indices: NP_ARRAY[NP_INT] = NP_INT(
+                np.linspace(0, day_indices_full.size - 1, nframes_day_req, dtype = int)
+            )
+            day_indices: NP_ARRAY[NP_INT] = day_indices_full[sample_indices]
+        else:
+            day_indices = day_indices_full
+
+        if day_indices.size < 1:
+            day_indices = np.array([day_indices_full[0]], dtype = NP_INT)
+
+        time_indices_list.append(day_indices.astype(NP_INT))
+        day_frame_counts.append(int(day_indices.size))
+
+    time_indices: NP_ARRAY[NP_INT] = np.concatenate(time_indices_list).astype(NP_INT)
+    times: NP_ARRAY[NP_REAL] = time_all[time_indices]
 
     n_t: NP_INT = NP_INT(time_indices.size)
-    n_times_per_day: NP_INT = NP_INT(2)
+
+    ds_time.close()
+
+    fps: NP_INT = NP_INT(8)
+    titlecard_frames: NP_INT = NP_INT(fps)
 
     ii: int
     for ii in range(0, nfiles):
@@ -147,7 +188,7 @@ def main():
         #-----------------------------------------------------------------------
         # Read cached plotting data or calculate and save them
         #-----------------------------------------------------------------------
-        working_filename: str = "rte_rrtmgp_cpp_diorama_atm.{}.nc".format(lr_str)
+        working_filename: str = "rte_rrtmgp_cpp_diorama_atm.animation.{}.nc".format(lr_str)
         working_filepath: str = os.path.join(working_dir, working_filename)
 
         need_recalculate: bool = recalculate or (not os.path.exists(working_filepath))
@@ -194,7 +235,14 @@ def main():
                 else:
                     valid_shapes = False
 
-                if has_required_vars and has_required_dims and valid_shapes and has_required_attrs:
+                valid_times: bool = False
+                if has_required_vars and ("time_plot" in ds_plot.variables):
+                    valid_times = np.array_equal(
+                        NP_REAL(ds_plot["time_plot"].to_numpy()),
+                        NP_REAL(times)
+                    )
+
+                if has_required_vars and has_required_dims and valid_shapes and has_required_attrs and valid_times:
                     filled: NP_ARRAY[NP_BOOL] = NP_BOOL(ds_plot["filled"].to_numpy())
                     facecolors: NP_ARRAY[NP_REAL] = NP_REAL(ds_plot["facecolors"].to_numpy())
                     times_plot: NP_ARRAY[NP_REAL] = NP_REAL(ds_plot["time_plot"].to_numpy())
@@ -272,7 +320,7 @@ def main():
 
             if cwc_max > cwc_min:
                 alpha: NP_ARRAY[NP_REAL] = NP_REAL(
-                    (((alpha_max - alpha_min) * (cwc - cwc_min) / (cwc_max - cwc_min)) + alpha_min).to_numpy()) # [n_t, n_z, n_y, n_x]
+                    (((alpha_max - alpha_min) * (cwc - cwc_min) / (cwc_max - cwc_min)) + alpha_min).to_numpy()) # [n_t, n_z, n_y, x]
             else:
                 alpha = NP_REAL((alpha_min * np.ones(cwc.shape, dtype = NP_REAL)))
 
@@ -337,7 +385,38 @@ def main():
             yh_plot = NP_REAL(yh_plot)
             zh_plot = NP_REAL(zh_plot)
 
+        cwc_colormap: MPL_LINEAR_SEGMENTED_COLORMAP = mpl.colormaps[cloud_cmap]
         cwc_colormap_norm: MPL_LOGNORM = colors.LogNorm(vmin = min_cwc, vmax = max_cwc)
+
+        #-----------------------------------------------------------------------
+        # Build animation frame index with 1-second title cards before each day
+        #-----------------------------------------------------------------------
+        msg: str = "Building animation frame sequence..."
+        print_msg(msg)
+
+        animation_indices_list: list[int] = []
+        animation_is_titlecard_list: list[bool] = []
+        animation_day_list: list[int] = []
+
+        i0: int = 0
+        for ii_day in range(0, ndays):
+            for _ in range(0, int(titlecard_frames)):
+                animation_indices_list.append(i0)
+                animation_is_titlecard_list.append(True)
+                animation_day_list.append(ii_day)
+
+            n_day_frames: int = day_frame_counts[ii_day]
+            for jj in range(0, n_day_frames):
+                animation_indices_list.append(i0 + jj)
+                animation_is_titlecard_list.append(False)
+                animation_day_list.append(ii_day)
+
+            i0 += n_day_frames
+
+        animation_indices: NP_ARRAY[NP_INT] = np.array(animation_indices_list, dtype = NP_INT)
+        animation_is_titlecard: NP_ARRAY[NP_BOOL] = np.array(animation_is_titlecard_list, dtype = NP_BOOL)
+        animation_day: NP_ARRAY[NP_INT] = np.array(animation_day_list, dtype = NP_INT)
+        n_anim_frames: NP_INT = NP_INT(animation_indices.size)
 
         #-----------------------------------------------------------------------
         # Set up the figure
@@ -345,92 +424,97 @@ def main():
         msg: str = "Setting up figure..."
         print_msg(msg)
 
-        # Layout:
-        #   rows    = days
-        #   columns = morning, noon
-        nrows: NP_INT = NP_INT(ndays)
-        ncols: NP_INT = NP_INT(n_times_per_day)
-
-        fig_height_per_row: NP_REAL = NP_REAL(2.0)
-        fig_height: NP_REAL = NP_REAL(fig_height_per_row * NP_REAL(nrows))
+        fig_height: NP_REAL = NP_REAL(4.0)
         fig_width: NP_REAL = NP_REAL(6.5)
-
-        subplot_top_in: NP_REAL = NP_REAL(0.24)
-        subplot_top: NP_REAL = NP_REAL((fig_height - subplot_top_in) / fig_height)
-
-        cbar_bottom_in: NP_REAL = NP_REAL(0.16)
-        cbar_top_in: NP_REAL = NP_REAL(0.40)
-        cbar_bottom: NP_REAL = NP_REAL(cbar_bottom_in / fig_height)
-        cbar_height: NP_REAL = NP_REAL((fig_height - cbar_bottom_in - cbar_top_in) / fig_height)
-
         fig: MPL_FIGURE
-        axs: NP_ARRAY[MPL_AXES]
-        fig, axs = plt.subplots(
-            nrows = nrows, ncols = ncols,
-            sharex = False, sharey = False,
-            constrained_layout = False,
-            figsize = (fig_width, fig_height),
-            subplot_kw = {"projection" : "3d"})
-
-        # Ensure axs is always indexed as axs[row, col].
-        if ncols == 1:
-            axs = axs[...,None]
-        elif nrows == 1:
-            axs = axs[None,...]
+        ax: MPL_AXES
+        fig = plt.figure(figsize = (fig_width, fig_height))
+        ax = fig.add_subplot(111, projection = "3d")
 
         fig.subplots_adjust(
             left = 0.04,
-            right = 0.78,
-            bottom = 0.02,
-            top = subplot_top,
-            wspace = 0.04,
-            hspace = -0.16
+            right = 0.82,
+            bottom = 0.00,
+            top = 0.94
         )
 
-        cax = fig.add_axes([0.90, cbar_bottom, 0.02, cbar_height])
+        cax = fig.add_axes([0.87, 0.08, 0.025, 0.80])
 
         #-----------------------------------------------------------------------
-        # Plot the data
+        # Set up colorbar
         #-----------------------------------------------------------------------
-        msg: str = "Plotting the data..."
+        msg: str = "Setting up colorbar..."
         print_msg(msg)
 
-        cwc_colormap: MPL_LINEAR_SEGMENTED_COLORMAP = mpl.colormaps[cloud_cmap]
+        cwc_colorbar: MPL_COLORBAR = fig.colorbar(
+            mpl.cm.ScalarMappable(
+                norm = cwc_colormap_norm,
+                cmap = cwc_colormap
+            ),
+            cax = cax
+        )
+        cwc_colorbar.ax.set_yscale("log")
 
-        rgba_valid: NP_ARRAY[NP_REAL] = facecolors[filled]
-        if rgba_valid.shape[0] > 0:
-            rgb_valid: NP_ARRAY[NP_REAL] = rgba_valid[:,:3]
-            rgb_nonzero: NP_ARRAY[NP_BOOL] = np.any(rgb_valid > 0., axis = 1)
-            if np.any(rgb_nonzero):
-                rgba_nonzero: NP_ARRAY[NP_REAL] = rgba_valid[rgb_nonzero]
-                cwc_norm_valid: NP_ARRAY[NP_REAL] = NP_REAL(
-                    np.clip(
-                        cwc_colormap_norm.inverse(
-                            np.clip(
-                                np.interp(
-                                    rgba_nonzero[:,0],
-                                    np.linspace(0., 1., cwc_colormap.N),
-                                    cwc_colormap(np.linspace(0., 1., cwc_colormap.N))[:,0]
-                                ),
-                                0., 1.
-                            )
-                        ),
-                        cwc_colormap_norm.vmin,
-                        cwc_colormap_norm.vmax
-                    )
-                )
-                max_cwc_colorbar: NP_REAL = NP_REAL(np.nanmax(cwc_norm_valid))
-                min_cwc_colorbar: NP_REAL = NP_REAL(cwc_colormap_norm.vmin)
-                if (not np.isfinite(max_cwc_colorbar)) or (max_cwc_colorbar <= min_cwc_colorbar):
-                    max_cwc_colorbar = NP_REAL(min_cwc_colorbar * NP_REAL(10.))
-            else:
-                min_cwc_colorbar = NP_REAL(1.e-2)
-                max_cwc_colorbar = NP_REAL(1.e-1)
+        #-----------------------------------------------------------------------
+        # Set style elements
+        #-----------------------------------------------------------------------
+        msg: str = "Setting style elements..."
+        print_msg(msg)
+
+        # Background Panes
+        pane_color: list[float] = [0.0, 0.0, 0.0, 0.0]
+        ax.xaxis.set_pane_color(pane_color)
+        ax.yaxis.set_pane_color(pane_color)
+        ax.zaxis.set_pane_color(pane_color)
+
+        # Set grid linewidth
+        ax.xaxis._axinfo["grid"]["linewidth"] = 0
+        ax.yaxis._axinfo["grid"]["linewidth"] = 0
+        ax.zaxis._axinfo["grid"]["linewidth"] = 0
+
+        # Aspect Ratio
+        xh_len: NP_REAL = NP_REAL(xh_plot.max() - xh_plot.min())
+        yh_len: NP_REAL = NP_REAL(yh_plot.max() - yh_plot.min())
+        zh_len: NP_REAL = NP_REAL(zh_plot.max() - zh_plot.min())
+        ax.set_box_aspect([xh_len, yh_len, 2.5 * zh_len])
+
+        # Tick Labels
+        x_ticks: NP_ARRAY[NP_REAL] = NP_REAL(MaxNLocator(nbins = 4).tick_values(xh_plot.min(), xh_plot.max()))
+        y_ticks: NP_ARRAY[NP_REAL] = NP_REAL(MaxNLocator(nbins = 4).tick_values(yh_plot.min(), yh_plot.max()))
+        z_ticks: NP_ARRAY[NP_REAL] = NP_REAL(MaxNLocator(nbins = 2).tick_values(0., np.floor(zh_plot.max())))
+        ax.xaxis.set_ticks(x_ticks)
+        ax.yaxis.set_ticks(y_ticks)
+        ax.zaxis.set_ticks(z_ticks)
+
+        # Axis labels
+        ax.set_ylabel(r"y $\left[ km \right]$")
+        ax.set_zlabel(r"z $\left[ km \right]$")
+        ax.set_xlabel(r"x $\left[ km \right]$")
+
+        # Suplabels
+        dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
+        dx_str: str
+        if dx < 1.e3:
+            dx_str = r"{:.0f} $m$".format(dx)
         else:
-            min_cwc_colorbar = NP_REAL(1.e-2)
-            max_cwc_colorbar = NP_REAL(1.e-1)
+            dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
 
-        cwc_colormap_norm: MPL_LOGNORM = colors.LogNorm(vmin = min_cwc_colorbar, vmax = max_cwc_colorbar)
+        fig.suptitle(r"Cloud Water Content $\left[ g\,m^{-3} \right]$" + " - {}".format(dx_str))
+        fig.supxlabel("") # Add for padding at bottom
+
+        time_text = fig.text(
+            0.5, 0.86,
+            "",
+            ha = "center",
+            va = "top"
+        )
+
+        titlecard_text = fig.text(
+            0.5, 0.5,
+            "",
+            ha = "center",
+            va = "center"
+        )
 
         x0: NP_ARRAY[NP_REAL] = xh_plot[:-1]
         x1: NP_ARRAY[NP_REAL] = xh_plot[1:]
@@ -439,30 +523,56 @@ def main():
         z0: NP_ARRAY[NP_REAL] = zh_plot[:-1]
         z1: NP_ARRAY[NP_REAL] = zh_plot[1:]
 
-        x_plot_min: NP_REAL = NP_REAL(xh_plot.min())
-        x_plot_max: NP_REAL = NP_REAL(xh_plot.max())
-        y_plot_min: NP_REAL = NP_REAL(yh_plot.min())
-        y_plot_max: NP_REAL = NP_REAL(yh_plot.max())
-        z_plot_min: NP_REAL = NP_REAL(0.)
-        z_plot_max: NP_REAL = NP_REAL(np.ceil(zh_plot.max()))
+        current_poly: Optional[Poly3DCollection] = None
 
-        if x_plot_max <= x_plot_min:
-            x_plot_max = NP_REAL(x_plot_min + NP_REAL(1.))
-        if y_plot_max <= y_plot_min:
-            y_plot_max = NP_REAL(y_plot_min + NP_REAL(1.))
-        if z_plot_max <= z_plot_min:
-            z_plot_max = NP_REAL(1.)
+        #-----------------------------------------------------------------------
+        # Plot the data
+        #-----------------------------------------------------------------------
+        msg: str = "Creating animation..."
+        print_msg(msg)
 
-        jj: int
-        kk: int
-        for jj in range(0, nrows):
-            for kk in range(0, ncols):
-                index: int = n_times_per_day * jj + kk
+        def update(i_anim: int):
+            nonlocal current_poly
 
-                filled_i: NP_ARRAY[NP_BOOL] = filled[index,...]
-                if not np.any(filled_i):
-                    continue
+            index: int = int(animation_indices[i_anim])
 
+            if current_poly is not None:
+                current_poly.remove()
+                current_poly = None
+
+            if animation_is_titlecard[i_anim]:
+                ax.set_axis_off()
+                titlecard_text.set_text("Day {}".format(int(animation_day[i_anim])))
+                time_text.set_text("")
+                return [titlecard_text, time_text]
+
+            ax.set_axis_on()
+            titlecard_text.set_text("")
+
+            # Background Panes
+            pane_color: list[float] = [0.0, 0.0, 0.0, 0.0]
+            ax.xaxis.set_pane_color(pane_color)
+            ax.yaxis.set_pane_color(pane_color)
+            ax.zaxis.set_pane_color(pane_color)
+
+            # Set grid linewidth
+            ax.xaxis._axinfo["grid"]["linewidth"] = 0
+            ax.yaxis._axinfo["grid"]["linewidth"] = 0
+            ax.zaxis._axinfo["grid"]["linewidth"] = 0
+
+            # Tick Labels
+            ax.xaxis.set_ticks(x_ticks)
+            ax.yaxis.set_ticks(y_ticks)
+            ax.zaxis.set_ticks(z_ticks)
+
+            # Axis labels
+            ax.set_ylabel(r"y $\left[ km \right]$")
+            ax.set_zlabel(r"z $\left[ km \right]$")
+            ax.set_xlabel(r"x $\left[ km \right]$")
+
+            filled_i: NP_ARRAY[NP_BOOL] = filled[index,...]
+
+            if np.any(filled_i):
                 i_x: NP_ARRAY[NP_INT]
                 i_y: NP_ARRAY[NP_INT]
                 i_z: NP_ARRAY[NP_INT]
@@ -512,163 +622,49 @@ def main():
                 voxel_facecolors: NP_ARRAY[NP_REAL] = facecolors[index, i_x, i_y, i_z, :]
                 poly_facecolors: NP_ARRAY[NP_REAL] = np.repeat(voxel_facecolors, 6, axis = 0)
 
-                poly: Poly3DCollection = Poly3DCollection(
+                current_poly = Poly3DCollection(
                     verts,
                     facecolors = poly_facecolors,
                     edgecolors = poly_facecolors,
                     linewidths = 0
                 )
-                axs[jj, kk].add_collection3d(poly)
+                ax.add_collection3d(current_poly)
 
-        # Set bounds after plotting so they are determined by the simulation
-        # domain, not by automatically generated tick locations.
-        ax: MPL_AXES
-        for ax in axs.flatten():
-            ax.set_xlim(x_plot_min, x_plot_max)
-            ax.set_ylim(y_plot_min, y_plot_max)
-            ax.set_zlim(z_plot_min, z_plot_max)
+            ax.set_xlim(xh_plot.min(), xh_plot.max())
+            ax.set_ylim(yh_plot.min(), yh_plot.max())
+            ax.set_zlim(zh_plot.min(), zh_plot.max())
 
-        #-----------------------------------------------------------------------
-        # Set up colorbar
-        #-----------------------------------------------------------------------
-        msg: str = "Setting up colorbar..."
-        print_msg(msg)
+            time_text.set_text(
+                r"{:.2f} $h$".format(times_plot[index])
+            )
 
-        cwc_colorbar = fig.colorbar(
-            mpl.cm.ScalarMappable(
-                norm = cwc_colormap_norm,
-                cmap = cwc_colormap
-            ),
-            cax = cax
+            artists: list = [time_text, titlecard_text]
+            if current_poly is not None:
+                artists.append(current_poly)
+
+            return artists
+
+        anim = animation.FuncAnimation(
+            fig,
+            update,
+            frames = int(n_anim_frames),
+            interval = float(1000.0 / fps),
+            blit = False,
+            repeat = False
         )
-        cwc_colorbar.ax.set_yscale("log")
 
         #-----------------------------------------------------------------------
-        # Set style elements
+        # Save the animation to file
         #-----------------------------------------------------------------------
-        msg: str = "Setting style elements..."
+        msg: str = "Saving animation to file..."
         print_msg(msg)
 
-        # Background Panes
-        pane_color: list[float] = [0.0, 0.0, 0.0, 0.0]
-        ax: MPL_AXES
-        for ax in axs.flatten():
-            ax.xaxis.set_pane_color(pane_color)
-            ax.yaxis.set_pane_color(pane_color)
-            ax.zaxis.set_pane_color(pane_color)
-
-        # Set grid linewidth
-        ax: MPL_AXES
-        for ax in axs.flatten():
-            ax.xaxis._axinfo["grid"]["linewidth"] = 0
-            ax.yaxis._axinfo["grid"]["linewidth"] = 0
-            ax.zaxis._axinfo["grid"]["linewidth"] = 0
-
-        # Aspect Ratio
-        xh_len: NP_REAL = NP_REAL(x_plot_max - x_plot_min)
-        yh_len: NP_REAL = NP_REAL(y_plot_max - y_plot_min)
-        zh_len: NP_REAL = NP_REAL(z_plot_max - z_plot_min)
-        ax: MPL_AXES
-        for ax in axs.flatten():
-            ax.set_box_aspect([xh_len, yh_len, 2.5 * zh_len])
-
-        # Diorama Time Labels
-        jj: int
-        kk: int
-        for jj in range(0, nrows):
-            for kk in range(0, ncols):
-                index: int = n_times_per_day * jj + kk
-                axs[jj,kk].text2D(
-                    0.5, 0.86,
-                    r"{} $h$".format(times_plot[index]),
-                    transform = axs[jj,kk].transAxes,
-                    ha = "center",
-                    va = "top"
-                )
-
-        # Tick Labels - Get rid of unnecessary ones and keep them uniform
-        # across all plots.  Choose 3--5 evenly spaced horizontal ticks depending
-        # on whether the domain size is evenly divisible by the number of tick
-        # intervals.  This prevents ticks from extending beyond the simulation
-        # bounds and avoids uneven endpoints, e.g., 0, 15, 30, 45, 50 for 50 km.
-        x_n_ticks: NP_INT = NP_INT(3)
-        y_n_ticks: NP_INT = NP_INT(3)
-
-        xh_len_round: NP_REAL = NP_REAL(np.round(xh_len))
-        yh_len_round: NP_REAL = NP_REAL(np.round(yh_len))
-
-        if np.isclose(xh_len, xh_len_round, rtol = 1.e-10, atol = 1.e-8):
-            n_ticks_i: NP_INT
-            for n_ticks_i in [NP_INT(5), NP_INT(4), NP_INT(3)]:
-                n_intervals_i: NP_INT = NP_INT(n_ticks_i - NP_INT(1))
-                x_tick_spacing_i: NP_REAL = NP_REAL(xh_len_round / n_intervals_i)
-                if np.isclose(x_tick_spacing_i, np.round(x_tick_spacing_i), rtol = 1.e-10, atol = 1.e-8):
-                    x_n_ticks = n_ticks_i
-                    break
-
-        if np.isclose(yh_len, yh_len_round, rtol = 1.e-10, atol = 1.e-8):
-            n_ticks_i: NP_INT
-            for n_ticks_i in [NP_INT(5), NP_INT(4), NP_INT(3)]:
-                n_intervals_i: NP_INT = NP_INT(n_ticks_i - NP_INT(1))
-                y_tick_spacing_i: NP_REAL = NP_REAL(yh_len_round / n_intervals_i)
-                if np.isclose(y_tick_spacing_i, np.round(y_tick_spacing_i), rtol = 1.e-10, atol = 1.e-8):
-                    y_n_ticks = n_ticks_i
-                    break
-
-        x_ticks: NP_ARRAY[NP_REAL] = NP_REAL(np.linspace(x_plot_min, x_plot_max, x_n_ticks))
-        y_ticks: NP_ARRAY[NP_REAL] = NP_REAL(np.linspace(y_plot_min, y_plot_max, y_n_ticks))
-        z_ticks: NP_ARRAY[NP_REAL] = NP_REAL(np.array([z_plot_min, z_plot_max]))
-
-        ax: MPL_AXES
-        for ax in axs.flatten():
-            ax.xaxis.set_ticks(x_ticks)
-            ax.yaxis.set_ticks(y_ticks)
-            ax.zaxis.set_ticks(z_ticks)
-
-            # Setting ticks can expand the axis limits if any tick lies outside
-            # the current view.  Re-apply the simulation bounds explicitly.
-            ax.set_xlim(x_plot_min, x_plot_max)
-            ax.set_ylim(y_plot_min, y_plot_max)
-            ax.set_zlim(z_plot_min, z_plot_max)
-
-        for ax in (axs[:-1,-1]).flatten():
-            ax.xaxis.set_tick_params(labelcolor = "none")
-            ax.yaxis.set_tick_params(labelcolor = "none")
-        for ax in (axs[-1,:-1]).flatten():
-            ax.yaxis.set_tick_params(labelcolor = "none")
-            ax.zaxis.set_tick_params(labelcolor = "none")
-        for ax in (axs[:-1,:-1]).flatten():
-            ax.xaxis.set_tick_params(labelcolor = "none")
-            ax.yaxis.set_tick_params(labelcolor = "none")
-            ax.zaxis.set_tick_params(labelcolor = "none")
-
-        # Axis labels
-        axs[-1,-1].set_ylabel(r"y $\left[ km \right]$")
-        for ax in (axs[:,-1]).flatten():
-            ax.set_zlabel(r"z $\left[ km \right]$")
-        for ax in (axs[-1,:]).flatten():
-            ax.set_xlabel(r"x $\left[ km \right]$")
-
-        # Suplabels
-        dx: NP_REAL = NP_REAL(grid["xh"][1] - grid["xh"][0]) # [m]
-        dx_str: str
-        if dx < 1.e3:
-            dx_str = r"{:.0f} $m$".format(dx)
-        else:
-            dx_str = r"{:.1f} $km$".format(dx * 1.e-3)
-
-        fig.suptitle(r"Cloud Water Content $\left[ g\,m^{-3} \right]$" + " - {}".format(dx_str))
-        fig.supxlabel(" ") # Add for padding at bottom
-
-        #-----------------------------------------------------------------------
-        # Save the plot to file
-        #-----------------------------------------------------------------------
-        msg: str = "Saving plot to file..."
-        print_msg(msg)
-
-        plt_filename = "rte_rrtmgp_cpp_diorama_atm.{}.png".format(lr_str)
+        plt_filename = "rte_rrtmgp_cpp_diorama_atm.{}.mp4".format(lr_str)
         plt_filepath = os.path.join(rad_tran_vizdir, plt_filename)
-        fig.savefig(plt_filepath, dpi = 256)
+        anim.save(
+            plt_filepath,
+            writer = animation.FFMpegWriter(fps = int(fps))
+        )
         plt.close(fig)
 
 if __name__ == "__main__":

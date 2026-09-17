@@ -28,8 +28,8 @@ from rte_rrtmgp_cpp import find_inout_pairs, find_daytime_indices, find_szas, fi
     find_grid, calc_z_max_info, print_msg
 
 # Script variables
-prog_name: str = "plot-rte-rrtmgp-cpp-timeseries-quantile"
-prog_desc: str = "Visualize quantiles of two-stream and ray-tracer solver differences for RTE-RRTMGP-CPP."
+prog_name: str = "plot-rte-rrtmgp-cpp-error-ribbon"
+prog_desc: str = "Visualize distributions of two-stream and ray-tracer solver differences for RTE-RRTMGP-CPP."
 
 dist_stat_names: list[str] = [
     "min",
@@ -342,44 +342,28 @@ def plot_distribution_range_curves(
     distribution_info: dict,
     line_color: str
 ):
-    # Minimum and maximum
-    ax.plot(
-        time,
-        distribution_info["min"],
-        color = line_color,
-        linestyle = "dashed",
-        linewidth = 2.0
+    interquantile_range: NP_ARRAY[NP_REAL] = NP_REAL(
+        distribution_info["p90"] - distribution_info["p10"]
     )
-    ax.plot(
-        time,
-        distribution_info["max"],
-        color = line_color,
-        linestyle = "dashed",
-        linewidth = 2.0
+    minmax_range: NP_ARRAY[NP_REAL] = NP_REAL(
+        distribution_info["max"] - distribution_info["min"]
     )
 
-    # 10% and 90% quantiles
+    # 10-90 inter-quantile range
     ax.plot(
         time,
-        distribution_info["p10"],
-        color = line_color,
-        linestyle = "dotted",
-        linewidth = 2.0
-    )
-    ax.plot(
-        time,
-        distribution_info["p90"],
-        color = line_color,
-        linestyle = "dotted",
-        linewidth = 2.0
-    )
-
-    # Median
-    ax.plot(
-        time,
-        distribution_info["median"],
+        interquantile_range,
         color = line_color,
         linestyle = "solid",
+        linewidth = 2.0
+    )
+
+    # Min-max range
+    ax.plot(
+        time,
+        minmax_range,
+        color = line_color,
+        linestyle = "dashed",
         linewidth = 2.0
     )
 
@@ -446,10 +430,12 @@ def calc_linlog_ticks(
     ymax: NP_REAL,
     linthresh: NP_REAL
 ) -> NP_ARRAY[NP_REAL]:
-    positive_ticks: list[NP_REAL] = []
+    ticks: list[NP_REAL] = [
+        NP_REAL(0.0)
+    ]
 
     if ymax <= 0:
-        return np.array([NP_REAL(0.0)], dtype = NP_REAL)
+        return np.array(ticks, dtype = NP_REAL)
 
     exponent_start: int = int(np.ceil(np.log10(linthresh)))
     exponent_end: int = int(np.floor(np.log10(ymax)))
@@ -459,15 +445,9 @@ def calc_linlog_ticks(
         tick: NP_REAL = NP_REAL(np.power(10.0, exponent))
 
         if tick >= linthresh and tick <= ymax:
-            positive_ticks += [tick]
+            ticks += [tick]
 
-    positive_ticks = sorted(list(set(positive_ticks)))
-
-    ticks: list[NP_REAL] = (
-        [-tick for tick in positive_ticks[::-1]]
-        + [NP_REAL(0.0)]
-        + positive_ticks
-    )
+    ticks = sorted(list(set(ticks)))
 
     return np.array(ticks, dtype = NP_REAL)
 
@@ -480,9 +460,6 @@ def calc_linlog_ticklabels(
     for tick in ticks:
         if tick == 0:
             ticklabels += [r"$0$"]
-        elif tick < 0:
-            exponent: int = int(np.round(np.log10(np.abs(tick))))
-            ticklabels += [r"$-10^{{{:d}}}$".format(exponent)]
         else:
             exponent: int = int(np.round(np.log10(tick)))
             ticklabels += [r"$10^{{{:d}}}$".format(exponent)]
@@ -636,26 +613,35 @@ def main():
     #---------------------------------------------------------------------------
     # Calculate global y-axis limits from loaded distribution data
     #---------------------------------------------------------------------------
-    reflectance_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    heating_diff_max: NP_REAL = NP_REAL(-NP_INF)
-    flux_sfc_dn_diff_max: NP_REAL = NP_REAL(-NP_INF)
+    reflectance_range_max: NP_REAL = NP_REAL(-NP_INF)
+    heating_range_max: NP_REAL = NP_REAL(-NP_INF)
+    flux_sfc_dn_range_max: NP_REAL = NP_REAL(-NP_INF)
 
     ii: int
     for ii in range(0, nfiles):
         coarse_factor_str: str = coarse_factor_strs[ii]
         distribution_dataset: xr.Dataset = distribution_datasets[coarse_factor_str]
 
-        reflectance_diff_max = max(
-            reflectance_diff_max,
-            NP_REAL(distribution_dataset.attrs["reflectance_diff_max"])
+        reflectance_range_max = max(
+            reflectance_range_max,
+            calc_distribution_range_max_from_dataset(
+                distribution_dataset,
+                "reflectance_diff_dist"
+            )
         )
-        heating_diff_max = max(
-            heating_diff_max,
-            NP_REAL(distribution_dataset.attrs["heating_diff_max"])
+        heating_range_max = max(
+            heating_range_max,
+            calc_distribution_range_max_from_dataset(
+                distribution_dataset,
+                "heating_diff_dist"
+            )
         )
-        flux_sfc_dn_diff_max = max(
-            flux_sfc_dn_diff_max,
-            NP_REAL(distribution_dataset.attrs["flux_sfc_dn_diff_max"])
+        flux_sfc_dn_range_max = max(
+            flux_sfc_dn_range_max,
+            calc_distribution_range_max_from_dataset(
+                distribution_dataset,
+                "flux_sfc_dn_diff_dist"
+            )
         )
 
     #---------------------------------------------------------------------------
@@ -716,7 +702,7 @@ def main():
     #---------------------------------------------------------------------------
     # Plot distributions across each day
     #---------------------------------------------------------------------------
-    msg: str = "Plotting distribution quantile curves..."
+    msg: str = "Plotting distribution range curves..."
     print_msg(msg)
 
     jj: int
@@ -838,7 +824,7 @@ def main():
     #---------------------------------------------------------------------------
     # Add plot elements
     #---------------------------------------------------------------------------
-    title_str: str = r"TSA - RT Quantiles"
+    title_str: str = r"Inter-Quantile Range"
     fig.suptitle(title_str,
         y = 1.12)
     fig.supxlabel(r"Time $\left[ h \right]$")
@@ -872,9 +858,9 @@ def main():
 
     ylim_array: NP_ARRAY[NP_REAL] = np.array(
         [
-            reflectance_diff_max,
-            heating_diff_max,
-            flux_sfc_dn_diff_max
+            reflectance_range_max,
+            heating_range_max,
+            flux_sfc_dn_range_max
         ],
         dtype = NP_REAL
     )
@@ -920,22 +906,10 @@ def main():
             else:
                 axs[kk,jj].set_yscale("linear")
 
-            axs[kk,jj].set_ylim([-ymax, ymax])
+            axs[kk,jj].set_ylim([0, ymax])
 
             axs[kk,jj].axhline(
-                0.0,
-                color = "gray",
-                linestyle = "solid",
-                linewidth = 0.5
-            )
-            axs[kk,jj].axhline(
                 eps_array[kk],
-                color = "gray",
-                linestyle = "solid",
-                linewidth = 0.5
-            )
-            axs[kk,jj].axhline(
-                -eps_array[kk],
                 color = "gray",
                 linestyle = "solid",
                 linewidth = 0.5
@@ -947,28 +921,20 @@ def main():
             [0],
             [0],
             color = "black",
-            linestyle = "dashed",
-            linewidth = 2.0
-        ),
-        Line2D(
-            [0],
-            [0],
-            color = "black",
-            linestyle = "dotted",
-            linewidth = 2.0
-        ),
-        Line2D(
-            [0],
-            [0],
-            color = "black",
             linestyle = "solid",
+            linewidth = 2.0
+        ),
+        Line2D(
+            [0],
+            [0],
+            color = "black",
+            linestyle = "dashed",
             linewidth = 2.0
         )
     ]
     style_labels: list[str] = [
-        r"Min. / Max.",
-        r"10% / 90% Quantile",
-        r"Median"
+        r"10%-90% IQR",
+        r"0%-100% IQR"
     ]
 
     fig.legend(

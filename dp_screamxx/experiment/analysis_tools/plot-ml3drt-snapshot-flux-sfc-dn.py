@@ -26,7 +26,7 @@ from rte_rrtmgp_cpp import find_inout_pairs, find_mnn_indices, find_szas, find_t
 from ml3drt import calc_sw_flux_sfc_dn as ml3drt_calc_sw_flux_sfc_dn
 
 # Script variables
-prog_name: str = "plot-ml3drt-flux_sfc_dn-snapshot"
+prog_name: str = "plot-ml3drt-snapshot-flux-sfc-dn.py"
 prog_desc: str = "Visualize surface downwelling flux snapshots for ML3DRT."
 
 def find_plot_ticks(coord: XR_DATAARRAY, nticks: NP_INT = NP_INT(5)) -> NP_ARRAY[NP_REAL]:
@@ -65,6 +65,9 @@ def main():
         help = "Working directory to output calculated values.")
     parser.add_argument("--recalculate", action = "store_true",
         help = "Re-calculate all necessary quantities for plotting.")
+    parser.add_argument("--time-steps", action = "store",
+        nargs = "?", default = None, type = str,
+        help = "Comma-separated list of time-step indices to plot, e.g., 4,12,16,18.")
         
     args: Namespace = parser.parse_args()
 
@@ -74,6 +77,23 @@ def main():
     ml3drt_outfile: str = os.path.normpath(args.ml3drt_outfile)
     working_dir: str = os.path.join(rad_tran_vizdir, os.path.normpath(args.working_dir))
     recalculate: bool = args.recalculate
+    time_steps_arg: Optional[str] = args.time_steps
+
+    time_steps: Optional[NP_ARRAY[NP_INT]] = None
+    if time_steps_arg is not None:
+        time_steps_split: list[str] = [
+            time_step_str.strip() for time_step_str in time_steps_arg.split(",")
+            if time_step_str.strip() != ""]
+
+        if len(time_steps_split) == 0:
+            raise RuntimeError("No time steps were provided to --time-steps.")
+
+        time_steps = np.array(
+            [NP_INT(time_step_str) for time_step_str in time_steps_split],
+            dtype = NP_INT)
+
+        if np.any(time_steps < 0):
+            raise RuntimeError("All time steps provided to --time-steps must be non-negative.")
 
     #---------------------------------------------------------------------------
     # Extract coarse factor from ML3DRT output filename
@@ -124,54 +144,85 @@ def main():
         dz: NP_REAL = NP_REAL(grid["zh"][1] - grid["zh"][0])
 
         #-----------------------------------------------------------------------
-        # Obtain Morning-Noon-Night time indices, times, SZAs
+        # Obtain time indices, times, SZAs
         #-----------------------------------------------------------------------
-        msg: str = "Obtaining morning-noon-night information..."
-        print_msg(msg)
+        if time_steps is None:
+            msg: str = "Obtaining morning-noon-night information..."
+            print_msg(msg)
 
-        mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
-        mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
-        mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
-        ndays: NP_INT = NP_INT(mnn_indices.shape[0])
+            mnn_indices: NP_ARRAY[NP_INT] = find_mnn_indices(rad_tran_infile) # [ndays, 3]
+            mnn_times: NP_ARRAY[NP_REAL] = find_times(rad_tran_infile, mnn_indices) # Time since simulation start; [h]; [ndays, 3]
+            mnn_szas: NP_ARRAY[NP_REAL] = find_szas(rad_tran_infile, mnn_indices) # Solar zenith angle (SZA); [degrees]; [ndays, 3]
+            ndays: NP_INT = NP_INT(mnn_indices.shape[0])
+            ncases: NP_INT = ndays
+        else:
+            msg: str = "Obtaining requested time-step information..."
+            print_msg(msg)
+
+            time_step_indices: NP_ARRAY[NP_INT] = np.array(time_steps, dtype = NP_INT)
+            time_step_times: NP_ARRAY[NP_REAL] = np.array(
+                find_times(rad_tran_infile, time_step_indices), dtype = NP_REAL) # Time since simulation start; [h]; [ntime_steps]
+            time_step_szas: NP_ARRAY[NP_REAL] = np.array(
+                find_szas(rad_tran_infile, time_step_indices), dtype = NP_REAL) # Solar zenith angle (SZA); [degrees]; [ntime_steps]
+            ncases: NP_INT = NP_INT(time_step_indices.shape[0])
 
         #-----------------------------------------------------------------------
-        # Calculate fields for each MNN of each day
+        # Calculate fields for each requested case
         #-----------------------------------------------------------------------
         jj: int
-        for jj in range(0, ndays):
-            day_str: str = "day_{}".format(jj)
+        for jj in range(0, ncases):
+            if time_steps is None:
+                case_str: str = "day_{}".format(jj)
+                case_msg: str = "day {} of {}".format(jj, ncases - 1)
+                plot_indices: NP_ARRAY[NP_INT] = mnn_indices[jj]
+                plot_times: NP_ARRAY[NP_REAL] = np.array(mnn_times[jj,0:2],
+                    dtype = NP_REAL)
+                plot_szas: NP_ARRAY[NP_REAL] = np.array(mnn_szas[jj,0:2],
+                    dtype = NP_REAL)
+                nszas: NP_INT = NP_INT(2)
+            else:
+                time_step: NP_INT = NP_INT(time_step_indices[jj])
+                case_str: str = "t_{:03d}".format(time_step)
+                case_msg: str = "time step {} ({} of {})".format(
+                    time_step, jj, ncases - 1)
+                plot_indices: NP_ARRAY[NP_INT] = np.array([time_step], dtype = NP_INT)
+                plot_times: NP_ARRAY[NP_REAL] = np.array([time_step_times[jj]],
+                    dtype = NP_REAL)
+                plot_szas: NP_ARRAY[NP_REAL] = np.array([time_step_szas[jj]],
+                    dtype = NP_REAL)
+                nszas: NP_INT = NP_INT(1)
 
             plot_data_filename: str = "ml3drt_flux_sfc_dn_snapshot.{}.{}.nc".format(
-                lr_str, day_str)
+                lr_str, case_str)
             plot_data_filepath: str = os.path.join(working_dir, plot_data_filename)
 
             if recalculate or not os.path.exists(plot_data_filepath):
                 #---------------------------------------------------------------
                 # Calculate vertical water path
                 #---------------------------------------------------------------
-                msg: str = "Calculating vertical water path for day {} of {}...".format(jj, ndays - 1)
+                msg: str = "Calculating vertical water path for {}...".format(case_msg)
                 print_msg(msg)
 
-                cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, mnn_indices[jj]) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
+                cloud_wc: XR_DATAARRAY = calc_cloud_wc(rad_tran_infile, plot_indices) # Cloud water content; [g m^{-3}]; [time, lay, y, x]
                 vwp: XR_DATAARRAY = dz * cloud_wc.sum(dim = "lay") # [g m^{-2}], [time, y, x]
 
                 #---------------------------------------------------------------
                 # Calculate downwelling surface flux
                 #---------------------------------------------------------------
-                msg: str = "Calculating downwelling surface flux for day {} of {}...".format(jj, ndays - 1)
+                msg: str = "Calculating downwelling surface flux for {}...".format(case_msg)
                 print_msg(msg)
 
                 flux_sfc_dn_rt: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_flux_sfc_dn(
                     rad_tran_outfile,
-                    mnn_indices[jj],
+                    plot_indices,
                     solver = "rt") # Downwelling surface flux - ray-tracer; [W m^{-2}]; [time, y, x]
                 flux_sfc_dn_ts: XR_DATAARRAY = rte_rrtmgp_cpp_calc_sw_flux_sfc_dn(
                     rad_tran_outfile,
-                    mnn_indices[jj],
+                    plot_indices,
                     solver = "ts") # Downwelling surface flux - two-stream; [W m^{-2}]; [time, y, x]
                 flux_sfc_dn_ml3drt: XR_DATAARRAY = ml3drt_calc_sw_flux_sfc_dn(
                     ml3drt_outfile,
-                    mnn_indices[jj]) # Downwelling surface flux - ML3DRT emulator; [W m^{-2}]; [time, y, x]
+                    plot_indices) # Downwelling surface flux - ML3DRT emulator; [W m^{-2}]; [time, y, x]
 
                 #---------------------------------------------------------------
                 # Transpose fields before plotting
@@ -203,8 +254,7 @@ def main():
                 msg: str = "Saving plot data to {}...".format(plot_data_filepath)
                 print_msg(msg)
 
-                ncols: NP_INT = NP_INT(2)
-                sza_indices: NP_ARRAY[NP_INT] = np.arange(0, ncols, dtype = NP_INT)
+                sza_indices: NP_ARRAY[NP_INT] = np.arange(0, nszas, dtype = NP_INT)
 
                 flux_sfc_dn_ml3drt_diff: XR_DATAARRAY = (
                     flux_sfc_dn_ml3drt - flux_sfc_dn_rt)
@@ -214,21 +264,21 @@ def main():
                 plot_data: xr.Dataset = xr.Dataset(
                     data_vars = {
                         "vwp": (["sza", "x", "y"],
-                            np.array(vwp.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(vwp.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "flux_sfc_dn_rt": (["sza", "x", "y"],
-                            np.array(flux_sfc_dn_rt.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(flux_sfc_dn_rt.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "flux_sfc_dn_ml3drt": (["sza", "x", "y"],
-                            np.array(flux_sfc_dn_ml3drt.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(flux_sfc_dn_ml3drt.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "flux_sfc_dn_ts": (["sza", "x", "y"],
-                            np.array(flux_sfc_dn_ts.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(flux_sfc_dn_ts.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "flux_sfc_dn_ml3drt_diff": (["sza", "x", "y"],
-                            np.array(flux_sfc_dn_ml3drt_diff.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(flux_sfc_dn_ml3drt_diff.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "flux_sfc_dn_ts_diff": (["sza", "x", "y"],
-                            np.array(flux_sfc_dn_ts_diff.isel(time = slice(0, ncols)), dtype = NP_REAL)),
+                            np.array(flux_sfc_dn_ts_diff.isel(time = slice(0, nszas)), dtype = NP_REAL)),
                         "mnn_times": (["sza"],
-                            np.array(mnn_times[jj,0:ncols], dtype = NP_REAL)),
+                            np.array(plot_times[0:nszas], dtype = NP_REAL)),
                         "mnn_szas": (["sza"],
-                            np.array(mnn_szas[jj,0:ncols], dtype = NP_REAL))
+                            np.array(plot_szas[0:nszas], dtype = NP_REAL))
                     },
                     coords = {
                         "sza": sza_indices,
@@ -277,16 +327,39 @@ def main():
             # Obtain data bounds
             #-------------------------------------------------------------------
             vwp_max: NP_REAL = NP_REAL(plot_data["vwp"].max())
-            vwp_min: NP_REAL = NP_REAL(plot_data["vwp"].min())
+            vwp_positive: XR_DATAARRAY = plot_data["vwp"].where(plot_data["vwp"] > 0.)
 
-            flux_sfc_dn_max: NP_REAL = NP_REAL(max(
-                NP_REAL(plot_data["flux_sfc_dn_rt"].max()),
-                NP_REAL(plot_data["flux_sfc_dn_ml3drt"].max()),
-                NP_REAL(plot_data["flux_sfc_dn_ts"].max())))
-            flux_sfc_dn_min: NP_REAL = NP_REAL(min(
-                NP_REAL(plot_data["flux_sfc_dn_rt"].min()),
-                NP_REAL(plot_data["flux_sfc_dn_ml3drt"].min()),
-                NP_REAL(plot_data["flux_sfc_dn_ts"].min())))
+            if NP_INT(vwp_positive.count()) > 0:
+                vwp_min: NP_REAL = NP_REAL(vwp_positive.min())
+            else:
+                vwp_min: NP_REAL = NP_REAL(1.e1)
+                vwp_max: NP_REAL = NP_REAL(1.e2)
+
+            vwp_log_min: NP_REAL = NP_REAL(max(1.e1, vwp_min))
+
+            if vwp_max <= vwp_log_min:
+                vwp_max = NP_REAL(10. * vwp_log_min)
+
+            flux_sfc_dn_all: XR_DATAARRAY = xr.concat(
+                [
+                    plot_data["flux_sfc_dn_rt"],
+                    plot_data["flux_sfc_dn_ml3drt"],
+                    plot_data["flux_sfc_dn_ts"]
+                ],
+                dim = "source")
+
+            flux_sfc_dn_positive: XR_DATAARRAY = flux_sfc_dn_all.where(
+                flux_sfc_dn_all > 0.)
+
+            if NP_INT(flux_sfc_dn_positive.count()) > 0:
+                flux_sfc_dn_min: NP_REAL = NP_REAL(flux_sfc_dn_positive.min())
+                flux_sfc_dn_max: NP_REAL = NP_REAL(flux_sfc_dn_positive.max())
+            else:
+                flux_sfc_dn_min: NP_REAL = NP_REAL(1.e-6)
+                flux_sfc_dn_max: NP_REAL = NP_REAL(1.)
+
+            if flux_sfc_dn_max <= flux_sfc_dn_min:
+                flux_sfc_dn_max = NP_REAL(10. * flux_sfc_dn_min)
 
             flux_sfc_dn_diff_max: NP_REAL = NP_REAL(max(
                 NP_REAL(np.abs(plot_data["flux_sfc_dn_ml3drt_diff"]).max()),
@@ -300,6 +373,7 @@ def main():
 
             nrows: NP_INT = NP_INT(3)
             ncols: NP_INT = NP_INT(2)
+            nszas: NP_INT = NP_INT(plot_data.sizes["sza"])
             fig_width: NP_REAL = NP_REAL(6.5)
             fig_height: NP_REAL = NP_REAL(7.5)
             fig_size: list[NP_REAL] = [fig_width, fig_height]
@@ -308,6 +382,33 @@ def main():
 
             if flux_sfc_dn_diff_max <= 0.:
                 flux_sfc_dn_diff_max = linthresh
+
+            flux_sfc_dn_diff_use_linear: bool = flux_sfc_dn_diff_max < linthresh
+
+            if flux_sfc_dn_diff_use_linear:
+                flux_sfc_dn_diff_norm = colors.Normalize(
+                    vmin = -flux_sfc_dn_diff_max,
+                    vmax = flux_sfc_dn_diff_max)
+                flux_sfc_dn_diff_contour_levels: NP_ARRAY[NP_REAL] = np.array(
+                    [
+                        -0.5 * flux_sfc_dn_diff_max,
+                        0.5 * flux_sfc_dn_diff_max
+                    ],
+                    dtype = NP_REAL)
+                flux_sfc_dn_diff_ticks: NP_ARRAY[NP_REAL] = np.array(
+                    [
+                        -0.5 * flux_sfc_dn_diff_max,
+                        0.,
+                        0.5 * flux_sfc_dn_diff_max
+                    ],
+                    dtype = NP_REAL)
+            else:
+                flux_sfc_dn_diff_norm = colors.SymLogNorm(
+                    linthresh = linthresh,
+                    vmin = -flux_sfc_dn_diff_max,
+                    vmax = flux_sfc_dn_diff_max)
+                flux_sfc_dn_diff_contour_levels: NP_ARRAY[NP_REAL] = np.array(
+                    [-linthresh, linthresh], dtype = NP_REAL)
 
             mnn_szas_plot: NP_ARRAY[NP_REAL] = np.array(plot_data["mnn_szas"],
                 dtype = NP_REAL)
@@ -318,7 +419,7 @@ def main():
             y_lim: list[NP_REAL] = [NP_REAL(y_ticks[0]), NP_REAL(y_ticks[-1])]
 
             ll: int
-            for ll in range(0, ncols):
+            for ll in range(0, nszas):
                 fig = plt.figure(
                     constrained_layout = True,
                     figsize = fig_size)
@@ -384,7 +485,7 @@ def main():
                     plot_data["yh"], 
                     plot_data["vwp"].isel(sza = ll),
                     norm = colors.LogNorm(
-                        vmin = max(1.e1, vwp_min),
+                        vmin = vwp_log_min,
                         vmax = vwp_max),
                     cmap = cw_cmap, shading = "flat")
 
@@ -395,16 +496,13 @@ def main():
                     plot_data["xh"], 
                     plot_data["yh"], 
                     plot_data["flux_sfc_dn_ts_diff"].isel(sza = ll),
-                    norm = colors.SymLogNorm(
-                        linthresh = linthresh,
-                        vmin = -flux_sfc_dn_diff_max,
-                        vmax = flux_sfc_dn_diff_max),
+                    norm = flux_sfc_dn_diff_norm,
                     cmap = diff_cmap, shading = "flat")
                 axs[1,1].contour(
                     plot_data["x"],
                     plot_data["y"],
                     plot_data["flux_sfc_dn_ts_diff"].isel(sza = ll),
-                    levels = [-linthresh, linthresh],
+                    levels = flux_sfc_dn_diff_contour_levels,
                     colors = "k",
                     linewidths = 1.0,
                     negative_linestyles = "dashed"
@@ -414,16 +512,13 @@ def main():
                     plot_data["xh"], 
                     plot_data["yh"], 
                     plot_data["flux_sfc_dn_ml3drt_diff"].isel(sza = ll),
-                    norm = colors.SymLogNorm(
-                        linthresh = linthresh,
-                        vmin = -flux_sfc_dn_diff_max,
-                        vmax = flux_sfc_dn_diff_max),
+                    norm = flux_sfc_dn_diff_norm,
                     cmap = diff_cmap, shading = "flat")
                 axs[2,1].contour(
                     plot_data["x"],
                     plot_data["y"],
                     plot_data["flux_sfc_dn_ml3drt_diff"].isel(sza = ll),
-                    levels = [-linthresh, linthresh],
+                    levels = flux_sfc_dn_diff_contour_levels,
                     colors = "k",
                     linewidths = 1.0,
                     negative_linestyles = "dashed"
@@ -436,6 +531,11 @@ def main():
                 flux_sfc_dn_diff_cbar = fig.colorbar(
                     flux_sfc_dn_ts_diff_pcm, cax = flux_sfc_dn_diff_cax)
 
+                if flux_sfc_dn_diff_use_linear:
+                    flux_sfc_dn_diff_cbar.set_ticks(flux_sfc_dn_diff_ticks)
+                    flux_sfc_dn_diff_cbar.ax.set_yticklabels(
+                        ["{:.3g}".format(tick) for tick in flux_sfc_dn_diff_ticks])
+
                 flux_sfc_dn_cbar.ax.yaxis.set_ticks_position("left")
                 flux_sfc_dn_cbar.ax.yaxis.set_label_position("left")
 
@@ -443,8 +543,8 @@ def main():
                 # Plot contours at major ticks
                 #---------------------------------------------------------------
                 # Downwelling surface flux
-                flux_sfc_dn_levels: NP_ARRAY[NP_REAL] = NP_REAL(
-                    flux_sfc_dn_cbar.ax.get_yticks())
+                flux_sfc_dn_levels: NP_ARRAY[NP_REAL] = np.array(
+                    flux_sfc_dn_cbar.ax.get_yticks(), dtype = NP_REAL)
 
                 axs[0,0].contour(
                     plot_data["x"],
@@ -481,7 +581,8 @@ def main():
                     )
 
                 # VWP
-                vwp_levels: NP_ARRAY[NP_REAL] = NP_REAL(vwp_cbar.ax.get_yticks())
+                vwp_levels: NP_ARRAY[NP_REAL] = np.array(
+                    vwp_cbar.ax.get_yticks(), dtype = NP_REAL)
                 axs[0,1].contour(
                     plot_data["x"],
                     plot_data["y"],
@@ -523,18 +624,19 @@ def main():
                 #---------------------------------------------------------------
                 # Additional Colorbar Elements
                 #---------------------------------------------------------------
-                flux_sfc_dn_diff_cbar.ax.axhline(
-                    linthresh,
-                    color = "k",
-                    linestyle = "solid",
-                    linewidth = 1.0
-                )
-                flux_sfc_dn_diff_cbar.ax.axhline(
-                    -linthresh,
-                    color = "k",
-                    linestyle = "dashed",
-                    linewidth = 1.0
-                )
+                level: NP_REAL
+                for level in flux_sfc_dn_diff_contour_levels:
+                    if level < 0.:
+                        linestyle: str = "dashed"
+                    else:
+                        linestyle: str = "solid"
+
+                    flux_sfc_dn_diff_cbar.ax.axhline(
+                        level,
+                        color = "k",
+                        linestyle = linestyle,
+                        linewidth = 1.0
+                    )
 
                 #---------------------------------------------------------------
                 # Additional figure styling
@@ -558,7 +660,7 @@ def main():
                 #---------------------------------------------------------------
                 sza_str: str = "sza_{:02d}".format(NP_INT(np.round(mnn_szas_plot[ll])))
                 plt_filename: str = "ml3drt_flux_sfc_dn_snapshot.{}.{}.{}.png".format(
-                    lr_str, day_str, sza_str)
+                    lr_str, case_str, sza_str)
                 plt_filepath: str = os.path.join(rad_tran_vizdir, plt_filename)
                 fig.savefig(plt_filepath, dpi = 200)
                 plt.close(fig)
