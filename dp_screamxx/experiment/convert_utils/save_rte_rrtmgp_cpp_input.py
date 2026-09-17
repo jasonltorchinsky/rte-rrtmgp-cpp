@@ -1,4 +1,7 @@
 # Standard Library Imports
+from datetime import datetime
+import os
+import re
 from typing import Optional
 
 # Third-Party Library Imports
@@ -6,55 +9,42 @@ import numpy as np
 import xarray as xr
 
 # Local Library Imports
-from consts.consts import NP_INT, NP_REAL, NP_ARRAY, \
-    MPI_COMM, MPI_ROOT, XR_DATASET
+from consts.dtypes import NP_INT, NP_REAL, NP_ARRAY, MPI_COMM, XR_DATASET, XR_DATAARRAY
 from consts.rte_rrtmgp_cpp_fields import fields_dimensions, fields_descriptions, fields_units
 
-def save_rte_rrtmgp_cpp_input(coords: dict, fields: dict, tt: NP_INT,
-    file_path_root: str, comm: MPI_COMM, szas: Optional[NP_ARRAY[NP_REAL]] = None):
+from .print_msg import print_msg
 
-    l_rank: NP_INT = NP_INT(comm.Get_rank())
+def save_rte_rrtmgp_cpp_input(rad_tran_tgt_grids: dict, rad_tran_tgt_vars_dict: dict,
+    rad_tran_indir: str, dp_scream_file: str, time_idx: NP_INT, l_rank: NP_INT):
+    #---------------------------------------------------------------------------
+    # Make tweaks to xarray data arrays to match necessary format, and write to file
+    #---------------------------------------------------------------------------
+    time_str: str = "t_{:03}".format(time_idx)
+    file_name_base: str = re.sub(".nc", "", os.path.basename(dp_scream_file))
+    coarse_factor_str: str
+    for coarse_factor_str in rad_tran_tgt_grids:
+        file_name: str = file_name_base + "." + coarse_factor_str + "." + time_str + ".in.nc"
+        file_path: str = os.path.join(rad_tran_indir, file_name)
 
-    if l_rank == MPI_ROOT:
-        time_str: str = ".t_{:03d}".format(tt)
+        rad_tran_tgt_grid: dict = rad_tran_tgt_grids[coarse_factor_str]
+        rad_tran_tgt_vars: dict = rad_tran_tgt_vars_dict[coarse_factor_str]
 
-        coarse_factor_str: str
-        for coarse_factor_str in coords.keys():
-            lr_str: str = ".lr_" + coarse_factor_str
-            nx: NP_INT = NP_INT(coords[coarse_factor_str]["x"][1].size)
-            ny: NP_INT = NP_INT(coords[coarse_factor_str]["y"][1].size)
-            if szas is not None:
-                sza: NP_REAL
-                for sza in szas:
-                    sza_str: str = ".sza_{:03.0f}".format(sza)
+        var_key: str
+        var: XR_DATAARRAY
+        for var_key, var in rad_tran_tgt_vars.items():
+            if "z" in var.dims:
+                var = (var
+                    .rename({"z" : "lay"}))
+            elif "zh" in var.dims:
+                var = (var
+                    .rename({"zh" : "lev"}))
+            rad_tran_tgt_vars[var_key] = var
 
-                    sza_rad: NP_REAL = np.deg2rad(sza)
-                    mu0: NP_ARRAY[NP_REAL] = np.zeros([ny, nx], dtype = NP_REAL) + np.cos(sza_rad)
-                    fields[coarse_factor_str]["mu0"]: list = (
-                        fields_dimensions["mu0"],
-                        mu0,
-                        dict(description = fields_descriptions["mu0"], units = fields_units["mu0"])
-                    )
-                    
-                    file_path: str = file_path_root + time_str + sza_str + lr_str + ".in.nc"
-                    
-                    write_rte_input(coords, fields, coarse_factor_str, file_path)
-            else:
-                file_path: str = file_path_root + time_str + lr_str + ".in.nc"
+        xr_rte_rrtmgp_cpp: XR_DATASET = XR_DATASET(
+            data_vars = rad_tran_tgt_vars, 
+            coords = rad_tran_tgt_grid)
 
-                write_rte_input(coords, fields, coarse_factor_str, file_path)
+        xr_rte_rrtmgp_cpp.to_netcdf(file_path)
 
-def write_rte_input(coords: dict, fields: dict, coarse_factor_str: str,
-    file_path: str):
-
-    out_coords: dict = coords[coarse_factor_str]
-    out_fields: dict = fields[coarse_factor_str]
-
-    ds: XR_DATASET = xr.Dataset(
-        data_vars = out_fields,
-        coords = out_coords
-    )
-
-    for v in ds.data_vars:
-        ds[v].attrs.pop("coordinates", None)
-    ds.to_netcdf(file_path)
+        msg: str = "Writing to {}...".format(file_path)
+        print_msg(msg, l_rank)

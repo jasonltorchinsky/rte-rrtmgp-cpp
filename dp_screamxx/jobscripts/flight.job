@@ -1,107 +1,419 @@
 #!/bin/bash
-#SBATCH --nodes=1
-#SBATCH --time=00:01:00
-#SBATCH --ntasks=1
-#SBATCH --cpus-per-task=1
+#SBATCH --time=2-00:00:00
+#SBATCH --nodes=48
+#SBATCH --ntasks-per-node=1
 #SBATCH --account=fy260144
 #SBATCH --reservation=flight-cldera
-#SBATCH --job-name=dp_screamxx
+#SBATCH --job-name=RICO
 #SBATCH --output=%j.out
 #SBATCH --error=%j.err
 
-# Machine-specific DP-SCREAMXX directories
-#DP_SCREAMXX_DATA_DIR=/projects/ml3drt/dpxx # DP-SCREAMXX output parent directory
-#DP_SCREAMXX_RUN_NAME=scream_dpxx_COMBLE_400x400
-#DP_SCREAMXX_RUN_DIR=${DP_SCREAMXX_DATA_DIR}/${DP_SCREAMXX_RUN_NAME}/run
-#DP_SCREAMXX_OUTPUT_FILE_BASE=scream.INSTANT.nmins_x15.2020-03-12-79200
-#DP_SCREAMXX_OUTPUT_FILE_PATH=${DP_SCREAMXX_RUN_DIR}/${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}.nc
+export HDF5_USE_FILE_LOCKING=FALSE
+set -euo pipefail
 
-# Machine-specific RTE-RRTMGP-CPP I/O directories
-#RTE_RRTMGP_CPP_DIR=/projects/ml3drt/rte_rrtmgp_cpp
-#RTE_RRTMGP_CPP_RUN_NAME=t_070_074
-#RTE_RRTMGP_CPP_RUN_DIR=${RTE_RRTMGP_CPP_DIR}/${DP_SCREAMXX_RUN_NAME}/${RTE_RRTMGP_CPP_RUN_NAME}
-#RTE_RRTMGP_CPP_INPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/input
-#RTE_RRTMGP_CPP_OUTPUT_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/output
-#RTE_RRTMGP_CPP_VIZ_DIR=${RTE_RRTMGP_CPP_RUN_DIR}/viz
-#RTE_RRTMGP_CPP_VIZ_INPUT_DIR=${RTE_RRTMGP_CPP_VIZ_DIR}/input
-#RTE_RRTMGP_CPP_FILE_BASE=${DP_SCREAMXX_RUN_NAME}.${DP_SCREAMXX_OUTPUT_FILE_BASE}
-#RTE_RRTMGP_CPP_INPUT_FILE_PATH_BASE=${RTE_RRTMGP_CPP_INPUT_DIR}/${RTE_RRTMGP_FILE_BASE}
+# Run parameters - GATEIII
+# SCREAM_RUN_NAME=scream_dpxx_GATEIII_300x300_corrupt
+# SCREAM_START_TIME=1974-08-30-00000
+# TIME_FREQ=nmins_x15
+# RADTRAN_RUN_NAME=debug-1974-08-30
+# CASE_NAME="GATEIII"
 
-#mkdir -p ${RTE_RRTMGP_CPP_DIR}
-#mkdir -p ${RTE_RRTMGP_CPP_INPUT_DIR}
-#mkdir -p ${RTE_RRTMGP_CPP_OUTPUT_DIR}
-#mkdir -p ${RTE_RRTMGP_CPP_VIZ_DIR}
+# Run parameters - RICO_50x50
+# SCREAM_RUN_NAME=scream_dpxx_RICO_50x50
+# SCREAM_START_TIME=2004-12-16-00000
+# TIME_FREQ=nhours_x1
+# RADTRAN_RUN_NAME=debug-2004-12-16
+# CASE_NAME="RICO"
+
+# Run parameters - COMBLE
+# SCREAM_RUN_NAME=scream_dpxx_COMBLE_400x400
+# SCREAM_START_TIME=2020-03-12-79200
+# TIME_FREQ=nmins_x15
+# RADTRAN_RUN_NAME=debug-2020-03-12
+# CASE_NAME="COMBLE"
+
+# Run parameters - RICO_300x300
+SCREAM_RUN_NAME=scream_dpxx_RICO_300x300
+SCREAM_START_TIME=2004-12-16-00000
+TIME_FREQ=nmins_x15
+RADTRAN_RUN_NAME=debug-2004-12-16
+CASE_NAME="RICO"
+
+# Run parameters - RCE_300x300
+# SCREAM_RUN_NAME=scream_dpxx_RCE_300x300
+# SCREAM_START_TIME=2000-01-01-00000
+# TIME_FREQ=nmins_x15
+# RADTRAN_RUN_NAME=debug-2000-01-01
+# CASE_NAME="RCE"
+
+# Run parameters - TWP06_300x300
+# SCREAM_RUN_NAME=scream_dpxx_TWP06_300x300
+# SCREAM_START_TIME=2006-01-17-10800
+# TIME_FREQ=nmins_x15
+# RADTRAN_RUN_NAME=debug-2006-01-17
+# CASE_NAME="TWP06"
+
+
+# Machine-specific DP-SCREAMXX directories - Abbreviated to SCREAM
+SCREAM_DATA_DIR=/pscratch/jltorch/dp-scream # DP-SCREAMXX output parent directory
+SCREAM_RUN_DIR=${SCREAM_DATA_DIR}/${SCREAM_RUN_NAME}/run
+SCREAM_OUTPUT_FILE_BASE=scream.INSTANT.${TIME_FREQ}.${SCREAM_START_TIME}
+SCREAM_OUTPUT_FILE_PATH=${SCREAM_RUN_DIR}/${SCREAM_RUN_NAME}.${SCREAM_OUTPUT_FILE_BASE}.nc
+
+# Machine-specific RTE-RRTMGP-CPP I/O directories - Abbreviated to RADTRAN
+# RADTRAN_DATA_DIR=/projects/ml3drt/rte_rrtmgp_cpp
+RADTRAN_DATA_DIR=/pscratch/jltorch/ml3drt/rte-rrtmgp-cpp
+RADTRAN_RUN_DIR=${RADTRAN_DATA_DIR}/${SCREAM_RUN_NAME}/${RADTRAN_RUN_NAME}
+RADTRAN_SEPARATE_INPUT_DIR=${RADTRAN_RUN_DIR}/separate_input
+RADTRAN_COMBINED_INPUT_DIR=${RADTRAN_RUN_DIR}/combined_input
+RADTRAN_SEPARATE_OUTPUT_DIR=${RADTRAN_RUN_DIR}/separate_output
+RADTRAN_COMBINED_OUTPUT_DIR=${RADTRAN_RUN_DIR}/combined_output
+RADTRAN_VIZ_DIR=${RADTRAN_RUN_DIR}/viz
+RADTRAN_VIZ_INPUT_DIR=${RADTRAN_VIZ_DIR}/input
+
+mkdir -p ${RADTRAN_DATA_DIR}
+mkdir -p ${RADTRAN_SEPARATE_INPUT_DIR}
+mkdir -p ${RADTRAN_COMBINED_INPUT_DIR}
+mkdir -p ${RADTRAN_SEPARATE_OUTPUT_DIR}
+mkdir -p ${RADTRAN_COMBINED_OUTPUT_DIR}
+mkdir -p ${RADTRAN_VIZ_DIR}
 
 # RTE-RRTMGP-CPP directories
-#RTE_RRTMGP_CPP_DIR=../.. # Source directory
-#RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
-#RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
-#RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
-#DP_SCREAMXX_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
-#EXPERIMENT_DIR=${DP_SCREAMXX_DIR}/experiment
-#EXPERIMENT_VIZ_DIR=${EXPERIMENT_DIR}/viz_utils
+RTE_RRTMGP_CPP_DIR=$(realpath "../..") # Source directory
+RTE_RRTMGP_CPP_BUILD_DIR=${RTE_RRTMGP_CPP_DIR}/build
+RTE_RRTMGP_CPP_EXEC=${RTE_RRTMGP_CPP_BUILD_DIR}/test_rte_rrtmgp_rt_gpu
+RTE_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/data
+RRTMGP_DATA_DIR=${RTE_RRTMGP_CPP_DIR}/rrtmgp-data
+SCREAM_DIR=${RTE_RRTMGP_CPP_DIR}/dp_screamxx # DP-SCREAMXX numerical experiment directory
+EXPERIMENT_DIR=${SCREAM_DIR}/experiment
+EXPERIMENT_ANALYZE_DIR=${EXPERIMENT_DIR}/analysis_tools
 
-# Link RRTMGP files
-#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-sw.nc cloud_coefficients_sw.nc
-#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-clouds-lw.nc cloud_coefficients_lw.nc
-#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-sw-g224.nc coefficients_sw.nc
-#ln -sf ${RRTMGP_DATA_DIR}/rrtmgp-gas-lw-g256.nc coefficients_lw.nc
-#ln -sf ${RTE_DATA_DIR}/aerosol_optics.nc
+RTE_RRTMGP_CPP_DIORAMA_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/diorama
+RTE_RRTMGP_CPP_SNAPSHOT_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/snapshot
+RTE_RRTMGP_CPP_TIMESERIES_DIR=${RADTRAN_VIZ_DIR}/rte_rrtmgp_cpp/timeseries
 
-# Set SZAs, times, and coarsening factors
-#SZAS_PYTHON="[0, 10, 20, 30, 40, 50, 55, 60, 65, 70, 75, 80, 85]"
-#COARSE_FACTORS_PYTHON="[1, 2, 4, 8, 16, 32, 64]"
-#TIMES_PYTHON="[60]"
-#T0_PYTHON=70
-#TF_PYTHON=74
+mkdir -p ${RTE_RRTMGP_CPP_DIORAMA_DIR}
+mkdir -p ${RTE_RRTMGP_CPP_SNAPSHOT_DIR}
+mkdir -p ${RTE_RRTMGP_CPP_TIMESERIES_DIR}
 
-#python ${EXPERIMENT_VIZ_DIR}/animate_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+# SCREAM visualization directories
+SCREAM_DIORAMA_DIR=${RADTRAN_VIZ_DIR}/dp_screamxx/diorama
+SCREAM_SNAPSHOT_DIR=${RADTRAN_VIZ_DIR}/dp_screamxx/snapshot
+SCREAM_TIMESERIES_DIR=${RADTRAN_VIZ_DIR}/dp_screamxx/timeseries
 
-#mpirun -np 256 python ${EXPERIMENT_DIR}/convert_dp_screamxx_output.py \
-#    --dpscream_file_path ${DP_SCREAMXX_OUTPUT_FILE_PATH} \
-#    --rte_rrtmgp_cpp_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --coarse_factors "${COARSE_FACTORS_PYTHON}" \
-#    --szas "${SZAS_PYTHON}" \
-#    --t0 "${T0_PYTHON}" --tf "${TF_PYTHON}"
-#    #--times "${TIMES_PYTHON}"
-    
+mkdir -p ${SCREAM_DIORAMA_DIR}
+mkdir -p ${SCREAM_SNAPSHOT_DIR}
+mkdir -p ${SCREAM_TIMESERIES_DIR}
 
-#for FILE_NAME in ${RTE_RRTMGP_CPP_INPUT_DIR}/*;
-#do
-#  ln -sf ${FILE_NAME} rte_rrtmgp_input.nc
-## Run RTE-RRTMGP-CPP
-## Flags:
-## --shortwave          DEFAULT[true]  : Enable computation of shortwave radiation.
-## --longwave           DEFAULT[false] : Enable computation of longwave radiation.
-## --fluxes             DEFAULT[true]  : Enable computation of fluxes.
-## --two-stream         DEFAULT[true]  : Run two-stream solver to obtain 1D fluxes.
-## --raytracing         DEFAULT[32]    : Ray tracer rays-per pixel. '--raytracing False' to turn off.
-## --independent-column DEFAULT[false] : Run ray tracer in independent column mode.
-## --cloud-optics       DEFAULT[false] : Enable cloud optics (both liquid and ice).
-## --liq-cloud-optics   DEFAULT[false] : Liquid only cloud optics.
-## --ice-cloud-optics   DEFAULT[false] : Ice only cloud optics.
-## --cloud-mie          DEFAULT[false] : Use Mie tables for cloud scattering in ray tracer.
-## --aerosol-optics     DEFAULT[false] : Enable aerosol optics.
-## --single-gpt         DEFAULT[false] : Output optical properties and fluxes for a single g-point. '--single-gpt 100': output 100th g-point.
-## --profiling          DEFAULT[false] : Perform additional profiling run.
-## --delta-cloud        DEFAULT[false] : Delta-scaling of cloud optical properties.
-## --delta-aerosol      DEFAULT[false] : Delta-scaling of aerosol optical properties.
-## --tica               DEFAULT[false] : Attenuate path when doing an overhead 1D calculation of tilted input.
-#  ${RTE_RRTMGP_CPP_BUILD_DIR}/test_rte_rrtmgp_rt_gpu --cloud-optics --raytracing 128
-#  RTE_RRTMGP_CPP_OUTPUT_FILE_PATH=${RTE_RRTMGP_CPP_OUTPUT_DIR}/$(basename ${FILE_NAME} .in.nc).out.nc 
-#  mv rte_rrtmgp_output.nc ${RTE_RRTMGP_CPP_OUTPUT_FILE_PATH}
-#done
+#-------------------------------------------------------------------------------
+# CHECK DIRECTORIES AND CASE FOR ERRORS
+#-------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: DEBUGGING - Directories used in script execution:"
 
-#mpirun -np 4 python ${EXPERIMENT_VIZ_DIR}/plot_input.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-#mpirun -np 4 python ${EXPERIMENT_VIZ_DIR}/plot_output.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
-#mpirun -np 4 python ${EXPERIMENT_VIZ_DIR}/plot_comparison.py \
-#    --rte_rrtmgp_cpp_input_dir_path ${RTE_RRTMGP_CPP_INPUT_DIR} \
-#    --rte_rrtmgp_cpp_output_dir_path ${RTE_RRTMGP_CPP_OUTPUT_DIR} \
-#    --rte_rrtmgp_cpp_viz_dir_path ${RTE_RRTMGP_CPP_VIZ_DIR}
+echo "RADTRAN_SEPARATE_INPUT_DIR: ${RADTRAN_SEPARATE_INPUT_DIR}"
+echo "RADTRAN_COMBINED_INPUT_DIR: ${RADTRAN_COMBINED_INPUT_DIR}"
+echo "RADTRAN_SEPARATE_OUTPUT_DIR: ${RADTRAN_SEPARATE_OUTPUT_DIR}"
+echo "RADTRAN_COMBINED_OUTPUT_DIR: ${RADTRAN_COMBINED_OUTPUT_DIR}"
+echo "RADTRAN_VIZ_DIR: ${RADTRAN_VIZ_DIR}"
+echo "CASE NAME: ${CASE_NAME}"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="DP-SCREAM to RTE-RRTMGP-CPP+RT Conversion"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set SZAs, times, and coarsening factors
+# COARSE_FACTORS=1,2,4,8,16,32,64
+
+# srun --mpi=pmi2 -n ${SLURM_NTASKS} \
+#   python ${EXPERIMENT_DIR}/convert-dpscream-output.py \
+#     --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+#     --rad-tran-indir ${RADTRAN_SEPARATE_INPUT_DIR} \
+#     --coarse-factors ${COARSE_FACTORS} \
+#     --day-only
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT Input Combination"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set coarsening factors
+# COARSE_FACTORS=1,2,4,8,16,32,64
+
+# python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-input.py \
+#   --rad-tran-separate-indir ${RADTRAN_SEPARATE_INPUT_DIR} \
+#   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#   --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+## Flight is not a GPU-enbaled machine
+## Move combined input files to a GPU-enabled machine
+## Run ray-traver on GPU-enabled machine
+## Move separate output files back to Flight for further processing
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT Output Combination"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set coarsening factors
+# COARSE_FACTORS=1
+
+# python ${EXPERIMENT_DIR}/combine-rte-rrtmgp-cpp-output-large.py \
+#   --rad-tran-combined-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#   --rad-tran-separate-outdir ${RADTRAN_SEPARATE_OUTPUT_DIR} \
+#   --rad-tran-combined-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#   --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="DP-SCREAM OUTPUT VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Animate Atmosphere Diorama:"
+# python ${EXPERIMENT_ANALYZE_DIR}/animate-dp-screamxx-diorama-atm.py \
+#  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+#  --rad-tran-vizdir ${SCREAM_DIORAMA_DIR}/atm \
+#  --recalculate
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+CURRENT_TIME=$(date +"%T")
+STAGE_NAME="RTE-RRTMGP-CPP+RT INPUT VISUALIZATION"
+echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# Set coarsening factors
+COARSE_FACTORS=1,2,4,8,16,32,64
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-snapshot.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Diorama:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-diorama-atm.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_DIORAMA_DIR}/atm \
+#  --coarse-factors ${COARSE_FACTORS}
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: Animate Atmosphere Diorama:"
+python ${EXPERIMENT_ANALYZE_DIR}/animate-rte-rrtmgp-cpp-diorama-atm.py \
+ --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+ --rad-tran-vizdir ${RTE_RRTMGP_CPP_DIORAMA_DIR}/atm \
+ --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Animate Atmosphere Diorama:"
+# python ${EXPERIMENT_ANALYZE_DIR}/animate-rte-rrtmgp-cpp-atm-diorama.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_snapshot \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Time Series:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_timeseries \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Animate Atmosphere Time Series:"
+# python ${EXPERIMENT_ANALYZE_DIR}/animate-rte-rrtmgp-cpp-atm-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_timeseries \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Vertical Profile:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-atm-vert-profile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_vert_profile \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Volume Mixing Ratio Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-vmr-snapshot.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/vmr_snapshot \
+#  --z-max ${ZMAX} \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# echo "Solar Zenith Angle:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_sza.py \
+#  --dp-scream-file ${SCREAM_OUTPUT_FILE_PATH} \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}
+
+CURRENT_TIME=$(date +"%T")
+echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT OUTPUT VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set plotting options
+# COARSE_FACTORS=2
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Reflectance Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-snapshot-reflectance.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_SNAPSHOT_DIR}/reflectance \
+#  --coarse-factors ${COARSE_FACTORS} 
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Heating Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-snapshot-heating.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_SNAPSHOT_DIR}/heating \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Downwelling Surface Flux Snapshot:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-snapshot-flux-sfc-dn.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_SNAPSHOT_DIR}/flux_sfc_dn \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Heating Diorama:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-diorama-heating.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_DIORAMA_DIR}/heating \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Animate Heating Diorama:"
+# python ${EXPERIMENT_ANALYZE_DIR}/animate-rte-rrtmgp-cpp-diorama-heating.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_DIORAMA_DIR}/heating \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Time Series - Reflectance:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_timeseries \
+#  --coarse-factors ${COARSE_FACTORS} \
+#  --quantity "reflectance"
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Time Series - Heating:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_timeseries \
+#  --coarse-factors ${COARSE_FACTORS} \
+#  --quantity "heating"
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Time Series - Downwelling Surface Flux:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_timeseries \
+#  --coarse-factors ${COARSE_FACTORS} \
+#  --quantity "flux_sfc_dn"
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Distribution:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-rad-tran-distribution.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/rad_tran_distribution \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Atmosphere Radiative Transfer Z-Profile:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot_atm_rad_tran_zprofile.py \
+#  --rad-tran-indir ${RADTRAN_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/atm_rad_tran_zprofile \
+#  --detailed-calc true \
+#  --z-max 16 \
+#  --lr 16
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------
+
+#-------------------------------------------------------------------------------
+# CURRENT_TIME=$(date +"%T")
+# STAGE_NAME="RTE-RRTMGP-CPP+RT ANALYSIS VISUALIZATION"
+# echo "[${CURRENT_TIME}]: Beginning ${STAGE_NAME}..."
+
+# # Set plotting options
+# COARSE_FACTORS=2,4,8,16,32,64
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Error Time Series:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-error-timeseries.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/error_timeseries \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Error Distribution:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-error-distribution.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/error_distribution \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Radiative Transfer Error Ribbon:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-error-ribbon.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RADTRAN_VIZ_DIR}/error_ribbon \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Interquantile Timeseries:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-timeseries-interquantile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_TIMESERIES_DIR}/interquantile \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: Quantile Timeseries:"
+# python ${EXPERIMENT_ANALYZE_DIR}/plot-rte-rrtmgp-cpp-timeseries-quantile.py \
+#  --rad-tran-indir ${RADTRAN_COMBINED_INPUT_DIR} \
+#  --rad-tran-outdir ${RADTRAN_COMBINED_OUTPUT_DIR} \
+#  --rad-tran-vizdir ${RTE_RRTMGP_CPP_TIMESERIES_DIR}/quantile \
+#  --coarse-factors ${COARSE_FACTORS}
+
+# CURRENT_TIME=$(date +"%T")
+# echo "[${CURRENT_TIME}]: ${STAGE_NAME} complete!"
+#-------------------------------------------------------------------------------

@@ -12,5 +12,8 @@ if src_dir not in sys.path:
 # Local Library Imports
 
 # Import from source files
-from .consts import *
+from .dtypes import *
+from .numeric import *
+from .physical import *
+from .visual import *
 from .rte_rrtmgp_cpp_fields import *

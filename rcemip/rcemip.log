@@ -1,0 +1,50 @@
+nohup: ignoring input
+###### Starting RTE+RRTMGP solver ######
+Solver settings:
+aerosol-optics       = false
+cloud-mie            = false
+cloud-optics         = true
+delta-aerosol        = false
+delta-cloud          = false
+fluxes               = true
+ice-cloud-optics     = false
+independent-column   = false
+liq-cloud-optics     = false
+longwave             = false
+profiling            = false
+raytracing           = 256
+shortwave            = true
+single-gpt           = false
+tica                 = false
+two-stream           = true
+Using 256 rays per pixel
+Reading atmospheric input data from NetCDF.
+WARNING: Gas "ccl4" not available in input file.
+WARNING: Gas "cfc11" not available in input file.
+WARNING: Gas "cfc12" not available in input file.
+WARNING: Gas "cfc22" not available in input file.
+WARNING: Gas "hfc143a" not available in input file.
+WARNING: Gas "hfc125" not available in input file.
+WARNING: Gas "hfc23" not available in input file.
+WARNING: Gas "hfc32" not available in input file.
+WARNING: Gas "hfc134a" not available in input file.
+WARNING: Gas "cf4" not available in input file.
+WARNING: Gas "no2" not available in input file.
+Preparing NetCDF output file.
+Initializing the shortwave solver.
+Solving the shortwave radiation.
+Constructing GPU tuner and loading kernel settings from disk
+Tuning interpolation_kernel_rt: (4, 4, 1)
+Tuning gas_optical_depths_major_kernel_rt: (1, 768, 1)
+Tuning gas_optical_depths_minor_kernel_lower_rt: (1, 96, 1)
+Tuning gas_optical_depths_minor_kernel_upper_rt: (1, 512, 1)
+Tuning compute_tau_rayleigh_kernel_rt: (128, 1, 1)
+Tuning combine_abs_and_rayleigh_kernel_rt: (32, 4, 1)
+Tuning sw_source_2stream_kernel_rt: (1024, 1, 1)
+Tuning sw_adding_rt: (16, 1, 1)
+./cee-compute.job: line 81: 1451821 Terminated              ${RTE_RRTMGP_CPP_BUILD_DIR}/test_rte_rrtmgp_rt_gpu --raytracing 256 --cloud-optics
+Traceback (most recent call last):
+  File "/home/jltorch/codes/rte-rrtmgp-cpp/jasonltorchinsky/dpscream-output-conversion/rcemip/flux_viz.py", line 22, in <module>
+    rt_flux_abs_dir = ds_out.variables["rt_flux_abs_dir"][:]   # (z, y, x)
+                      ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+KeyError: 'rt_flux_abs_dir'
